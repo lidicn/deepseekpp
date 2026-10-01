@@ -102,26 +102,43 @@ Examples:
 `);
 }
 
+// Chromium-based browsers (Chrome, Edge, and Chromium forks such as Doubao)
+// each consult their own NativeMessagingHosts registry key. A single install
+// writes the shared manifest once but must register it under every Chromium
+// key, otherwise a Chromium fork that reads the Chrome path never finds the
+// host and tool calls silently hang.
+const CHROMIUM_REGISTRY_BROWSERS = ['chrome', 'edge', 'chromium'];
+
+function registryBrowsersFor(browser) {
+  if (browser === 'firefox') return ['firefox'];
+  if (CHROMIUM_REGISTRY_BROWSERS.includes(browser)) return CHROMIUM_REGISTRY_BROWSERS;
+  return [browser];
+}
+
 function writeWindowsRegistry(browser, manifestPath) {
-  const registryKey = getRegistryKey(browser);
-  if (!registryKey) return;
-  try {
-    execFileSync('reg', ['add', registryKey, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'], { stdio: 'pipe' });
-    console.log(`Registry: ${registryKey}`);
-  } catch {
-    console.error('Warning: Failed to write registry key. You may need to run as Administrator.');
-    console.error(`  Manual: reg add "${registryKey}" /ve /t REG_SZ /d "${manifestPath}" /f`);
+  for (const b of registryBrowsersFor(browser)) {
+    const registryKey = getRegistryKey(b);
+    if (!registryKey) continue;
+    try {
+      execFileSync('reg', ['add', registryKey, '/ve', '/t', 'REG_SZ', '/d', manifestPath, '/f'], { stdio: 'pipe' });
+      console.log(`Registry: ${registryKey}`);
+    } catch {
+      console.error('Warning: Failed to write registry key. You may need to run as Administrator.');
+      console.error(`  Manual: reg add "${registryKey}" /ve /t REG_SZ /d "${manifestPath}" /f`);
+    }
   }
 }
 
 function removeWindowsRegistry(browser) {
-  const registryKey = getRegistryKey(browser);
-  if (!registryKey) return;
-  try {
-    execFileSync('reg', ['delete', registryKey, '/f'], { stdio: 'pipe' });
-    console.log(`Removed registry key: ${registryKey}`);
-  } catch {
-    console.log(`Registry key not removed or was already absent: ${registryKey}`);
+  for (const b of registryBrowsersFor(browser)) {
+    const registryKey = getRegistryKey(b);
+    if (!registryKey) continue;
+    try {
+      execFileSync('reg', ['delete', registryKey, '/f'], { stdio: 'pipe' });
+      console.log(`Removed registry key: ${registryKey}`);
+    } catch {
+      console.log(`Registry key not removed or was already absent: ${registryKey}`);
+    }
   }
 }
 

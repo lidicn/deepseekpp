@@ -103,6 +103,18 @@ export default function GeneralSubPage({ state }: { state: SettingsState }) {
           />
         </div>
       </SettingsSection>
+
+      <SettingsSection
+        title="远程任务监听"
+        description="开启后，自动检测手机版 DeepSeek 发来的新消息，并自动在当前浏览器执行 tools。适合手机端发消息、电脑端执行的场景。"
+      >
+        <ToggleRow
+          title="远程任务监听"
+          description="开启后每 5 秒轮询一次对话历史，检测到新消息自动重发"
+          enabled={state.remoteAgentWatcherEnabled}
+          onToggle={state.handleRemoteAgentWatcherToggle}
+        />
+      </SettingsSection>
     </div>
   );
 }

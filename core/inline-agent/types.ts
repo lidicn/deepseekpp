@@ -137,6 +137,11 @@ export interface InlineAgentLoopErrorMsg {
 
 export const INLINE_AGENT_MAX_STEPS = 25;
 export const INLINE_AGENT_MAX_NUDGES = 8;
-export const INLINE_AGENT_STEP_TIMEOUT_MS = 120_000;
+/**
+ * Step timeout: must exceed the shell MCP request timeout (120s) so that
+ * shell has its full budget and the agent still has headroom for the
+ * continuation nudge. Double the shell timeout for safety.
+ */
+export const INLINE_AGENT_STEP_TIMEOUT_MS = 300_000;
 export const INLINE_AGENT_REQUEST_DELAY_MIN_MS = 2_500;
 export const INLINE_AGENT_REQUEST_DELAY_MAX_MS = 6_500;

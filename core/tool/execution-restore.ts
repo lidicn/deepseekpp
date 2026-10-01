@@ -1,7 +1,7 @@
 import type { JsonValue, ToolCardResult, ToolExecutionRecord } from '../types';
 
-const DEFAULT_DETAIL_MAX_LENGTH = 4000;
-const DEFAULT_OUTPUT_MAX_LENGTH = 8000;
+const DEFAULT_DETAIL_MAX_LENGTH = 1_000_000;
+const DEFAULT_OUTPUT_MAX_LENGTH = 2_000_000;
 const TRUNCATION_SUFFIX = '\n...[truncated]';
 
 export interface ToolExecutionRestoreLimits {

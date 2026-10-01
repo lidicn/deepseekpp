@@ -150,12 +150,23 @@ describe('runInlineAgentLoop', () => {
           finished: true,
         };
       })
+      // Nudge turn 1: still promises work → our fix gives one more "续一轮"
       .mockImplementationOnce(async (_input, handlers) => {
         handlers.onTextChunk('I still need to call search next.');
         return {
           assistantText: '',
           responseMessageId: 104,
           requestMessageId: 103,
+          finished: true,
+        };
+      })
+      // Nudge turn 2: STILL promises work → nudgedOnContinuation=true → STOP with budget
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('I will call search right after this sentence.');
+        return {
+          assistantText: '',
+          responseMessageId: 106,
+          requestMessageId: 105,
           finished: true,
         };
       });
@@ -169,10 +180,10 @@ describe('runInlineAgentLoop', () => {
       signal: new AbortController().signal,
     });
 
-    await vi.advanceTimersByTimeAsync(7000);
+    await vi.advanceTimersByTimeAsync(30_000);
     await run;
 
-    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(2);
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(3);
     expect(adapterMocks.submitPromptStreaming.mock.calls[1]?.[0].prompt)
       .toContain('This is no-tool-call correction attempt 1.');
     expect(executeTool).not.toHaveBeenCalled();
@@ -394,9 +405,10 @@ describe('runInlineAgentLoop', () => {
       signal: new AbortController().signal,
     });
 
-    await vi.advanceTimersByTimeAsync(120_000);
+    // Step timeout is now 300_000ms (断流修复: step timeout > shell timeout 120s)
+    await vi.advanceTimersByTimeAsync(300_000);
     await vi.advanceTimersByTimeAsync(7_000);
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(300_000);
     await run;
 
     expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(2);
@@ -405,11 +417,20 @@ describe('runInlineAgentLoop', () => {
     }));
   });
 
-  it('does not retry a timed-out step after text was already received', async () => {
+  it('continues gracefully after a timed-out step with partial text (no error, no retry)', async () => {
+    // After the断流修复: timeout mid-stream with partial text returns a
+    // partial completion (finished=false) from submitPromptStreaming instead
+    // of throwing. The loop emits the partial content and ends normally —
+    // no AGENT_LOOP_ERROR kill. (shouldNudge doesn't trigger for "partial answer".)
     vi.useFakeTimers();
-    adapterMocks.submitPromptStreaming.mockImplementation((_input, handlers, signal) => {
+    adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
       handlers.onTextChunk('partial answer...');
-      return abortAwarePendingTurn(signal);
+      return {
+        assistantText: 'partial answer...',
+        responseMessageId: 102,
+        requestMessageId: 101,
+        finished: false,
+      };
     });
 
     const post = vi.fn();
@@ -421,13 +442,13 @@ describe('runInlineAgentLoop', () => {
       signal: new AbortController().signal,
     });
 
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     await run;
 
     expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(1);
-    expect(post).toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.objectContaining({
-      error: 'DeepSeek agent step timed out while streaming; the response was interrupted.',
-    }));
+    // Partial completion is NOT fatal — the loop completes normally.
+    expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.anything());
+    expect(post).toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.anything());
   });
 
   it('keeps a user abort mid-step silent with an empty final text', async () => {
@@ -505,13 +526,15 @@ describe('runInlineAgentLoop', () => {
     }));
   });
 
-  it('fails visibly when the response stream ends without FINISHED', async () => {
-    // A server-side cut (connection dropped, response interrupted) ends the
-    // SSE stream without the terminal FINISHED patches. The partial text must
-    // never be presented as a finished turn: the loop reports AGENT_LOOP_ERROR
-    // with the interruption instead of stopping on a seemingly normal message.
+  it('handles stream without FINISHED as partial completion (recoverable, no error)', async () => {
+    // After the断流修复: a server-side cut ends the SSE stream without FINISHED.
+    // Before this fix, !finished && !aborted threw → AGENT_LOOP_ERROR → user
+    // had to manually say "继续". Now it's treated as a recoverable partial
+    // turn: partial text is emitted and the pi loop completes normally
+    // (shouldNudge doesn't trigger here, so no extra nudge round needed).
+    vi.useFakeTimers();
     adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
-      handlers.onTextChunk('让我再抓取雪球那篇详尽的24个月梳理文章');
+      handlers.onTextChunk('This is a truncated partial answer from the server.');
       return {
         assistantText: '',
         responseMessageId: 102,
@@ -529,12 +552,12 @@ describe('runInlineAgentLoop', () => {
       signal: new AbortController().signal,
     });
 
-    expect(post).toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.objectContaining({
-      error: expect.stringContaining('response stream ended before completion'),
-    }));
-    expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.objectContaining({
-      finalText: expect.stringContaining('让我再抓取'),
-    }));
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    // No fatal error — partial completion is handled gracefully, loop completes normally.
+    expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.anything());
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.anything());
   });
 });
 

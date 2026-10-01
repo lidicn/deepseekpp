@@ -299,13 +299,22 @@ describe('createDeepSeekStreamFn', () => {
     expect(events.at(-1)?.type).toBe('done');
   });
 
-  it('does not retry a timed-out step after text was already received', async () => {
+  it('continues gracefully after a timed-out step with partial text (partial completion, no retry)', async () => {
+    // After the断流修复: when a step times out mid-stream with partial text,
+    // the StreamFn now emits the partial content as a 'done' event so the
+    // pi loop's nudge mechanism handles continuation — instead of throwing
+    // an error that killed the entire agent loop.
     vi.useFakeTimers();
-    adapterMocks.submitPromptStreaming.mockImplementation((_input, handlers, signal) => {
+    adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
       handlers.onTextChunk('partial...');
-      return new Promise((_resolve, reject) => {
-        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
-      });
+      // Simulates readCompletionStreamWithCallbacks catching reader.read() abort
+      // and returning a partial summary with finished=false (the new behavior).
+      return {
+        assistantText: 'partial...',
+        responseMessageId: 99,
+        requestMessageId: 98,
+        finished: false,
+      };
     });
 
     const deps = createDeps();
@@ -315,31 +324,28 @@ describe('createDeepSeekStreamFn', () => {
     const drain = (async () => {
       for await (const event of stream) events.push(event);
     })();
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     await drain;
 
     expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(1);
     const last = events.at(-1);
-    expect(last?.type).toBe('error');
-    if (last?.type === 'error') {
-      expect(last.error.errorMessage).toBe(
-        'DeepSeek agent step timed out while streaming; the response was interrupted.',
-      );
-      expect(last.error.content).toEqual([{ type: 'text', text: 'partial...' }]);
+    expect(last?.type).toBe('done');
+    if (last?.type === 'done') {
+      expect(last.message.content).toEqual([{ type: 'text', text: 'partial...\n\n[Response interrupted mid-stream — continuing.]' }]);
     }
   });
 
-  it('does not retry a timed-out step after reasoning was already received', async () => {
-    // A reasoning-only turn (THINK deltas, no answer text yet) is still
-    // streamed content: timing out must surface the interrupted-streaming
-    // error instead of resubmitting with the same parent_message_id and
-    // forking a response the server may have already committed.
+  it('continues gracefully after a timed-out step with partial reasoning', async () => {
+    // Same recovery as above for reasoning-only turns.
     vi.useFakeTimers();
-    adapterMocks.submitPromptStreaming.mockImplementation((_input, handlers, signal) => {
+    adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
       handlers.onReasoningChunk?.('我先分析', '我先分析');
-      return new Promise((_resolve, reject) => {
-        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
-      });
+      return {
+        assistantText: '',
+        responseMessageId: 99,
+        requestMessageId: 98,
+        finished: false,
+      };
     });
 
     const deps = createDeps();
@@ -349,17 +355,12 @@ describe('createDeepSeekStreamFn', () => {
     const drain = (async () => {
       for await (const event of stream) events.push(event);
     })();
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     await drain;
 
     expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(1);
     const last = events.at(-1);
-    expect(last?.type).toBe('error');
-    if (last?.type === 'error') {
-      expect(last.error.errorMessage).toBe(
-        'DeepSeek agent step timed out while streaming; the response was interrupted.',
-      );
-    }
+    expect(last?.type).toBe('done');
   });
 
   it('forwards token speed progress through the optional dep callback', async () => {

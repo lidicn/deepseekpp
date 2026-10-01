@@ -36,5 +36,8 @@ export interface McpCapabilityProjection {
   descriptors: ToolDescriptor[];
   directDescriptorIds: string[];
   hiddenDescriptorIds: string[];
+  hiddenSummary: string;
+  hiddenSummaryBytes: number;
+  projectedPromptBytes: number;
   usesCatalog: boolean;
 }

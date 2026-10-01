@@ -265,6 +265,24 @@ export async function getLocalSkillSourceById(sourceId: string): Promise<LocalSk
   return source?.provider === 'local' ? (source as LocalSkillSource) : null;
 }
 
+// A directory is trusted for local-skill writes when it is either an imported
+// local source's root path, or the actual install directory (`localDirectory`)
+// of any imported local skill. The latter is required because activeLocalSkillDir
+// is set to a sub-skill's localDirectory (e.g. rootPath/subSkill) rather than the
+// source rootPath when a multi-skill folder is imported. Owned by core, not the
+// background composition root.
+export async function isTrustedLocalSkillDirectory(dir: string): Promise<boolean> {
+  if (!dir) return false;
+  const sources = await getAllSkillSources();
+  if (sources.some((source) => source.provider === 'local' && source.rootPath === dir)) {
+    return true;
+  }
+  const skills = await getAllSkills({ includeDisabled: true });
+  return skills.some(
+    (skill) => skill.remote?.provider === 'local' && skill.remote?.localDirectory === dir,
+  );
+}
+
 export async function updateGitHubSkillSourceLastCheckedAt(
   sourceId: string,
   lastCheckedAt: number,

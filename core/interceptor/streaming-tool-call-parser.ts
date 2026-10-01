@@ -1,4 +1,4 @@
-import type { ToolCall, ToolDescriptor, ToolError } from '../types';
+﻿import type { ToolCall, ToolDescriptor, ToolError } from '../types';
 import {
   createToolCallFromInvocation,
   createToolInvocationCatalog,
@@ -11,6 +11,7 @@ import {
   findFirstXmlToolTag,
   getPartialXmlToolTagTailLength,
 } from '../tool/xml-tags';
+import { repairToolJsonBody } from './repair-tool-json';
 
 const STREAM_TOOL_RAW_MAX_LENGTH = 2048;
 const TRUNCATION_SUFFIX = '\n...[truncated]';
@@ -229,6 +230,21 @@ class XmlStreamingToolCallParser implements StreamingToolCallParser {
         localSkillDir: this.activeLocalSkillDir,
       });
     } catch (error) {
+      // 转义容错修复层：先尝试修复转义问题，再解析一次
+      const repaired = repairToolJsonBody(body);
+      if (repaired !== null) {
+        try {
+          const reparsed = JSON.parse(repaired);
+          if (isToolPayload(reparsed)) {
+            return createToolCallFromInvocation(current.invocationName, reparsed, raw, this.catalog, {
+              id: current.id,
+              localSkillDir: this.activeLocalSkillDir,
+            });
+          }
+        } catch {
+          // 修复结果仍不可解析：回落到原有错误分支
+        }
+      }
       return createToolCallFromInvocation(current.invocationName, {}, raw, this.catalog, {
         id: current.id,
         localSkillDir: this.activeLocalSkillDir,

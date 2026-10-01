@@ -1,3 +1,4 @@
+import { mountDebugToWindow } from '../core/debug/refactor-telemetry';
 import {
   updateHookState,
   type RequestTerminalPayload,
@@ -28,6 +29,7 @@ export default defineContentScript({
   world: 'MAIN',
   runAt: 'document_start',
   async main() {
+    mountDebugToWindow();
     const bridge = createMainWorldBridgeController({
       applyState(state) {
         updateHookState({ toolDescriptors: state.toolDescriptors });

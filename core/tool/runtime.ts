@@ -26,6 +26,7 @@ import {
   ToolAuthorizationError,
 } from './authorization';
 import { enforceLocalSkillCwd } from './local-skill-cwd';
+import { truncateToolResultDetail } from './result-governance';
 
 export interface RuntimeToolCallOptions {
   timeoutMs?: number;
@@ -260,7 +261,8 @@ async function executeRuntimeToolCall(
     message: `tool finished: ${result.name ?? resolvedCall.name} (${result.ok ? 'ok' : 'error'})`,
     details: summarizeToolResult(result),
   });
-  return result;
+  // Universal result byte governance: truncate detail before it enters model context.
+  return truncateToolResultDetail(result, options.maxResultBytes);
 }
 
 function summarizeToolResult(result: ToolResult): string {

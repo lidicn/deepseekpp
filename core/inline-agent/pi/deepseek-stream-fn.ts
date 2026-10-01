@@ -198,20 +198,25 @@ export function createDeepSeekStreamFn(deps: DeepSeekStreamFnDeps): StreamFn {
 
         const result = await submitTurn(request, callbacks, signal);
 
-        // Fail-closed stream termination (Issue: mid-output silent stop): a
-        // DeepSeek web stream is only complete once the server patches
-        // FINISHED onto the response. When the stream ends without it (the
-        // connection dropped or the server interrupted the response), the
-        // partial text must NEVER be presented as a finished turn — surface
-        // it as a visible error so the loop reports AGENT_LOOP_ERROR instead
-        // of stopping on a seemingly normal message. User aborts keep their
-        // silent 'aborted' semantics.
-        if (!result.finished && !signal?.aborted) {
-          throw new Error('DeepSeek response stream ended before completion (the response was interrupted).');
-        }
+        // Graceful partial completion: the DeepSeek web stream can end before
+        // FINISHED when the step timeout fires mid-response, the connection
+        // drops, or the server interrupts. We now treat this as a recoverable
+        // partial turn: the partial text/toolCalls already streamed through the
+        // callbacks, so we emit what we have and let the pi loop's existing
+        // nudge mechanism handle the continuation — the parentMessageId from
+        // the partial turn is preserved so the next turn chains correctly.
+        //
+        // Before this fix, !finished && !aborted would throw an error that
+        // became stopReason='error', terminating the entire agent loop as
+        // AGENT_LOOP_ERROR. The user had to manually say "继续" to restart.
+        //
+        // User-initiated aborts keep their silent 'aborted' semantics.
+        const isPartialCompletion = !result.finished && !signal?.aborted;
 
         // The conversation chain authority: the page session, not this turn's
-        // transcript, owns the next parent message id.
+        // transcript, owns the next parent message id. For partial completion,
+        // we MUST preserve whatever responseMessageId we captured from the
+        // partial stream — it's the only chain link we have.
         session.setParentMessageId(result.responseMessageId);
 
         onParsed(toolCallParser.flush());
@@ -242,9 +247,25 @@ export function createDeepSeekStreamFn(deps: DeepSeekStreamFnDeps): StreamFn {
           });
         }
 
-        partial.stopReason = partial.content.some((block) => block.type === 'toolCall') ? 'toolUse' : 'stop';
+        // For partial completion, append a visible interruption marker so
+        // the nudge prompt knows there's unfinished business to recover.
+        if (isPartialCompletion && textContentIndex !== null) {
+          const marker = '\n\n[Response interrupted mid-stream — continuing.]';
+          const full = lastVisibleText + marker;
+          partial.content[textContentIndex] = { type: 'text', text: full };
+          lastVisibleText = full;
+        }
+
+        partial.stopReason = partial.content.some((block) => block.type === 'toolCall')
+          ? 'toolUse'
+          : 'stop';
         emit({ type: 'done', reason: partial.stopReason, message: snapshot() });
       } catch (err) {
+        // All recoverable interruptions (timeout mid-stream, connection reset
+        // mid-stream) are now handled by readCompletionStreamWithCallbacks
+        // returning a partial result instead of throwing. This catch only fires
+        // for fatal errors: network failure before any SSE events, PoW solve
+        // failure, request rejection, etc. — emit error and let the loop die.
         const aborted = signal?.aborted ?? false;
         partial.stopReason = aborted ? 'aborted' : 'error';
         partial.errorMessage = aborted ? 'Aborted' : (err instanceof Error ? err.message : String(err));

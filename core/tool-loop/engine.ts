@@ -108,7 +108,17 @@ export function createToolExecutionRecord(
   };
 }
 
-export function clampText(value: string | undefined, maxLength: number): string | undefined {
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+export function clampText(value: string | undefined, maxBytes: number): string | undefined {
   if (!value) return value;
-  return value.length > maxLength ? `${value.slice(0, maxLength)}\n...[truncated]` : value;
+  const bytes = encoder.encode(value);
+  if (bytes.byteLength <= maxBytes) return value;
+  const marker = '\n...[truncated]';
+  const markerBytes = encoder.encode(marker).byteLength;
+  const limit = Math.max(0, maxBytes - markerBytes);
+  let boundary = Math.min(limit, bytes.byteLength);
+  while (boundary > 0 && (bytes[boundary] & 0xC0) === 0x80) boundary--;
+  return `${decoder.decode(bytes.subarray(0, boundary))}${marker}`;
 }

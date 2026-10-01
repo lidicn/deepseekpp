@@ -1,6 +1,7 @@
 import type { ToolCall, ToolCallHistoryRecord, ToolExecutionTrigger, ToolResult } from './types';
 import { decodeToolCallHistory, encodeToolCallHistory } from './history-codec';
 import { createCoalescingMutationQueue } from '../persistence/coalescing-mutation-queue';
+import { refactorTelemetry } from '../debug/refactor-telemetry';
 
 export const TOOL_HISTORY_STORAGE_KEY = 'deepseek_pp_tool_history';
 // Lowered from 200 → 100. Each record carries detail/output snapshots, and each
@@ -33,6 +34,19 @@ export async function appendToolCallHistory(
 async function persistToolHistoryBurst(
   mutations: readonly ToolHistoryMutation[],
 ): Promise<ToolCallHistoryRecord[]> {
+  // B2 fix: flush 写回前检查 barrier 干扰 —— 如果 clear 在 read 和 write 之间
+  // 跑过，storage key 会消失。此时跳过写回并返回空数组，让 queue 不 reject。
+  // 注意：serial-operation-queue 虽然让 settleBatch 和 barrier 串行排队，
+  // 但 settleBatch 内部 await readToolCallHistoryAlreadyOwned() 让出后，
+  // barrier 会在下一个 tick 开始（serial queue 是"operation 串行但内部 await 可穿插"）。
+  // 这就是 race：settleBatch read → await → barrier remove → settleBatch write（复活）。
+  const preCheck = await chrome.storage.local.get(TOOL_HISTORY_STORAGE_KEY) as Record<string, unknown>;
+  if (!(TOOL_HISTORY_STORAGE_KEY in preCheck)) {
+    // key 不存在 —— clear 已经先执行，跳过写回
+    console.debug('[DPP] B2 race: mutate batch skipped write-back (clear barrier won)');
+    return [];
+  }
+
   let history = orderToolCallHistory(await readToolCallHistoryAlreadyOwned());
   const results: ToolCallHistoryRecord[] = [];
   const budgetBytes = getHistoryBudgetBytes();
@@ -47,6 +61,12 @@ async function persistToolHistoryBurst(
     history = trimToFit([record, ...history.slice(0, MAX_HISTORY)], budgetBytes)
       .slice(0, MAX_HISTORY);
     results.push(record);
+  }
+  // B2 fix: write-back 前再检查一次 —— 防 clear 在 write 前瞬间执行
+  const postCheck = await chrome.storage.local.get(TOOL_HISTORY_STORAGE_KEY) as Record<string, unknown>;
+  if (!(TOOL_HISTORY_STORAGE_KEY in postCheck)) {
+    console.debug('[DPP] B2 race: post-read clear detected, skipping write-back');
+    return [];
   }
   await chrome.storage.local.set({
     [TOOL_HISTORY_STORAGE_KEY]: encodeToolCallHistory(history),
@@ -79,38 +99,71 @@ function orderToolCallHistory(
   return [...history].sort((a, b) => b.createdAt - a.createdAt);
 }
 
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
 function sanitizeCall(call: ToolCall): ToolCall {
   return {
     ...call,
-    payload: truncateRecord(call.payload, 4_000),
-    raw: call.raw.length > 4_000 ? `${call.raw.slice(0, 4_000)}\n...[truncated]` : call.raw,
+    payload: truncateRecordBytes(call.payload, 4_000),
+    raw: truncateStringBytes(call.raw, 4_000) ?? call.raw,
   };
 }
 
 function sanitizeResult(result: ToolResult): ToolResult {
-  return {
+  const sanitized: ToolResult = {
     ...result,
-    detail: truncateString(result.detail, 4_000),
-    output: result.output === undefined ? undefined : truncateString(JSON.stringify(result.output), 8_000),
+    detail: truncateStringBytes(result.detail, 16_000),
+    output: result.output === undefined ? undefined : truncateStringBytes(JSON.stringify(result.output), 32_000),
     error: result.error
       ? {
         ...result.error,
-        message: truncateString(result.error.message, 2_000) ?? '',
-        details: result.error.details ? truncateRecord(result.error.details, 2_000) : undefined,
+        message: truncateStringBytes(result.error.message, 2_000) ?? '',
+        details: result.error.details ? truncateRecordBytes(result.error.details, 2_000) : undefined,
       }
       : undefined,
   };
+  // Record storage-layer truncation for telemetry (does NOT affect model context).
+  if (sanitized.detail !== result.detail) {
+    const originalBytes = result.detail ? encoder.encode(result.detail).byteLength : 0;
+    const truncatedBytes = sanitized.detail ? encoder.encode(sanitized.detail).byteLength : 0;
+    refactorTelemetry.recordTruncation({
+      timestamp: Date.now(),
+      layer: 'storage',
+      toolName: result.name ?? 'unknown',
+      originalBytes,
+      truncatedBytes,
+      limit: 16_000,
+      truncated: true,
+      markerPresent: (sanitized.detail ?? '').includes('[truncated]'),
+    });
+  }
+  return sanitized;
 }
 
-function truncateRecord(value: Record<string, unknown>, maxLength: number): Record<string, unknown> {
+function truncateRecordBytes(value: Record<string, unknown>, maxBytes: number): Record<string, unknown> {
   const json = JSON.stringify(value);
-  if (json.length <= maxLength) return value;
-  return { truncated: true, preview: json.slice(0, maxLength) };
+  if (encoder.encode(json).byteLength <= maxBytes) return value;
+  return { truncated: true, preview: truncateStringBytes(json, maxBytes) ?? json.slice(0, maxBytes) };
 }
 
-function truncateString(value: string | undefined, maxLength: number): string | undefined {
-  if (!value || value.length <= maxLength) return value;
-  return `${value.slice(0, maxLength)}\n...[truncated]`;
+function truncateStringBytes(value: string | undefined, maxBytes: number): string | undefined {
+  if (!value) return value;
+  const bytes = encoder.encode(value);
+  if (bytes.byteLength <= maxBytes) return value;
+  const marker = '\n...[truncated]';
+  const markerBytes = encoder.encode(marker).byteLength;
+  const limit = Math.max(0, maxBytes - markerBytes);
+  const boundary = findUtf8Boundary(bytes, limit);
+  return `${decoder.decode(bytes.subarray(0, boundary))}${marker}`;
+}
+
+/** Walk back from `limit` to a boundary that does not split a multi-byte UTF-8 char. */
+function findUtf8Boundary(bytes: Uint8Array, limit: number): number {
+  if (limit >= bytes.byteLength) return bytes.byteLength;
+  let boundary = limit;
+  while (boundary > 0 && (bytes[boundary] & 0xC0) === 0x80) boundary--;
+  return boundary;
 }
 
 /**

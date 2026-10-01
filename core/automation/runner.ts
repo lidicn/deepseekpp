@@ -301,8 +301,8 @@ async function runAutomationToolLoop(
         throw new AutomationToolOutcomeAmbiguousError(executionCall.name);
       }
       return createToolExecutionRecord(executionCall, result, {
-        detailMaxLength: 4000,
-        outputMaxLength: 8000,
+        detailMaxLength: 1_000_000,
+        outputMaxLength: 2_000_000,
       });
     },
     buildContinuationPrompt: (executions) => buildAutomationToolContinuationPrompt(executions, locale),

@@ -216,6 +216,10 @@ export function createDeepSeekApiStreamFn(
           },
         }, signal);
 
+        // Partial completion: treat like the web path — emit what we have
+        // and let the pi loop's nudge mechanism handle the continuation.
+        const isPartialCompletion = !turn.finished && !signal?.aborted;
+
         onParsed(toolCallParser.flush());
         emitText(textAccumulator.flush());
         if (textContentIndex !== null) {
@@ -235,11 +239,23 @@ export function createDeepSeekApiStreamFn(
           });
         }
 
+        // Partial completion marker — same as web path: signal unfinished business
+        // so the nudge prompt handles recovery.
+        if (isPartialCompletion && textContentIndex !== null) {
+          const marker = '\n\n[Response interrupted mid-stream — continuing.]';
+          const full = lastVisibleText + marker;
+          partial.content[textContentIndex] = { type: 'text', text: full };
+          lastVisibleText = full;
+        }
+
         // Tool calls are only detected from the streamed text; a turn whose
         // text is empty but finished is a plain stop (like the web path).
         partial.stopReason = partial.content.some((block) => block.type === 'toolCall') ? 'toolUse' : 'stop';
         emit({ type: 'done', reason: partial.stopReason, message: snapshot() });
       } catch (err) {
+        // All recoverable interruptions are now handled by readOfficialApiStream
+        // returning a partial result instead of throwing. This catch only fires
+        // for fatal errors (network failure before any SSE events, auth failure, etc.).
         const aborted = signal?.aborted ?? false;
         partial.stopReason = aborted ? 'aborted' : 'error';
         partial.errorMessage = aborted ? 'Aborted' : (err instanceof Error ? err.message : String(err));

@@ -1,4 +1,5 @@
 import type { SupportedLocale } from '../../core/i18n';
+import { acquireKeepalive, releaseKeepalive } from '../../core/chat/active-loop';
 import {
   definePayloadlessRuntimeCommandHandler,
   type RuntimeCommandHandler,
@@ -206,13 +207,19 @@ export function createToolExecutionRuntimeHandlers(
           'manual_chat',
           dependencies.createRequestId,
         );
-      const result = await dependencies.executeToolCall(
-        call,
-        authorization,
-        locale,
-      );
-      await dependencies.broadcastToolCallHistoryUpdate(context.tabId);
-      return result;
+      // P0-1: SW 保活 — web 模式下 inline agent 调工具期间防止 SW 回收。
+      acquireKeepalive();
+      try {
+        const result = await dependencies.executeToolCall(
+          call,
+          authorization,
+          locale,
+        );
+        await dependencies.broadcastToolCallHistoryUpdate(context.tabId);
+        return result;
+      } finally {
+        releaseKeepalive();
+      }
     }),
     defineToolPayloadRuntimeCommandHandler('RUN_ARTIFACT_CODE', (decoded) => {
       if (decoded.ok === true) return dependencies.runSandbox(decoded.payload);

@@ -19,6 +19,6 @@ export const MCP_DEFAULT_TIMEOUTS: McpServerTimeouts = {
 };
 
 export const MCP_DEFAULT_LIMITS: McpServerResultLimits = {
-  maxResultBytes: 64_000,
+  maxResultBytes: 1_000_000,  // 1MB，从 64KB 提升
   maxToolCount: 128,
 };

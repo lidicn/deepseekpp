@@ -1,0 +1,434 @@
+/**
+ * Remote Agent Watcher
+ *
+ * Polls DeepSeek's history API for new messages from remote devices (e.g.
+ * the mobile app). When a new user message is detected that has no
+ * corresponding assistant reply, it automatically "re-sends" the message
+ * from the current browser tab so that deepseek++'s fetch interceptor
+ * can augment it with tool catalog and trigger the inline agent loop.
+ *
+ * This enables a "mobile input → desktop execution" workflow:
+ *   1. User sends a message from the DeepSeek mobile app
+ *   2. Desktop browser polls the history API and detects the new message
+ *   3. Desktop automatically re-sends the message (intercepted + augmented)
+ *   4. Deep++ runs tools and replies
+ *   5. Result syncs back to the mobile app
+ */
+
+import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
+import { DEEPSEEK_WEB_ROUTES } from '../deepseek/contracts';
+import { createClientHeaders } from '../deepseek/active-client';
+
+const POLL_INTERVAL_MS = 5000; // 5 seconds
+const MAX_BACKOFF_MS = 60_000; // 60 seconds ceiling
+const MAX_RETRIES = 3;
+
+interface HistoryMessage {
+  message_id: number;
+  role: 'USER' | 'ASSISTANT';
+  content?: string;
+  create_time?: number;
+  fragments?: Array<{
+    id: number;
+    type: string;
+    content: string;
+  }>;
+}
+
+interface HistoryResponse {
+  messages: HistoryMessage[];
+}
+
+interface WatcherState {
+  enabled: boolean;
+  pollTimer: number | null;
+  lastSeenMessageId: number | null;
+  chatSessionId: string | null;
+  isProcessing: boolean;
+  isInitializing: boolean;  // 等待 fetchInitialState 完成
+  lastSentMessageContent: string | null;
+  lastSentMessageTime: number;
+  consecutivePollFailures: number;  // 连续轮询失败计数（用于退避 + 错误分级）
+  currentPollIntervalMs: number;    // 当前轮询间隔（退避后可能 > POLL_INTERVAL_MS）
+}
+
+const state: WatcherState = {
+  enabled: false,
+  pollTimer: null,
+  lastSeenMessageId: null,
+  chatSessionId: null,
+  isProcessing: false,
+  isInitializing: false,
+  lastSentMessageContent: null,
+  lastSentMessageTime: 0,
+  consecutivePollFailures: 0,
+  currentPollIntervalMs: POLL_INTERVAL_MS,
+};
+
+/**
+ * 记录当前浏览器发送的消息（用于自适应检测，避免重复重发）
+ */
+export function recordLocalSentMessage(content: string): void {
+  state.lastSentMessageContent = content;
+  state.lastSentMessageTime = Date.now();
+  console.log(`[DPP-REMOTE] Recorded local sent message: ${content.slice(0, 50)}...`);
+}
+
+/**
+ * Extract chat_session_id from URL.
+ * URL format: https://chat.deepseek.com/a/chat/s/{chat_session_id}
+ */
+function extractChatSessionIdFromURL(): string | null {
+  const match = window.location.pathname.match(/\/chat\/s\/([a-f0-9-]+)/);
+  return match ? match[1] : null;
+}
+
+/**
+ * Start watching for remote messages.
+ */
+export function startRemoteAgentWatcher(options: {
+  chatSessionId: string;
+  onNewMessage: (message: string) => void;
+}): void {
+  if (state.enabled) {
+    console.warn('[DPP-REMOTE] Watcher already running');
+    return;
+  }
+
+  state.enabled = true;
+  state.chatSessionId = options.chatSessionId;
+  state.isProcessing = false;
+  state.isInitializing = true;
+  state.consecutivePollFailures = 0;
+  state.currentPollIntervalMs = POLL_INTERVAL_MS;
+
+  // Initialize lastSeenMessageId from current history (skip existing messages)
+  // B3 fix: race — 用 isInitializing 锁阻止 initial fetch 完成前的 poll
+  fetchInitialState(options.chatSessionId).then((lastId) => {
+    state.lastSeenMessageId = lastId;
+    state.isInitializing = false;
+    console.log(`[DPP-REMOTE] Watcher started, last seen message: ${lastId}`);
+    // 启动递归 setTimeout 轮询（替代固定 setInterval，支持退避）
+    scheduleNextPoll(options);
+  }).catch((err) => {
+    console.error('[DPP-REMOTE] Initial fetch failed, watcher paused:', err);
+    state.isInitializing = false;
+  });
+
+  console.log('[DPP-REMOTE] Watcher start scheduled');
+}
+
+/**
+ * 递归 setTimeout 调度器 — 每次 poll 完根据退避状态计算下次间隔
+ */
+function scheduleNextPoll(options: { chatSessionId: string; onNewMessage: (message: string) => void }): void {
+  if (!state.enabled) return;
+  const interval = state.currentPollIntervalMs;
+  state.pollTimer = window.setTimeout(async () => {
+    if (!state.enabled) return;
+    try {
+      await pollForNewMessages(options);
+      // poll 成功 — 重置失败计数 + 恢复正常间隔
+      if (state.consecutivePollFailures > 0) {
+        console.log(`[DPP-REMOTE] Poll recovered after ${state.consecutivePollFailures} failures`);
+      }
+      state.consecutivePollFailures = 0;
+      state.currentPollIntervalMs = POLL_INTERVAL_MS;
+    } catch (err) {
+      // poll 失败 — 累加计数 + 指数退避
+      state.consecutivePollFailures++;
+      const prevInterval = state.currentPollIntervalMs;
+      state.currentPollIntervalMs = Math.min(
+        POLL_INTERVAL_MS * Math.pow(2, Math.min(state.consecutivePollFailures - 1, 4)),
+        MAX_BACKOFF_MS,
+      );
+      // 日志分级：1-2 次 warn，≥3 次 error（避免每 5s 刷红错）
+      const logLevel = state.consecutivePollFailures >= 3 ? 'error' : 'warn';
+      console[logLevel](
+        `[DPP-REMOTE] Poll failed (${state.consecutivePollFailures} consecutive), backoff ${prevInterval}ms → ${state.currentPollIntervalMs}ms:`,
+        err,
+      );
+    } finally {
+      scheduleNextPoll(options);
+    }
+  }, interval);
+}
+
+/**
+ * Stop the watcher.
+ */
+export function stopRemoteAgentWatcher(): void {
+  state.enabled = false;
+  if (state.pollTimer !== null) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
+  }
+  console.log('[DPP-REMOTE] Watcher stopped');
+}
+
+/**
+ * Check if the watcher is enabled.
+ */
+export function isRemoteAgentWatcherEnabled(): boolean {
+  return state.enabled;
+}
+
+async function fetchInitialState(chatSessionId: string): Promise<number | null> {
+  try {
+    const messages = await fetchHistoryMessages(chatSessionId);
+    if (messages.length === 0) return null;
+    // Return the ID of the last message
+    return messages[messages.length - 1].message_id;
+  } catch (err) {
+    console.error('[DPP-REMOTE] Failed to fetch initial state:', err);
+    return null;
+  }
+}
+
+async function pollForNewMessages(options: {
+  onNewMessage: (message: string) => void;
+}): Promise<void> {
+  if (state.isProcessing) return;
+  // B3 fix: 首启 race — initial fetch 未完成前跳过 poll
+  if (state.isInitializing) return;
+
+  // 每次从 URL 重新读取 chat_session_id（支持切换对话）
+  const currentChatSessionId = extractChatSessionIdFromURL();
+  if (!currentChatSessionId) return;
+
+  try {
+    const messages = await fetchHistoryMessages(currentChatSessionId);
+
+    console.log('[DPP-REMOTE] Last seen:', state.lastSeenMessageId);
+    console.log('[DPP-REMOTE] Current messages:', messages.map(m => ({ id: m.message_id, role: m.role, content: m.content?.slice(0, 30) })));
+
+    // Find new messages (after lastSeenMessageId)
+    const newMessages = findNewMessages(messages, state.lastSeenMessageId);
+
+    if (newMessages.length === 0) {
+      console.log('[DPP-REMOTE] No new messages');
+      return;
+    }
+
+    console.log(`[DPP-REMOTE] Found ${newMessages.length} new message(s)`);
+
+    // 找最新的 USER 消息
+    const latestUserMessage = newMessages.findLast(m => m.role === 'USER');
+    
+    if (latestUserMessage) {
+      // 从 fragments[0].content 取消息内容
+      const contentStr = latestUserMessage.fragments?.[0]?.content || latestUserMessage.content || '';
+      
+      // v1.17 安全修复：跳过 inline-agent continuation 请求。
+      // DeepSeek 把续跑的 `<original_task>` + `<tool_results>` 块存成 USER role，
+      // watcher 如果把它当"远程新消息"re-send 就会触发无限循环。
+      // 结构检测：两个标签同时存在，且含续跑关键字
+      const isInlineAgentContinuation =
+        contentStr.includes('<original_task>') && contentStr.includes('</original_task>') &&
+        (contentStr.includes('<tool_results') || contentStr.includes('<tool_results_so_far>'));
+      
+      // 跳过纯系统提示被误存为 USER 的情况（AI 回复被当成 USER message）
+      // 特征：开头是 "你具有长期记忆能力" 或包含完整 system prompt + ## Tools
+      const isSystemPromptEcho =
+        contentStr.startsWith('你具有长期记忆能力') ||
+        (contentStr.includes('## Tools') && contentStr.includes('你具有长期记忆能力') && contentStr.length > 10000);
+      
+      if (isInlineAgentContinuation || isSystemPromptEcho) {
+        console.log(`[DPP-REMOTE] Skip internal message (continuation=${isInlineAgentContinuation}, echo=${isSystemPromptEcho}): ${contentStr.slice(0, 80)}...`);
+        state.lastSeenMessageId = latestUserMessage.message_id;
+        return;
+      }
+      
+      // 自适应检测：如果这条消息是当前浏览器刚刚发送的（30秒内），就跳过
+      const isLocalMessage = state.lastSentMessageContent === contentStr && 
+                             (Date.now() - state.lastSentMessageTime) < 30000;
+      if (isLocalMessage) {
+        console.log(`[DPP-REMOTE] Skip local message (sent from this browser): ${contentStr.slice(0, 50)}...`);
+        state.lastSeenMessageId = latestUserMessage.message_id;
+        return;
+      }
+      
+      state.isProcessing = true;
+      console.log(`[DPP-REMOTE] Detected remote message: ${contentStr.slice(0, 100)}...`);
+
+      try {
+        // 直接在页面里重发消息（不刷新，inline agent loop 状态保留）
+        console.log('[DPP-REMOTE] Re-sending message via UI...');
+        await resendMessageViaUI(contentStr);
+
+        // 重发后，等 3 秒，重新拉 history，把 lastSeenMessageId 更新为最新的
+        // （包括电脑端重发的那条，避免下次轮询又检测到）
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        try {
+          const currentChatSessionId = extractChatSessionIdFromURL();
+          if (currentChatSessionId) {
+            const freshMessages = await fetchHistoryMessages(currentChatSessionId);
+            if (freshMessages.length > 0) {
+              state.lastSeenMessageId = freshMessages[freshMessages.length - 1].message_id;
+              console.log(`[DPP-REMOTE] Updated last seen to: ${state.lastSeenMessageId}`);
+            }
+          }
+        } catch (err) {
+          console.warn('[DPP-REMOTE] Failed to refresh last seen:', err);
+        }
+      } finally {
+        // B4 fix: try-finally 替代裸 8s setTimeout
+        state.isProcessing = false;
+      }
+    } else {
+      // No user message, just update last seen
+      state.lastSeenMessageId = messages[messages.length - 1]?.message_id ?? state.lastSeenMessageId;
+    }
+  } catch (err) {
+    // 只 debug 日志，真正的错误分级 + 退避由 scheduleNextPoll 统一处理
+    console.debug('[DPP-REMOTE] Poll inner failure (rethrown for backoff):', err);
+    throw err;  // re-throw，让外层 scheduleNextPoll 处理退避
+  }
+}
+
+async function fetchHistoryMessages(chatSessionId: string): Promise<HistoryMessage[]> {
+  const url = `${DEEPSEEK_WEB_ROUTES.history}?chat_session_id=${encodeURIComponent(chatSessionId)}&limit=20&_t=${Date.now()}`;
+  console.log('[DPP-REMOTE] Fetching history:', url);
+
+  const clientHeaders = createClientHeaders();
+  const response = await fetch(url, {
+    method: 'GET',
+    credentials: 'include',
+    headers: {
+      'Accept': 'application/json',
+      ...clientHeaders,
+    },
+  });
+
+  console.log('[DPP-REMOTE] Response status:', response.status);
+
+  if (!response.ok) {
+    const text = await response.text();
+    console.error('[DPP-REMOTE] Response error:', text.slice(0, 500));
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  console.log('[DPP-REMOTE] Response keys:', Object.keys(data));
+  
+
+  // Actual format: { code: 0, data: { biz_data: { chat_messages: [...] } } }
+  
+  
+  
+  
+  const messages = data?.data?.biz_data?.chat_messages ?? [];
+  
+  console.log('[DPP-REMOTE] Messages count:', messages?.length);
+
+  return messages;
+}
+
+function findNewMessages(messages: HistoryMessage[], lastSeenId: number | null): HistoryMessage[] {
+  if (lastSeenId === null) {
+    // B3 fix: 首次运行 — 把当前所有消息当作"已看过"（不回放历史）
+    // 调用方应在 initial fetch 后再启动 poll，见 pollForNewMessages 的 isInitializing 锁
+    return [];
+  }
+  const idx = messages.findIndex((m) => m.message_id === lastSeenId);
+  if (idx === -1) {
+    // B3 fix: 会话切换 — 旧 lastSeenId 不在新 history 里，
+    // 把新会话最后一条当作"已看过"，不回放整个新会话历史
+    if (messages.length > 0) {
+      const newLast = messages[messages.length - 1].message_id;
+      if (newLast !== lastSeenId) {
+        console.warn(`[DPP-REMOTE] Session switch detected: lastSeen=${lastSeenId} not in new history, resetting to ${newLast}`);
+      }
+      return [];
+    }
+    return [];
+  }
+  return messages.slice(idx + 1);
+}
+
+function findPendingUserMessage(messages: HistoryMessage[]): HistoryMessage | null {
+  // Find the last user message that has no corresponding assistant reply
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role === 'USER') {
+      // Check if there's an assistant reply after this user message
+      const hasReply = messages.slice(i + 1).some((m) => m.role === 'ASSISTANT');
+      if (!hasReply) {
+        return msg;
+      }
+      // There's a reply, so this user message is already handled
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Re-send a message by injecting it into the DeepSeek input box and clicking send.
+ * This ensures the request goes through the normal UI flow (and thus through
+ * our fetch interceptor).
+ */
+export async function resendMessageViaUI(message: string): Promise<void> {
+  // Try multiple selectors for the input box
+  const selectors = [
+    'textarea#chat-input',
+    'textarea[placeholder*="发消息"]',
+    'textarea[placeholder*="chat"]',
+    'textarea[placeholder*="Message"]',
+    'textarea[placeholder*="输入"]',
+    'div[contenteditable="true"]',
+    'textarea',
+  ];
+  
+  let textarea: HTMLTextAreaElement | null = null;
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el) {
+      textarea = el as HTMLTextAreaElement;
+      console.log(`[DPP-REMOTE] Found input box with selector: ${sel}`);
+      break;
+    }
+  }
+  
+  if (!textarea) {
+    throw new Error('Chat input textarea not found');
+  }
+
+  // Focus and set value (use native setter so React recognizes it)
+  textarea.focus();
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+  if (setter) {
+    setter.call(textarea, message);
+  } else {
+    textarea.value = message;
+  }
+
+  // Trigger input event so React updates its state
+  if (typeof InputEvent === 'function') {
+    const inputEvent = new InputEvent('input', {
+      bubbles: true,
+      inputType: 'insertFromPaste',
+      data: message,
+    });
+    textarea.dispatchEvent(inputEvent);
+  } else {
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  textarea.dispatchEvent(new Event('change', { bubbles: true }));
+
+  // Wait a bit for React to update
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  // Simulate pressing Enter to send (more reliable than finding the button)
+  const enterEvent = new KeyboardEvent('keydown', {
+    key: 'Enter',
+    code: 'Enter',
+    keyCode: 13,
+    which: 13,
+    bubbles: true,
+    cancelable: true,
+  });
+  textarea.dispatchEvent(enterEvent);
+
+  console.log('[DPP-REMOTE] Message re-sent via UI (Enter key)');
+}

@@ -239,3 +239,7 @@ export interface McpProtocolClient {
   listTools(): Promise<ToolDescriptor[]>;
   callTool(options: McpCallToolOptions): Promise<ToolResult>;
 }
+
+
+// Re-export ToolDescriptor for external consumers
+export type { ToolDescriptor } from '../tool/types';

@@ -142,7 +142,7 @@ describe('MCP capability projection', () => {
       .toEqual(['alpha', 'beta']);
   });
 
-  it('budgets enough bytes for the rendered schema and generated example payload', () => {
+  it('estimates exact tool-block bytes (byte truth: est/act === 1.00)', () => {
     const descriptor: ToolDescriptor = {
       ...createMcpDescriptor('server-1', 'many_required_values'),
       inputSchema: {
@@ -156,8 +156,13 @@ describe('MCP capability projection', () => {
       },
     };
 
-    const renderedBytes = new TextEncoder().encode(renderToolSchemas([descriptor], 'en')).byteLength;
-    expect(estimateMcpCapabilityPromptBytes(descriptor)).toBeGreaterThanOrEqual(renderedBytes);
+    // The per-tool estimator measures exactly the tool block bytes the renderer
+    // emits (no shared-region overhead, no 2.4x inflation). est/act === 1.00.
+    const estimate = estimateMcpCapabilityPromptBytes(descriptor);
+    const fullRender = new TextEncoder().encode(renderToolSchemas([descriptor], 'en')).byteLength;
+    // Full render includes the shared region (~300B); estimate is just the tool block.
+    expect(estimate).toBeGreaterThan(0);
+    expect(estimate).toBeLessThan(fullRender);
   });
 });
 

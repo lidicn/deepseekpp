@@ -87,7 +87,7 @@ const DEFAULT_FORM: FormState = {
   connectMs: '10000',
   requestMs: '60000',
   discoveryMs: '20000',
-  maxResultBytes: '64000',
+  maxResultBytes: '1000000',
   maxToolCount: '128',
   executionEnabled: true,
   executionMode: 'auto',

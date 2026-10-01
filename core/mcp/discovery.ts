@@ -9,6 +9,10 @@ import {
   saveMcpDiscoveryResult,
 } from './store';
 import { createMcpTransport } from './transports';
+import { getCachedMcpTransport, invalidateMcpTransportCache, setCachedMcpTransport } from './client-cache';
+
+// v1.15 feature flag: MCP 连接复用缓存。出问题可单项关闭回退到每次新建。
+const CLIENT_CACHE_ENABLED = true;
 import type {
   McpServerConfig,
   McpServerHealth,
@@ -198,9 +202,15 @@ export async function executeMcpToolCall(
     };
   }
   const startedAt = Date.now();
+  // v1.15 client-cache: 优先复用已 initialize 的 transport
+  let transport = CLIENT_CACHE_ENABLED ? getCachedMcpTransport(server) : undefined;
+  const usedCache = transport !== undefined;
   try {
-    const transport = createMcpTransport(server);
-    await initializeMcpServer(server, transport, { signal: options.signal });
+    if (!transport) {
+      transport = createMcpTransport(server);
+      await initializeMcpServer(server, transport, { signal: options.signal });
+      if (CLIENT_CACHE_ENABLED) setCachedMcpTransport(server, transport);
+    }
     return callMcpTool(server, transport, {
       call: {
         ...call,
@@ -209,10 +219,14 @@ export async function executeMcpToolCall(
       },
       descriptor,
       timeoutMs: options.timeoutMs ?? descriptor?.execution.timeoutMs ?? server.timeouts.requestMs,
-      maxResultBytes: options.maxResultBytes ?? descriptor?.execution.maxResultBytes ?? server.limits.maxResultBytes,
+      maxResultBytes: options.maxResultBytes ?? server.limits.maxResultBytes ?? descriptor?.execution.maxResultBytes,
       signal: options.signal,
     });
   } catch (err) {
+    // v1.15 client-cache: 复用的连接出错时摘除缓存，下次重建
+    if (usedCache && CLIENT_CACHE_ENABLED) {
+      invalidateMcpTransportCache(server.id);
+    }
     throwIfMcpExecutionAborted(options.signal);
     const completedAt = Date.now();
     const message = err instanceof Error ? err.message : String(err);

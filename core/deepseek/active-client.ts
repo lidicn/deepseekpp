@@ -553,12 +553,31 @@ async function readCompletionStreamWithCallbacks(
     }
     : undefined;
 
+  let streamAbortedMidResponse = false;
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      let done = false;
+      let value: Uint8Array | undefined;
+      try {
+        ({ done, value } = await reader.read());
+      } catch (readerErr) {
+        // Stream was interrupted mid-response (timeout abort, connection reset).
+        // If we already consumed some SSE events — we have partial text
+        // and/or responseMessageId — return the partial summary so the
+        // caller can continue instead of treating this as a fatal error.
+        // If we got nothing at all, the error propagates up unchanged.
+        const hasPartialContent = summary.responseMessageId !== null
+          || summary.assistantText !== ''
+          || summary.assistantReasoningText !== '';
+        if (hasPartialContent) {
+          streamAbortedMidResponse = true;
+          break;
+        }
+        throw readerErr;
+      }
       if (done) break;
 
-      const newText = consumeDeepSeekSseEvents(decoder.push(value), summary, {
+      const newText = consumeDeepSeekSseEvents(decoder.push(value!), summary, {
         retainAssistantText,
         onParsed,
         onReasoningChunk: callbacks.onReasoningChunk,
@@ -578,9 +597,17 @@ async function readCompletionStreamWithCallbacks(
     }
   } finally {
     speedTracker?.finish();
+    if (streamAbortedMidResponse) {
+      try { await reader.cancel(); } catch { /* ignore cleanup errors */ }
+    }
   }
 
   callbacks.onFinished?.();
+  if (streamAbortedMidResponse) {
+    // Ensure partial summary is marked incomplete so callers (StreamFn) can
+    // distinguish "stream interrupted" from "normal completion".
+    summary.finished = false;
+  }
   return summary;
 }
 

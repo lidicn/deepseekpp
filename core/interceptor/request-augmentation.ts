@@ -1,5 +1,5 @@
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
-import { buildPromptAugmentation } from '../prompt';
+import { buildPromptAugmentation, sanitizeInternalPromptText } from '../prompt';
 import {
   DEFAULT_PROMPT_INJECTION_SETTINGS,
   normalizePromptInjectionSettings,
@@ -168,7 +168,9 @@ export function augmentDecodedRequestBody(
 ): RequestBodyAugmentationResult {
   const body: DeepSeekRequestBody = { ...decodedBody };
 
-  const originalPrompt = body.prompt;
+  // 提取原始用户输入，避免重复注入系统提示（DeepSeek 请求会把历史消息都带过来，
+  // 包括之前注入的系统提示，如果不提取就会导致重复注入）
+  const originalPrompt = sanitizeInternalPromptText(body.prompt);
   const locale = state.locale ?? DEFAULT_LOCALE;
 
   const thinkingEnabled = body.thinking_enabled === true;

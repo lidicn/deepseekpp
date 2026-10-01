@@ -1,4 +1,4 @@
-import type { ToolCall, ToolError } from '../types';
+﻿import type { ToolCall, ToolError } from '../types';
 import {
   createToolCallFromInvocation,
   createToolInvocationCatalog,
@@ -7,6 +7,7 @@ import {
   type ToolParsingInput,
 } from '../tool';
 import { findFirstXmlToolTag } from '../tool/xml-tags';
+import { repairToolJsonBody } from './repair-tool-json';
 
 export const LEGACY_TOOL_CALLS_OPEN_TAG = '<｜DSML｜tool_calls>';
 export const LEGACY_TOOL_CALLS_CLOSE_TAG = '</｜DSML｜tool_calls>';
@@ -72,6 +73,20 @@ function extractXmlToolCalls(text: string, catalog: ToolInvocationCatalog): Tool
       }
       payload = parsed;
     } catch (err) {
+      // 转义容错修复层：先尝试修复转义问题，再解析一次
+      const repaired = repairToolJsonBody(body);
+      if (repaired !== null) {
+        try {
+          const reparsed = JSON.parse(repaired);
+          if (isToolPayload(reparsed)) {
+            calls.push(createToolCallFromInvocation(invocationName, reparsed, raw, catalog));
+            fromIndex = close.endIndex;
+            continue;
+          }
+        } catch {
+          // 修复结果仍不可解析：回落到原有错误分支
+        }
+      }
       calls.push(createToolCallFromInvocation(invocationName, {}, raw, catalog, {
         parseError: createToolParseError(
           'tool_call_json_invalid',

@@ -349,8 +349,9 @@ describe('MCP and Native external contract', () => {
       resultTransport({ structuredContent: '中文🙂' }),
       { call: toolCall(), maxResultBytes: 3 },
     );
-    expect(truncated).toMatchObject({ truncated: true, detail: '中' });
-    expect(new TextEncoder().encode(truncated.detail).byteLength).toBe(3);
+    expect(truncated.truncated).toBe(true);
+    expect(truncated.detail).toMatch(/^中\n\.\.\.\[truncated/);
+    expect(new TextEncoder().encode(truncated.detail).byteLength).toBeGreaterThan(3);
 
     const exactBoundary = await callMcpTool(
       mcpServer(),
@@ -364,12 +365,10 @@ describe('MCP and Native external contract', () => {
       resultTransport({ content: [{ type: 'text', text: '中文🙂' }], isError: true }),
       { call: toolCall(), maxResultBytes: 3 },
     );
-    expect(truncatedError).toMatchObject({
-      ok: false,
-      truncated: true,
-      detail: '中',
-      error: { message: '中' },
-    });
+    expect(truncatedError.ok).toBe(false);
+    expect(truncatedError.truncated).toBe(true);
+    expect(truncatedError.detail).toMatch(/^中\n\.\.\.\[truncated/);
+    expect(truncatedError.error?.message).toMatch(/^中/);
   });
 
   it('caps paginated discovery exactly at maxToolCount', async () => {

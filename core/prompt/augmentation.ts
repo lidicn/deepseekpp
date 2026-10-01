@@ -1,4 +1,4 @@
-import { SHELL_TOOL_NAMES } from '../shell/contracts';
+﻿import { SHELL_TOOL_NAMES } from '../shell/contracts';
 import type { Memory, ToolDescriptor } from '../types';
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n/background';
 import {
@@ -11,6 +11,13 @@ import {
 } from '../tool';
 import { estimateTokens, formatMemoriesBlock, getMemoryBudget, selectMemories } from '../memory/selector';
 import { markVisibleUserPrompt, markVisibleUserPromptMetadata } from './visibility';
+import {
+  createToolBlockParts,
+  measureCatalogParts,
+  renderCatalogParts,
+  renderCatalogSharedRegion,
+} from './catalog-template';
+import { refactorTelemetry } from '../debug/refactor-telemetry';
 
 export interface PromptAugmentationOptions {
   memories?: readonly Memory[];
@@ -28,6 +35,8 @@ export interface PromptAugmentationOptions {
   memoryEnabled?: boolean;
   systemPromptEnabled?: boolean;
   forceResponseLanguage?: SupportedLocale | null;
+  /** L1 summary for hidden MCP tools, rendered at the end of the tool catalog block. */
+  hiddenSummary?: string;
 }
 
 export interface PromptAugmentationResult {
@@ -51,6 +60,7 @@ export function buildPromptAugmentation(
     memoryEnabled = true,
     systemPromptEnabled = true,
     forceResponseLanguage = null,
+    hiddenSummary = '',
   } = options ?? {};
   const toolDescriptors = options?.toolDescriptors ?? createDefaultToolDescriptors(locale);
   const visiblePromptMetadata = options?.visibleUserPrompt === undefined
@@ -65,7 +75,7 @@ export function buildPromptAugmentation(
   const memBlock = memoryEnabled
     ? formatMemoriesBlock(selected, locale)
     : translate(locale, 'prompt.memoryDisabled');
-  const toolsBlock = systemPromptEnabled ? renderToolSchemas(toolDescriptors, locale) : '';
+  const toolsBlock = systemPromptEnabled ? renderToolSchemas(toolDescriptors, locale, hiddenSummary) : '';
   const baseSystem = systemPromptEnabled
     ? translate(
       locale,
@@ -116,18 +126,50 @@ function renderSkillSystemContext(context: string, locale: SupportedLocale): str
   return `${header}\n\n${context}`;
 }
 
+// v1.17 性能优化：工具目录渲染 memo（会话内 descriptors 引用不变则复用）
+const toolSchemaCache = new WeakMap<readonly ToolDescriptor[], {
+  locale: SupportedLocale;
+  hiddenSummary: string;
+  rendered: string;
+}>();
+
 export function renderToolSchemas(
   descriptors?: readonly ToolDescriptor[],
   locale: SupportedLocale = DEFAULT_LOCALE,
+  hiddenSummary = '',
 ): string {
   const resolvedDescriptors = descriptors ?? createDefaultToolDescriptors(locale);
-  const catalog = createToolInvocationCatalog(resolvedDescriptors);
-  const shellHint = renderShellMcpHint(resolvedDescriptors, catalog, locale);
-  const pythonHint = renderPythonMcpHint(resolvedDescriptors, catalog, locale);
-  const schemas = resolvedDescriptors
+  
+  // 命中缓存：descriptors 引用不变 + locale/hiddenSummary 相同 → 直接复用
+  const cached = toolSchemaCache.get(resolvedDescriptors);
+  if (cached && cached.locale === locale && cached.hiddenSummary === hiddenSummary) {
+    refactorTelemetry.recordToolSchemaCache(true);
+    return cached.rendered;
+  }
+  refactorTelemetry.recordToolSchemaCache(false);
+  // Prefix stability: sort by provider tier (builtin first) + name so the rendered
+  // tool catalog is byte-identical regardless of input/discovery order.
+  const sortedDescriptors = [...resolvedDescriptors].sort((a, b) => {
+    const tierA = a.provider.kind === 'local' ? 0 : 1;
+    const tierB = b.provider.kind === 'local' ? 0 : 1;
+    if (tierA !== tierB) return tierA - tierB;
+    return a.name.localeCompare(b.name);
+  });
+  const catalog = createToolInvocationCatalog(sortedDescriptors);
+  const shellHint = renderShellMcpHint(sortedDescriptors, catalog, locale);
+  const pythonHint = renderPythonMcpHint(sortedDescriptors, catalog, locale);
+  const sharedRegion = renderCatalogSharedRegion(locale);
+  const schemas = sortedDescriptors
     .map((descriptor) => renderToolSchema(descriptor, catalog))
     .join('\n\n');
-  return [shellHint, pythonHint, schemas].filter(Boolean).join('\n\n');
+  const rendered = [shellHint, pythonHint, sharedRegion, schemas, hiddenSummary]
+    .filter(Boolean)
+    .join('\n\n');
+  
+  // 存入缓存
+  toolSchemaCache.set(resolvedDescriptors, { locale, hiddenSummary, rendered });
+  
+  return rendered;
 }
 
 function renderWebSearchGuidance(
@@ -166,22 +208,27 @@ function renderPythonMcpHint(
 }
 
 function renderToolSchema(descriptor: ToolDescriptor, catalog: ToolInvocationCatalog): string {
-  const examplePayload = createExamplePayload(descriptor);
-  const preferredName = getPreferredToolInvocationName(descriptor, catalog);
-  const acceptedNames = getToolInvocationNames(descriptor, catalog);
-  const lines = [
-    `### Tool ${preferredName}`,
-    `Title: ${descriptor.title}`,
-    `Description: ${descriptor.description}`,
-    acceptedNames.length > 1 ? `Accepted tag names: ${acceptedNames.join(', ')}` : '',
-    `Valid call format for ${preferredName}:`,
-    `<${preferredName}>`,
-    JSON.stringify(examplePayload, null, 2),
-    `</${preferredName}>`,
-    `Invalid formats: <invoke name="${preferredName}">...</invoke>, <tool_call>...</tool_call>`,
-    `Parameters JSON Schema: ${JSON.stringify(descriptor.inputSchema)}`,
-  ];
-  return lines.filter(Boolean).join('\n');
+  return renderCatalogParts(createToolBlockParts({
+    preferredName: getPreferredToolInvocationName(descriptor, catalog),
+    acceptedNames: getToolInvocationNames(descriptor, catalog),
+    title: descriptor.title,
+    description: descriptor.description,
+    inputSchema: descriptor.inputSchema,
+  }));
+}
+
+/**
+ * Byte-truth used by the capability budget (R1-a): the estimator measures the
+ * exact block the renderer will emit, from the same template definition.
+ */
+export function measureToolSchemaBytes(descriptor: ToolDescriptor): number {
+  return measureCatalogParts(createToolBlockParts({
+    preferredName: getPreferredToolInvocationName(descriptor, createToolInvocationCatalog([descriptor])),
+    acceptedNames: getToolInvocationNames(descriptor, createToolInvocationCatalog([descriptor])),
+    title: descriptor.title,
+    description: descriptor.description,
+    inputSchema: descriptor.inputSchema,
+  }));
 }
 
 function renderShellMcpHint(
@@ -217,46 +264,4 @@ export function renderToolFormatReminder(
   const names = catalog.invocationNames;
   if (names.length === 0) return '';
   return `\n\n${translate(locale, 'prompt.toolFormatReminder', { names: names.join(', ') })}`;
-}
-
-function createExamplePayload(descriptor: ToolDescriptor): Record<string, unknown> {
-  const properties = descriptor.inputSchema.properties ?? {};
-  const required = descriptor.inputSchema.required ?? Object.keys(properties);
-  const payload: Record<string, unknown> = {};
-
-  for (const key of required) {
-    payload[key] = exampleValue(properties[key]);
-  }
-
-  return payload;
-}
-
-function exampleValue(schema: unknown): unknown {
-  if (!schema || typeof schema !== 'object') return 'value';
-  const value = schema as Record<string, unknown>;
-  const type = value.type;
-  if (Array.isArray(type)) return exampleValue({ ...value, type: type[0] });
-  if (value.enum && Array.isArray(value.enum) && value.enum.length > 0) return value.enum[0];
-  switch (type) {
-    case 'number':
-    case 'integer':
-      return 0;
-    case 'boolean':
-      return false;
-    case 'array':
-      return [];
-    case 'object':
-      return {};
-    case 'string':
-    default: {
-      const desc = typeof value.description === 'string' ? value.description.toLowerCase() : '';
-      if (type === 'string' && (desc.includes('file path') || desc.includes('file_path') || desc.includes('filepath'))) {
-        if (desc.includes('.pptx')) return './example.pptx';
-        if (desc.includes('.docx')) return './example.docx';
-        if (desc.includes('.xlsx')) return './example.xlsx';
-        return './example.txt';
-      }
-      return 'value';
-    }
-  }
 }

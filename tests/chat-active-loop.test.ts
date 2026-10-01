@@ -41,6 +41,8 @@ describe('active chat loop marker', () => {
       active: true,
       startedAt: expect.any(Number),
       provider: 'web',
+      executions: [],
+      currentTool: null,
     });
   });
 
@@ -64,33 +66,45 @@ describe('active chat loop marker', () => {
 });
 
 describe('reconcileInterruptedChatLoop', () => {
-  it('returns null and keeps the marker when the loop is still fresh', async () => {
+  it('returns interrupted loop + clears marker — P0-6 fix: no stale threshold', async () => {
     const { storage, chromeStub } = createSessionStorageStub();
     vi.stubGlobal('chrome', chromeStub);
-    const startedAt = 1_000_000;
+    // Simulate marker from 5s ago (would have been "fresh" under old 60s threshold)
+    const startedAt = Date.now() - 5_000;
     storage.set(STORAGE_KEY, { active: true, startedAt, provider: 'web' });
 
-    // Only 5s elapsed — under the 15s stale threshold.
-    const result = await reconcileInterruptedChatLoop(startedAt + 5_000);
+    // P0-6: cold start → marker exists = interrupted (no fresh/stale distinction)
+    const result = await reconcileInterruptedChatLoop();
 
-    expect(result).toBeNull();
-    expect(storage.has(STORAGE_KEY)).toBe(true);
+    expect(result).not.toBeNull();
+    expect(result!.provider).toBe('web');
+    expect(result!.startedAt).toBe(startedAt);
+    expect(result!.interruptedAt).toBeGreaterThanOrEqual(startedAt);
+    expect(result!.executions).toEqual([]);
+    expect(result!.currentTool).toBeNull();
+    expect(storage.has(STORAGE_KEY)).toBe(false);  // marker cleared
   });
 
-  it('returns the interrupted loop and clears the marker once stale', async () => {
+  it('returns interrupted loop with executions/currentTool populated — P0-3 enhanced marker', async () => {
     const { storage, chromeStub } = createSessionStorageStub();
     vi.stubGlobal('chrome', chromeStub);
     const startedAt = 1_000_000;
-    storage.set(STORAGE_KEY, { active: true, startedAt, provider: 'official-api' });
+    const executions = [{ name: 'shell_exec', provider: 'native', descriptorId: 's1', result: { ok: true, summary: 'ok' } }];
+    const currentTool = { name: 'python', startedAt: startedAt + 5000 };
+    storage.set(STORAGE_KEY, {
+      active: true, startedAt, provider: 'official-api',
+      executions, currentTool,
+    });
 
-    // 20s elapsed — past the threshold, e.g. a SW restart.
-    const result = await reconcileInterruptedChatLoop(startedAt + 20_000);
+    const result = await reconcileInterruptedChatLoop();
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       provider: 'official-api',
       startedAt,
-      interruptedAt: startedAt + 20_000,
+      executions,
+      currentTool,
     });
+    expect(result!.interruptedAt).toBeGreaterThanOrEqual(startedAt);
     expect(storage.has(STORAGE_KEY)).toBe(false);
   });
 
@@ -98,6 +112,7 @@ describe('reconcileInterruptedChatLoop', () => {
     const { chromeStub } = createSessionStorageStub();
     vi.stubGlobal('chrome', chromeStub);
 
-    expect(await reconcileInterruptedChatLoop(Date.now())).toBeNull();
+    // No marker → no interruption
+    expect(await reconcileInterruptedChatLoop()).toBeNull();
   });
 });

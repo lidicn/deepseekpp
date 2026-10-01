@@ -36,6 +36,8 @@
 
 DeepSeek++ 是面向 [DeepSeek](https://chat.deepseek.com) 网页版的开源浏览器扩展，支持 Chrome、Edge 和 Firefox。它把 DeepSeek Web 扩展成 AI agent workspace，让用户在同一浏览器工作流里使用中英文界面、MCP 工具、图片/视频多模态分析、长期记忆、Skill、系统提示词预设、联网搜索、网页读取、对话导出和定时自动化。
 
+> **支持环境**：请在 **Chrome / Edge / Firefox 桌面版**中打开 DeepSeek 官方网页版 `https://chat.deepseek.com` 使用。基于 Chromium 的其它定制浏览器（如豆包内置聊天页 `doubao://`）不在受支持范围内——如需在这些浏览器中使用，请直接访问上述标准网页版地址。
+
 如果你在寻找 DeepSeek Chrome extension、DeepSeek MCP tools、DeepSeek memory plugin、DeepSeek conversation export 或 DeepSeek AI agent，DeepSeek++ 对应的是同一个本地优先的 DeepSeek 浏览器增强工作台。
 
 语言可设为跟随浏览器、简体中文或 English。DeepSeek++ 会让侧边栏、右键菜单、工具结果、内置 Skill 行为和自动续跑提示保持一致语言，同时保留用户自己写的记忆、预设、自定义 Skill、自动化任务和同步数据原文。

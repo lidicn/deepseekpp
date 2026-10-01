@@ -298,6 +298,9 @@ describe('AGENT_* event protocol golden', () => {
   });
 
   it('G5 nudge budget: second no-tool nudge answer stops with the budget notice', async () => {
+    // After the断流修复: the first nudge turn also still nudging gets ONE
+    // extra continuation (续一轮) before the budget notice stops the loop.
+    // Before the fix it would stop at the second call; now it makes a third.
     vi.useFakeTimers();
     adapterMocks.submitPromptStreaming
       .mockImplementationOnce(async (_input, handlers) => {
@@ -307,19 +310,24 @@ describe('AGENT_* event protocol golden', () => {
       .mockImplementationOnce(async (_input, handlers) => {
         handlers.onTextChunk('I still need to call search next.');
         return { assistantText: '', responseMessageId: 104, requestMessageId: 103, finished: true };
+      })
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('Let me search for it now.');
+        return { assistantText: '', responseMessageId: 106, requestMessageId: 105, finished: true };
       });
 
     const { events, post } = createCollector();
 
     const run = runInlineAgentLoop(createPayload(), { post, executeTool: vi.fn(), signal: new AbortController().signal });
-    await vi.advanceTimersByTimeAsync(7_000);
+    await vi.advanceTimersByTimeAsync(20_000);
     await run;
 
     expect(events).toEqual([
       { type: 'AGENT_STEP_STARTED', loopId: 'loop-1', stepIndex: 0 },
       { type: 'AGENT_STREAM_CHUNK', loopId: 'loop-1', stepIndex: 0, text: '', fullText: 'I will call search next.' },
       { type: 'AGENT_STREAM_CHUNK', loopId: 'loop-1', stepIndex: 0, text: '', fullText: 'I still need to call search next.' },
-      { type: 'AGENT_STEP_COMPLETE', loopId: 'loop-1', stepIndex: 0, responseMessageId: 104, toolExecutions: [] },
+      { type: 'AGENT_STREAM_CHUNK', loopId: 'loop-1', stepIndex: 0, text: '', fullText: 'Let me search for it now.' },
+      { type: 'AGENT_STEP_COMPLETE', loopId: 'loop-1', stepIndex: 0, responseMessageId: 106, toolExecutions: [] },
       { type: 'AGENT_LOOP_COMPLETE', loopId: 'loop-1', totalSteps: 1, totalTools: 1, finalText: BUDGET_NOTICE_1 },
     ]);
   });

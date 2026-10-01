@@ -142,7 +142,7 @@ describe('augmentRequestBody', () => {
     expect(result.augmented).toContain('Available tool tag names: memory_save');
     expect(result.augmented).toContain('<memory_save>');
     expect(result.augmented).toContain('</memory_save>');
-    expect(result.augmented).toContain('Invalid formats: <invoke name="memory_save">...</invoke>, <tool_call>...</tool_call>');
+    expect(result.augmented).toContain('Invalid formats: <invoke name="...">...</invoke>, <tool_call>...</tool_call>');
     expect(result.augmented).not.toContain('## 角色');
   });
 

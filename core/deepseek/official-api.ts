@@ -111,16 +111,40 @@ async function readOfficialApiStream(
   const decoder = createDeepSeekSseByteDecoder();
   const turn: OfficialDeepSeekTurn = { assistantText: '', reasoningText: '', finished: false };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  let streamAbortedEarly = false;
+  try {
+    while (true) {
+      let done = false;
+      let value: Uint8Array | undefined;
+      try {
+        ({ done, value } = await reader.read());
+      } catch (readerErr) {
+        // Partial completion handling: if we have streamed content before the
+        // reader throws (timeout abort, connection reset), return the partial
+        // turn so the caller can continue via nudge instead of terminating.
+        const hasPartialContent = turn.assistantText !== '' || turn.reasoningText !== '';
+        if (hasPartialContent) {
+          streamAbortedEarly = true;
+          break;
+        }
+        throw readerErr;
+      }
+      if (done) break;
 
-    consumeOfficialApiSse(decoder.push(value), turn, callbacks);
+      consumeOfficialApiSse(decoder.push(value!), turn, callbacks);
+    }
+
+    consumeOfficialApiSse(decoder.finish(), turn, callbacks);
+  } finally {
+    if (streamAbortedEarly) {
+      try { await reader.cancel(); } catch { /* ignore cleanup errors */ }
+    }
   }
 
-  consumeOfficialApiSse(decoder.finish(), turn, callbacks);
-
   callbacks.onFinished?.();
+  if (streamAbortedEarly) {
+    turn.finished = false; // explicitly mark as incomplete
+  }
   return turn;
 }
 

@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import {
   copyFileSync,
+  cpSync,
+  existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -214,6 +216,20 @@ function copyBundledSkillAssets(
   publicAssets.push({ type: 'asset', fileName: catalogFileName });
 }
 
+// The Chromium browsers under development load the extension from
+// ../extensions/<browser> (a hand-staged copy), not from WXT's dist/<browser>-mv3.
+// Mirror the freshly built output there so a rebuild never leaves a stale
+// bundle loaded (root cause of the "I built but old code ran" debugging tax).
+// Additive copy only: dist/ is untouched so the verify:* scripts that read
+// dist/<browser>-mv3 keep working.
+function syncToLoadDirectory(browser: string, outputDir: string): void {
+  if (!CHROMIUM_BROWSERS.has(browser)) return;
+  const loadDir = resolve(rootDir, '..', 'extensions', browser);
+  if (!existsSync(outputDir)) return;
+  cpSync(outputDir, loadDir, { recursive: true, force: true });
+  console.log(`[dpp] synced build output -> ${loadDir}`);
+}
+
 function collectAssetPaths(
   directory: string,
   include: (relativePath: string) => boolean,
@@ -262,6 +278,7 @@ export default defineConfig({
     'build:done'(wxt, output) {
       copyBundledSkillAssets(wxt.config.outDir, output.publicAssets);
       copyPyodideAssets(wxt.config.outDir, output.publicAssets);
+      syncToLoadDirectory(wxt.config.browser, wxt.config.outDir);
     },
   },
   vite: () => ({

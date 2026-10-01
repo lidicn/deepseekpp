@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
+import type { InterruptedChatLoop } from '../core/chat/active-loop';
 import {
   DEEPSEEK_RUNTIME_PAYLOAD_DECODERS,
   stageDeepSeekImageUpload,
@@ -346,11 +347,7 @@ describe('interactive chat coordinator', () => {
   });
 
   it('blocks chat admission until wake reconciliation finishes', async () => {
-    const reconcile = deferred<{
-      provider: 'web';
-      startedAt: number;
-      interruptedAt: number;
-    } | null>();
+    const reconcile = deferred<InterruptedChatLoop | null>();
     const dependencies = createChatDependencies();
     vi.mocked(dependencies.reconcileInterruptedChatLoop).mockReturnValue(reconcile.promise);
     const service = createChatRuntimeService(dependencies);
@@ -359,7 +356,7 @@ describe('interactive chat coordinator', () => {
     const submit = service.submitPrompt({ text: 'after recovery', refFileIds: [] }, 17);
     expect(dependencies.getChatEnabled).not.toHaveBeenCalled();
 
-    reconcile.resolve({ provider: 'web', startedAt: 1, interruptedAt: 2 });
+    reconcile.resolve({ provider: 'web', startedAt: 1, interruptedAt: 2, executions: [], currentTool: null });
     await recovery;
     await expect(submit).resolves.toEqual({ ok: true });
     expect(dependencies.broadcastChunk).toHaveBeenNthCalledWith(1, {

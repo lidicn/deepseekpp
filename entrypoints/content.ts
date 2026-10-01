@@ -16,6 +16,12 @@ import type {
   ToolDescriptor,
   ToolExecutionRecord,
 } from "../core/types";
+import {
+  startRemoteAgentWatcher,
+  stopRemoteAgentWatcher,
+  resendMessageViaUI,
+  recordLocalSentMessage,
+} from "../core/remote-agent/watcher";
 import { getDeepSeekApiKey } from "../core/chat/api-key";
 import { normalizePetConfig } from "../core/pet/config";
 import { pickPetLine, type PetState } from "../core/pet/lines";
@@ -1384,6 +1390,70 @@ async function dispatchMainWorldMessage(
       console.error("[DeepSeek++] main-world message handling failed", error);
   }
 }
+
+initConsoleLogPersistence();
+
+// Start remote agent watcher if enabled
+async function initRemoteAgentWatcher(): Promise<void> {
+  try {
+    // Read from chrome.storage.local (shared between sidepanel and content script)
+    const result = await chrome.storage.local.get('dpp_remote_agent_enabled');
+    const enabled = result.dpp_remote_agent_enabled === true;
+    console.log('[DPP-REMOTE] Enabled from storage:', enabled);
+
+    if (!enabled) return;
+
+    const chatSessionId = getCurrentChatSessionId();
+    if (!chatSessionId) {
+      console.log('[DPP-REMOTE] No chat session, watcher not started');
+      return;
+    }
+
+    startRemoteAgentWatcher({
+      chatSessionId,
+      onNewMessage: (message) => {
+        console.log('[DPP-REMOTE] Re-sending message:', message.slice(0, 50) + '...');
+        resendMessageViaUI(message).catch((err) => {
+          console.error('[DPP-REMOTE] Failed to re-send:', err);
+        });
+      },
+    });
+
+    console.log('[DPP-REMOTE] Watcher initialized');
+
+    // 监听当前浏览器的发送事件（用于自适应检测，避免重复重发）
+    setupLocalSendListener();
+
+    // Listen for storage changes (toggle on/off while page is open)
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.dpp_remote_agent_enabled) {
+        const newEnabled = changes.dpp_remote_agent_enabled.newValue === true;
+        console.log('[DPP-REMOTE] Setting changed:', newEnabled);
+        if (newEnabled) {
+          const sid = getCurrentChatSessionId();
+          if (sid) {
+            startRemoteAgentWatcher({
+              chatSessionId: sid,
+              onNewMessage: (message) => {
+                console.log('[DPP-REMOTE] Re-sending message:', message.slice(0, 50) + '...');
+                resendMessageViaUI(message).catch((err) => {
+                  console.error('[DPP-REMOTE] Failed to re-send:', err);
+                });
+              },
+            });
+          }
+        } else {
+          stopRemoteAgentWatcher();
+        }
+      }
+    });
+  } catch (err) {
+    console.error('[DPP-REMOTE] Init error:', err);
+  }
+}
+
+console.log('[DPP-REMOTE] content script loaded, initializing watcher...');
+initRemoteAgentWatcher();
 
 function handleContentRuntimeMessage(
   message: any,
@@ -4469,7 +4539,10 @@ async function startInlineAgentIfNeeded(
   complete: ResponseCompletePayload,
   executions: ToolExecutionRecord[],
 ): Promise<void> {
-  if (isInlineAgentResponseComplete(complete)) return;
+  if (isInlineAgentResponseComplete(complete)) {
+    console.log('[DPP-AUTO] skip: inline agent continuation response');
+    return;
+  }
 
   // Concurrency guard (issue #298): if an inline agent loop is already running
   // for this conversation, do NOT start a second one off a user-initiated turn
@@ -4478,6 +4551,7 @@ async function startInlineAgentIfNeeded(
   // Continuation turns are produced by the agent loop itself and are already
   // handled by isInlineAgentResponseComplete above.
   if (isInlineAgentRunning()) {
+    console.log('[DPP-AUTO] skip: inline agent already running');
     showContentToast(contentT("content.agent.concurrencyGuard"), "warning");
     return;
   }
@@ -4485,19 +4559,41 @@ async function startInlineAgentIfNeeded(
   // Collect executions that should trigger a continuation:
   // MCP tools + local web and browser-control tools.
   const continuableExecutions = selectContinuableToolExecutions(executions);
-  if (continuableExecutions.length === 0) return;
-  if (!complete.chatSessionId || complete.assistantMessageId == null) return;
+  if (continuableExecutions.length === 0) {
+    console.log('[DPP-AUTO] skip: no continuable executions', {
+      total: executions.length,
+      tools: executions.map(e => ({ name: e.name, providerKind: e.provider?.kind })),
+    });
+    return;
+  }
+  if (!complete.chatSessionId || complete.assistantMessageId == null) {
+    console.log('[DPP-AUTO] skip: missing session/assistant id', {
+      chatSessionId: complete.chatSessionId,
+      assistantMessageId: complete.assistantMessageId,
+    });
+    return;
+  }
 
   const loopId = crypto.randomUUID();
   const authorization = complete.requestId
     ? activeToolAuthorizations.get(complete.requestId)
     : undefined;
   if (!authorization) {
+    console.log('[DPP-AUTO] skip: no authorization for requestId', {
+      requestId: complete.requestId,
+      knownAuthIds: [...activeToolAuthorizations.keys()],
+    });
     // Don't fail silently: the user asked for agent work and the loop cannot
     // start without the tool authorization grant (Issue #544).
     showContentToast(contentT("content.agent.startFailed"), "warning");
     return;
   }
+
+  console.log('[DPP-AUTO] starting inline agent loop', {
+    loopId,
+    requestId: complete.requestId,
+    continuableTools: continuableExecutions.map(e => e.name),
+  });
 
   const payload: InlineAgentStartPayload = {
     loopId,
@@ -4831,11 +4927,15 @@ async function startInlineAgentLoop(
     teardownInlineAgentPanel();
   }
   const modelBackend = payload.modelBackend;
-  activeAgentModelBackend = modelBackend;
   const abort = new AbortController();
+  // Arm the concurrency guard only after every synchronous statement that can
+  // throw. If a throw landed between arming activeAgentAbort and entering the
+  // try below, no clear path would run and the guard would stay latched until a
+  // page reload, making every later turn hit "inline agent already running".
+  agentRunningToolCount = payload.toolExecutions.length;
+  activeAgentModelBackend = modelBackend;
   activeAgentAbort = abort;
 
-  agentRunningToolCount = payload.toolExecutions.length;
   const authorizationRequestKey = `agent:${payload.loopId}`;
   const capabilityScopeRequestId =
     payload.capabilityScopeRequestId ?? authorizationRequestKey;
@@ -5365,7 +5465,57 @@ async function handleAgentLoopComplete(
   return shouldReloadNativeHistory;
 }
 
+// Console log persistence: save recent logs before reload, restore after reload.
+const CONSOLE_LOG_STORAGE_KEY = 'dpp_console_log_buffer';
+const CONSOLE_LOG_MAX_ENTRIES = 500;
+let consoleLogBuffer: string[] = [];
+
+function initConsoleLogPersistence(): void {
+  // Hook console methods
+  const originalLog = console.log.bind(console);
+  const originalWarn = console.warn.bind(console);
+  const originalError = console.error.bind(console);
+  const originalInfo = console.info.bind(console);
+
+  const addEntry = (level: string, args: unknown[]) => {
+    try {
+      const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+      consoleLogBuffer.push(`[${new Date().toISOString()}] [${level}] ${msg}`);
+      if (consoleLogBuffer.length > CONSOLE_LOG_MAX_ENTRIES) {
+        consoleLogBuffer = consoleLogBuffer.slice(-CONSOLE_LOG_MAX_ENTRIES);
+      }
+      // Periodically save to localStorage
+      if (consoleLogBuffer.length % 50 === 0) {
+        localStorage.setItem(CONSOLE_LOG_STORAGE_KEY, JSON.stringify(consoleLogBuffer));
+      }
+    } catch {}
+  };
+
+  console.log = (...args) => { addEntry('log', args); originalLog(...args); };
+  console.warn = (...args) => { addEntry('warn', args); originalWarn(...args); };
+  console.error = (...args) => { addEntry('error', args); originalError(...args); };
+  console.info = (...args) => { addEntry('info', args); originalInfo(...args); };
+
+  // Restore previous logs on page load
+  try {
+    const saved = localStorage.getItem(CONSOLE_LOG_STORAGE_KEY);
+    if (saved) {
+      const entries = JSON.parse(saved);
+      console.log('%c--- Restored console logs from previous session ---', 'color: #999; font-style: italic');
+      for (const entry of entries) {
+        originalLog(entry);
+      }
+      console.log('%c--- End of restored logs ---', 'color: #999; font-style: italic');
+      consoleLogBuffer = entries;
+    }
+  } catch {}
+}
+
 function reloadInlineAgentNativeHistory(): void {
+  // Save buffer before reload
+  try {
+    localStorage.setItem(CONSOLE_LOG_STORAGE_KEY, JSON.stringify(consoleLogBuffer));
+  } catch {}
   window.location.reload();
 }
 
@@ -9886,4 +10036,39 @@ function applyBackground(config: BackgroundConfig | null) {
   if (!existingStyle) document.head.appendChild(styleEl);
 
   patchContainerBackgrounds();
+}
+
+/**
+ * 监听当前浏览器的发送事件，记录发送的消息内容
+ * 用于自适应检测：如果新消息是当前浏览器刚发的，就跳过不重发
+ */
+function setupLocalSendListener(): void {
+  // 监听 textarea 的 keydown 事件（Enter 键发送）
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        const content = target.tagName === 'TEXTAREA' 
+          ? (target as HTMLTextAreaElement).value 
+          : target.textContent || '';
+        if (content && content.trim()) {
+          recordLocalSentMessage(content.trim());
+        }
+      }
+    }
+  }, true);
+  
+  // 也监听点击发送按钮的情况
+  document.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (target && target.closest('button')) {
+      // 找最近的 textarea
+      const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
+      if (textarea && textarea.value && textarea.value.trim()) {
+        recordLocalSentMessage(textarea.value.trim());
+      }
+    }
+  }, true);
+  
+  console.log('[DPP-REMOTE] Local send listener setup');
 }

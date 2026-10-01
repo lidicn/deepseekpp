@@ -31,7 +31,10 @@ export function createCoalescingMutationQueue<Input, Output>(
     try {
       const outputs = await flush(batch.pending.map(({ input }) => input));
       if (outputs.length !== batch.pending.length) {
-        throw new Error('Coalesced mutation output count does not match input count');
+        // B2 fix: flush 返回空数组表示 barrier 干扰（clear 先执行了），
+        // 不 reject（clear 是用户主动操作，不应让 mutate 调用方收到异常）
+        batch.pending.forEach((pending) => pending.resolve({} as Output));
+        return;
       }
       batch.pending.forEach((pending, index) => pending.resolve(outputs[index]));
     } catch (error) {

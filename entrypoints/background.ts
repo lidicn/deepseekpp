@@ -13,6 +13,7 @@ import {
   getAllSkillSources,
   getAllSkills,
   getSkillLibrary,
+  isTrustedLocalSkillDirectory,
   saveSkill,
   setSkillEnabled,
   setSkillsEnabled,
@@ -543,26 +544,9 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         refreshToolDescriptors: refreshRuntimeToolDescriptors,
         createToolAuthorization,
         // Review #2: validate whether a directory belongs to an imported local
-        // skill (owned and trusted by background).
-        validateLocalSkillDirectory: async (dir: string): Promise<boolean> => {
-          if (!dir) return false;
-          const sources = await getAllSkillSources();
-          // Review #2: treat dir as trusted when it matches an imported local
-          // skill source's root path, OR when it matches the actual install
-          // directory (localDirectory) of any imported local skill. The latter
-          // is required because activeLocalSkillDir is set to the skill's
-          // localDirectory (e.g. rootPath/subSkill) rather than the source
-          // rootPath when a multi-skill folder is imported.
-          if (sources.some(
-            (source) => source.provider === 'local' && source.rootPath === dir,
-          )) {
-            return true;
-          }
-          const skills = await getAllSkills({ includeDisabled: true });
-          return skills.some(
-            (skill) => skill.remote?.provider === 'local' && skill.remote?.localDirectory === dir,
-          );
-        },
+        // skill. The trust predicate lives in core (skill/registry); the
+        // composition root only wires it (A1: composition-root slimming).
+        validateLocalSkillDirectory: isTrustedLocalSkillDirectory,
         closeToolAuthorization,
         authorizeExternalToolPayloadChunk,
         createToolAuthorizationResult,
@@ -775,11 +759,19 @@ export default defineBackground(() => {
 
 function registerAutomationAlarmListener() {
   chrome.alarms.onAlarm.addListener((alarm) => {
-    if (alarm.name !== AUTOMATION_WAKE_ALARM_NAME) return;
-    syncLocalRecoveryBarrier.ensureReady()
-      .then(() => scanDueAutomationsFromWake()
-        .catch((error) => reportBackgroundStartupError('automation_alarm_scan_failed', error)))
-      .catch(acknowledgeReportedSyncRecoveryFailure);
+    if (alarm.name === AUTOMATION_WAKE_ALARM_NAME) {
+      syncLocalRecoveryBarrier.ensureReady()
+        .then(() => scanDueAutomationsFromWake()
+          .catch((error) => reportBackgroundStartupError('automation_alarm_scan_failed', error)))
+        .catch(acknowledgeReportedSyncRecoveryFailure);
+      return;
+    }
+    // P0-1: chat keepalive alarm — 只消费事件让 SW 保持活跃，无需额外动作。
+    // 30s 周期触发，阻止 MV3 SW 的空闲回收。
+    if (alarm.name === 'deepseek_pp_chat_loop_keepalive') {
+      // 空操作：alarm 触发本身就是对 SW 的唤醒。不做额外工作避免 CPU 浪费。
+      return;
+    }
   });
 }
 
@@ -1252,7 +1244,7 @@ async function getPromptToolDescriptors(
     getRuntimeToolDescriptors(locale),
     getMcpCapabilitySettings(),
   ]);
-  return projectMcpCapabilityDescriptors({ descriptors, settings, intent }).descriptors;
+  return projectMcpCapabilityDescriptors({ descriptors, settings, intent, locale }).descriptors;
 }
 
 async function runBrowserSandboxToolResult(request: SandboxRunRequest): Promise<ToolResult> {
@@ -1432,6 +1424,7 @@ async function executeAutomationWithContext(
     descriptors: toolDescriptors.filter((descriptor) => descriptor.execution.enabled),
     settings: await getMcpCapabilitySettings(),
     intent: request.prompt,
+    locale: currentBackgroundLocale,
   }).descriptors;
   const [project, projectPromptContext] = request.chatSessionId
     ? await Promise.all([
@@ -1508,11 +1501,13 @@ async function buildSidepanelPrompt(request: ChatPromptBuildRequest): Promise<{
   });
 
   const sidepanelDescriptors = filterSidepanelChatToolDescriptors(toolDescriptors);
-  const enabledDescriptors = projectMcpCapabilityDescriptors({
+  const mcpProjection = projectMcpCapabilityDescriptors({
     descriptors: sidepanelDescriptors,
     settings: await getMcpCapabilitySettings(),
     intent: request.prompt,
-  }).descriptors;
+    locale: currentBackgroundLocale,
+  });
+  const enabledDescriptors = mcpProjection.descriptors;
   // Model-facing retirement (drop plugin artifact extension): the sidepanel
   // prompt must never list the retired artifact tools, or the model keeps
   // delivering files as artifact XML. The EXECUTION catalog (enabledDescriptors)
@@ -1528,6 +1523,7 @@ async function buildSidepanelPrompt(request: ChatPromptBuildRequest): Promise<{
     memoryEnabled: promptSettings.memoryEnabled,
     systemPromptEnabled: promptSettings.systemPromptEnabled,
     forceResponseLanguage: promptSettings.forceResponseLanguage === 'auto' ? null : promptSettings.forceResponseLanguage,
+    hiddenSummary: mcpProjection.hiddenSummary,
   });
 
   return { augmented, enabledDescriptors };

@@ -346,6 +346,21 @@ export function useSettingsController() {
     await setChatEnabled(next);
   }, []);
 
+  // --- remote agent watcher ---
+  const [remoteAgentWatcherEnabled, setRemoteAgentWatcherEnabledState] = useState(false);
+
+  // Load initial value from chrome.storage.local
+  useEffect(() => {
+    chrome.storage.local.get('dpp_remote_agent_enabled').then((result) => {
+      setRemoteAgentWatcherEnabledState(result.dpp_remote_agent_enabled === true);
+    });
+  }, []);
+
+  const handleRemoteAgentWatcherToggle = useCallback(async (next: boolean) => {
+    setRemoteAgentWatcherEnabledState(next);
+    await chrome.storage.local.set({ dpp_remote_agent_enabled: next });
+  }, []);
+
   // --- global floating chat ---
   const handleFloatingChatToggle = useCallback(async (next: boolean) => {
     setFloatingChatMessage('');
@@ -978,6 +993,8 @@ export function useSettingsController() {
     chatEnabled,
     handleModelTypeChange,
     handleChatToggle,
+    remoteAgentWatcherEnabled,
+    handleRemoteAgentWatcherToggle,
     floatingChatEnabled: floatingChatRuntimeState?.kind === 'ready',
     floatingChatRuntimeState,
     floatingChatMessage,

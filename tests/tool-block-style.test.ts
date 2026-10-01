@@ -204,14 +204,15 @@ describe('content tool block styles', () => {
   it('hydrates incremental code-run actions on agent console code blocks', () => {
     const path = join(process.cwd(), 'entrypoints/content.ts');
     const source = readFileSync(path, 'utf8');
-    const renderer = readFileSync(join(process.cwd(), 'core/inline-agent/renderer.ts'), 'utf8');
+    const codeRunner = readFileSync(join(process.cwd(), 'core/inline-agent/render-code-runner.ts'), 'utf8');
+    const renderSteps = readFileSync(join(process.cwd(), 'core/inline-agent/render-steps.ts'), 'utf8');
     const markdown = readFileSync(join(process.cwd(), 'core/inline-agent/markdown.ts'), 'utf8');
 
     expect(source).toContain('function refreshAgentStepCodeRunners(step: HTMLElement): void');
     expect(source).toContain('type: "RUN_ARTIFACT_CODE"');
-    expect(renderer).toContain('export function hydrateAgentStepCodeRunners(');
-    expect(renderer).toContain('AGENT_NATIVE_DELIVERABLE_CODE_LANGS');
-    expect(renderer).toContain('omitFencedCodeLanguages: AGENT_NATIVE_DELIVERABLE_CODE_LANGS');
+    expect(codeRunner).toContain('export function hydrateAgentStepCodeRunners(');
+    expect(codeRunner).toContain('AGENT_NATIVE_DELIVERABLE_CODE_LANGS');
+    expect(renderSteps).toContain('omitFencedCodeLanguages: AGENT_NATIVE_DELIVERABLE_CODE_LANGS');
     expect(markdown).toContain('data-dpp-lang');
   });
 

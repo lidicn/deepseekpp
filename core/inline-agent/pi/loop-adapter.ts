@@ -110,6 +110,7 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
     pendingTurn: false, // prepareNextTurn queued a nudge; the next turn is a nudge turn
     currentTurnIsNudge: false, // the turn now streaming is a nudge turn
     nudgedInStep: false, // this step already consumed its single nudge
+    nudgedOnContinuation: false, // gave one extra nudge after the nudge turn still nudging (续一轮)
     count: 0, // total nudges issued (token-speed request ids)
     lastAssistantText: '',
   };
@@ -233,7 +234,7 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
           nudge.currentTurnIsNudge = true;
           return buildNudgePrompt(payload.originalPrompt, nudge.lastAssistantText, collectedExecutions, nudge.count, locale);
         }
-        return buildContinuationPrompt(payload.originalPrompt, collectedExecutions, locale);
+        return buildContinuationPrompt(payload.originalPrompt, collectedExecutions, locale, toolDescriptors);
       },
       mapToolCall,
       toolDescriptors,
@@ -340,6 +341,17 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
       );
       if (nudge.currentTurnIsNudge) {
         if (nudging) {
+          // The model promised a deliverable but still hasn't produced tools.
+          // Allow ONE more continuation after a nudge turn (续一轮): if the
+          // NEXT turn ALSO still needs nudging, we stop with a budget notice.
+          // This is the "保留上下文再续一轮" recovery from the断流修复 —
+          // the model gets exactly one more chance to deliver, no more.
+          if (!nudge.nudgedOnContinuation) {
+            nudge.nudgedOnContinuation = true;
+            nudge.nudgedInStep = false; // reset so getSteeringMessages fires
+            return false;
+          }
+          // Already gave one extra round — stop gracefully with notice.
           stopNotice = buildInlineAgentBudgetNotice(locale, stepIndex + 1);
         } else {
           resolvedFinalText = text;

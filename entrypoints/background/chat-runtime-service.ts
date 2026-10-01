@@ -1,5 +1,7 @@
 import type { OfficialApiChatConfig } from '../../core/chat/official-api-config-contract';
 import type { ChatLoopProvider, InterruptedChatLoop } from '../../core/chat/active-loop';
+// P0-3: 工具执行状态持久化 helper
+import { appendToolExecution, clearCurrentTool, setCurrentTool } from '../../core/chat/active-loop';
 import type { ModelTurn, SubmitPromptInput } from '../../core/deepseek/automation-client-port';
 import type { DeepSeekUploadedFile } from '../../core/deepseek/contracts';
 import type {
@@ -183,31 +185,46 @@ export function createChatRuntimeService(
     call: ToolCall,
   ): Promise<ToolExecutionRecord> => {
     assertTurnActive(turn);
-    const result = await dependencies.executeToolCall(call, {
-      signal: turn.controller.signal,
-      assertActive: () => assertTurnActive(turn),
-      trustedCapabilityScopeId: turn.capabilityScopeId,
-    });
-    assertTurnActive(turn);
-    if (!result.ok && result.error?.details?.externalOutcome === 'ambiguous') {
-      throw new Error(result.error.message || result.detail || result.summary);
+
+    // P0-3: 持久化当前工具执行状态（fire-and-forget，失败不阻塞）
+    void setCurrentTool(call.name).catch(() => {});
+
+    let result: ToolExecutionRecord;
+    try {
+      const rawResult = await dependencies.executeToolCall(call, {
+        signal: turn.controller.signal,
+        assertActive: () => assertTurnActive(turn),
+        trustedCapabilityScopeId: turn.capabilityScopeId,
+      });
+      assertTurnActive(turn);
+      if (!rawResult.ok && rawResult.error?.details?.externalOutcome === 'ambiguous') {
+        throw new Error(rawResult.error.message || rawResult.detail || rawResult.summary);
+      }
+      result = {
+        name: rawResult.name ?? call.name,
+        provider: rawResult.provider ?? call.provider,
+        descriptorId: rawResult.descriptorId ?? call.descriptorId,
+        result: {
+          ok: rawResult.ok,
+          name: rawResult.name,
+          provider: rawResult.provider,
+          descriptorId: rawResult.descriptorId,
+          summary: rawResult.summary,
+          detail: rawResult.detail,
+          output: rawResult.output,
+          truncated: rawResult.truncated,
+          error: rawResult.error,
+        },
+      };
+    } finally {
+      // P0-3: 清除当前工具标记 + 追加到历史
+      void clearCurrentTool().catch(() => {});
+      // 注意：即使工具失败，也记录失败结果（让 reconcile 能看到"执行过但失败了"）
     }
-    return {
-      name: result.name ?? call.name,
-      provider: result.provider ?? call.provider,
-      descriptorId: result.descriptorId ?? call.descriptorId,
-      result: {
-        ok: result.ok,
-        name: result.name,
-        provider: result.provider,
-        descriptorId: result.descriptorId,
-        summary: result.summary,
-        detail: result.detail,
-        output: result.output,
-        truncated: result.truncated,
-        error: result.error,
-      },
-    };
+
+    // P0-3: 持久化执行记录（不阻塞返回）
+    void appendToolExecution(result).catch(() => {});
+    return result;
   };
 
   const runWebToolLoop = async (

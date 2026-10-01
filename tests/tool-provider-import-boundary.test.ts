@@ -29,6 +29,7 @@ describe('tool provider import boundary', () => {
       './history',
       './local-skill-cwd',
       './provider-registry',
+      './result-governance',
       './types',
     ]);
   });
@@ -79,7 +80,7 @@ describe('tool provider import boundary', () => {
     expect(source).toContain('toolDescriptors: fallbackPromptDescriptors,');
     expect(source).not.toContain('normalizeToolDescriptors');
 
-    const hookSource = readFileSync(resolve(ROOT, 'core/interceptor/fetch-hook.ts'), 'utf8');
+    const hookSource = readFileSync(resolve(ROOT, 'core/interceptor/hook-state.ts'), 'utf8');
     const mainWorldSource = readFileSync(resolve(ROOT, 'entrypoints/main-world.content.ts'), 'utf8');
     const bridgeSource = readFileSync(resolve(
       ROOT,
