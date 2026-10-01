@@ -135,7 +135,13 @@ export async function refreshAutomationNextRunAt(
 
   const next = calculateNextRunAt(automation.schedule, now);
   if (!next.ok) {
+    // A schedule error is deterministic (invalid expression / no run in the
+    // lookahead window), not transient. Without a terminal state the 1-minute
+    // wake alarm re-ran the full next-run calculation forever (null -> rescan
+    // -> null). Pause the automation so it drops out of the schedulable scan;
+    // the user re-activates it after fixing the schedule.
     return updateAutomationRuntime(automation.id, {
+      status: 'paused',
       nextRunAt: null,
       lastError: toAutomationError(next.error.code, next.error.message, 'schedule', false, now),
     });

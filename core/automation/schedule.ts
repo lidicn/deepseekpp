@@ -1,7 +1,11 @@
 import type { AutomationSchedule } from './types';
 
 export const DEFAULT_MINIMUM_INTERVAL_MINUTES = 15;
-export const MAX_CRON_LOOKAHEAD_DAYS = 370;
+// Lookahead window must span at least one full leap cycle (4 years) so legal
+// but rare expressions like `0 9 29 2 *` resolve instead of being rejected.
+// With the field-carry solver (findNextCronRun) this window is scanned in a
+// bounded number of calendar jumps, not per-minute, so widening it is cheap.
+export const MAX_CRON_LOOKAHEAD_DAYS = 1500;
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
@@ -105,10 +109,9 @@ export function calculateNextRunAt(
   if (isScheduleFailure(parsed)) return failure(parsed);
   if (parsed.value.kind === 'manual') return { ok: true, value: null };
 
-  const minimumIntervalMinutes = Math.max(
-    DEFAULT_MINIMUM_INTERVAL_MINUTES,
+  const minimumIntervalMinutes = resolveMinimumIntervalMinutes(
     schedule.minimumIntervalMinutes,
-    options.minimumIntervalMinutes ?? 0,
+    options.minimumIntervalMinutes,
   );
 
   if (parsed.value.kind === 'rrule') {
@@ -174,8 +177,8 @@ function parseRRule(expression: string): ScheduleResult<ParsedRRule> {
   }
 
   const intervalRaw = parts.get('INTERVAL') ?? '1';
-  const interval = Number.parseInt(intervalRaw, 10);
-  if (!Number.isInteger(interval) || interval < 1) {
+  const interval = parseStrictInteger(intervalRaw);
+  if (interval === undefined || interval < 1) {
     return error('invalid_rrule_interval', 'RRULE INTERVAL must be a positive integer.');
   }
 
@@ -257,8 +260,8 @@ function parseCronToken(
   if (!token) return error('invalid_cron_field', 'Cron field contains an empty token.');
 
   const [rangePart, stepPart] = token.split('/');
-  const step = stepPart == null ? 1 : Number.parseInt(stepPart, 10);
-  if (!Number.isInteger(step) || step < 1) {
+  const step = stepPart == null ? 1 : parseStrictInteger(stepPart);
+  if (step === undefined || step < 1) {
     return error('invalid_cron_step', `Invalid cron step "${stepPart}".`);
   }
 
@@ -267,10 +270,16 @@ function parseCronToken(
   }
 
   const [startRaw, endRaw] = rangePart.split('-');
-  const start = Number.parseInt(startRaw, 10);
-  const end = endRaw == null ? start : Number.parseInt(endRaw, 10);
+  const start = parseStrictInteger(startRaw);
+  const end = endRaw == null ? start : parseStrictInteger(endRaw);
 
-  if (!Number.isInteger(start) || !Number.isInteger(end) || start < min || end > max || start > end) {
+  if (
+    start === undefined
+    || end === undefined
+    || start < min
+    || end > max
+    || start > end
+  ) {
     return error('invalid_cron_range', `Invalid cron range "${rangePart}".`);
   }
 
@@ -285,64 +294,128 @@ function findNextCronRun(
 ): ScheduleResult<number | null> {
   const maxLookaheadMs = (options.maxLookaheadDays ?? MAX_CRON_LOOKAHEAD_DAYS) * DAY_MS;
   const endAt = referenceAt + maxLookaheadMs;
-  let candidate = Math.floor(referenceAt / MINUTE_MS) * MINUTE_MS + MINUTE_MS;
+  const start = zonedPartsOf(referenceAt, timezone);
 
-  while (candidate <= endAt) {
-    if (matchesCron(cron, getZonedDateParts(candidate, timezone))) {
-      return { ok: true, value: candidate };
+  // Day-level scan over the local calendar. Date-field matching (month,
+  // day-of-month, day-of-week) uses pure integer arithmetic off a UTC epoch-day
+  // counter, so rare expressions (e.g. `0 9 29 2 *`) skip ~1460 non-matching
+  // days without touching Intl. Only a date-matching day pays the two-pass
+  // local->UTC wall-clock conversion. This replaces the previous per-minute
+  // brute force (up to 532800 iterations, each rebuilding a formatter).
+  const startEpochDay = Math.floor(Date.UTC(start.year, start.month - 1, start.day) / DAY_MS);
+  const maxDays = Math.ceil(maxLookaheadMs / DAY_MS) + 1;
+
+  for (let offset = 0; offset <= maxDays; offset++) {
+    const epochDay = startEpochDay + offset;
+    if (offset > 0 && epochDay * DAY_MS > endAt + DAY_MS) {
+      break;
     }
-    candidate += MINUTE_MS;
+    const dayUtc = new Date(epochDay * DAY_MS);
+    const year = dayUtc.getUTCFullYear();
+    const month = dayUtc.getUTCMonth() + 1;
+    const dayOfMonth = dayUtc.getUTCDate();
+    const dayOfWeek = dayUtc.getUTCDay();
+
+    if (!cron.month.values.has(month)) continue;
+    if (!matchesCronDay(cron, dayOfMonth, dayOfWeek)) continue;
+
+    for (const hour of sortedValues(cron.hour.values)) {
+      for (const minute of sortedValues(cron.minute.values)) {
+        const candidate = wallToUtc(timezone, year, month, dayOfMonth, hour, minute);
+        if (candidate > referenceAt && candidate <= endAt) {
+          return { ok: true, value: candidate };
+        }
+      }
+    }
   }
 
   return error('cron_no_next_run', 'No cron run was found within the lookahead window.');
 }
 
-function matchesCron(cron: ParsedCron, parts: ZonedDateParts): boolean {
-  const dayOfMonthMatches = cron.dayOfMonth.values.has(parts.dayOfMonth);
-  const dayOfWeekMatches = cron.dayOfWeek.values.has(parts.dayOfWeek);
-  const dayMatches =
-    !cron.dayOfMonth.wildcard && !cron.dayOfWeek.wildcard
-      ? dayOfMonthMatches || dayOfWeekMatches
-      : dayOfMonthMatches && dayOfWeekMatches;
-
-  return (
-    cron.minute.values.has(parts.minute) &&
-    cron.hour.values.has(parts.hour) &&
-    cron.month.values.has(parts.month) &&
-    dayMatches
-  );
+function matchesCronDay(cron: ParsedCron, dayOfMonth: number, dayOfWeek: number): boolean {
+  const dayOfMonthMatches = cron.dayOfMonth.values.has(dayOfMonth);
+  const dayOfWeekMatches = cron.dayOfWeek.values.has(dayOfWeek);
+  if (!cron.dayOfMonth.wildcard && !cron.dayOfWeek.wildcard) {
+    return dayOfMonthMatches || dayOfWeekMatches;
+  }
+  return dayOfMonthMatches && dayOfWeekMatches;
 }
 
-interface ZonedDateParts {
-  minute: number;
-  hour: number;
-  dayOfMonth: number;
+function sortedValues(values: Set<number>): number[] {
+  return [...values].sort((a, b) => a - b);
+}
+
+interface ZonedWallParts {
+  year: number;
   month: number;
-  dayOfWeek: number;
+  day: number;
+  hour: number;
+  minute: number;
+  weekday: number;
 }
 
-function getZonedDateParts(timestamp: number, timezone: string): ZonedDateParts {
+const formatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function zonedFormatter(timezone: string): Intl.DateTimeFormat {
+  const cached = formatterCache.get(timezone);
+  if (cached) return cached;
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     weekday: 'short',
+    year: 'numeric',
     month: 'numeric',
     day: 'numeric',
     hour: 'numeric',
     minute: 'numeric',
+    second: 'numeric',
     hourCycle: 'h23',
   });
+  formatterCache.set(timezone, formatter);
+  return formatter;
+}
 
+function zonedPartsOf(timestamp: number, timezone: string): ZonedWallParts {
   const parts = Object.fromEntries(
-    formatter.formatToParts(new Date(timestamp)).map((part) => [part.type, part.value]),
+    zonedFormatter(timezone)
+      .formatToParts(new Date(timestamp))
+      .map((part) => [part.type, part.value]),
   );
 
   return {
-    minute: Number(parts.minute),
-    hour: Number(parts.hour),
-    dayOfMonth: Number(parts.day),
+    year: Number(parts.year),
     month: Number(parts.month),
-    dayOfWeek: weekdayToNumber(parts.weekday),
+    day: Number(parts.day),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
+    weekday: weekdayToNumber(parts.weekday),
   };
+}
+
+/**
+ * Resolve a local wall-clock time in `timezone` to a UTC instant. Two-pass
+ * offset correction converges for normal zones; a local time that does not
+ * exist (DST spring-forward) resolves to the post-transition instant and one
+ * that occurs twice (fall-back) resolves to the first — the documented DST
+ * limitation for cron scheduling.
+ */
+function wallToUtc(
+  timezone: string,
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+): number {
+  const asUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
+  let instant = asUtc - zonedOffsetAt(timezone, asUtc);
+  instant = asUtc - zonedOffsetAt(timezone, instant);
+  return instant;
+}
+
+function zonedOffsetAt(timezone: string, timestamp: number): number {
+  const parts = zonedPartsOf(timestamp, timezone);
+  const wallAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, 0);
+  return wallAsUtc - Math.floor(timestamp / MINUTE_MS) * MINUTE_MS;
 }
 
 function isRRuleFrequency(value: string | undefined): value is RRuleFrequency {
@@ -387,6 +460,30 @@ function isValidTimeZone(timezone: string): boolean {
   } catch {
     return false;
   }
+}
+
+// Number.parseInt("5abc") silently yields 5, accepting malformed cron/RRULE
+// tokens. Require the whole token to be decimal digits before parsing.
+function parseStrictInteger(raw: string): number | undefined {
+  if (!/^\d+$/.test(raw)) return undefined;
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
+function resolveMinimumIntervalMinutes(
+  scheduleMinimum: number | undefined,
+  optionMinimum: number | undefined,
+): number {
+  // Math.max(15, undefined, 0) returns NaN, which makes every `gap < min`
+  // guard silently false. Only fold in finite numbers, and always keep the
+  // default floor.
+  let maximum = DEFAULT_MINIMUM_INTERVAL_MINUTES;
+  for (const candidate of [scheduleMinimum, optionMinimum]) {
+    if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > maximum) {
+      maximum = candidate;
+    }
+  }
+  return maximum;
 }
 
 function error<T = never>(code: string, message: string): ScheduleResult<T> {
