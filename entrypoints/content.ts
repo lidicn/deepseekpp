@@ -19,7 +19,6 @@ import type {
 import {
   startRemoteAgentWatcher,
   stopRemoteAgentWatcher,
-  resendMessageViaUI,
   recordLocalSentMessage,
 } from "../core/remote-agent/watcher";
 import { getDeepSeekApiKey } from "../core/chat/api-key";
@@ -553,6 +552,12 @@ let currentContentLocale: SupportedLocale = DEFAULT_LOCALE;
 let currentContentTranslator = createTranslator(DEFAULT_LOCALE);
 let currentToolDescriptors: ToolDescriptor[] = [];
 const toolDescriptorSyncGate = createLatestSyncGate();
+const TOOL_DESCRIPTOR_RETRY_BASE_MS = 2_000;
+const TOOL_DESCRIPTOR_RETRY_MAX_MS = 30_000;
+const TOOL_DESCRIPTOR_RETRY_MAX_ATTEMPTS = 6;
+const RUNTIME_RECEIVER_RETRY_DELAY_MS = 300;
+let toolDescriptorRetryTimer: number | null = null;
+let toolDescriptorRetryAttempts = 0;
 let currentRequestMessageCount = 0;
 let activeAgentAbort: AbortController | null = null;
 let agentRunningToolCount = 0;
@@ -566,6 +571,7 @@ let extensionContextValid = true;
 let contentDocumentLifecycle: ContentDocumentLifecycle | null = null;
 let mainWorldBridgeController: IsolatedBridgeController | null = null;
 let runtimeStateCapabilityScope: ContentResourceScope | null = null;
+let remoteAgentCapabilityScope: ContentResourceScope | null = null;
 let tokenSpeedCapabilityScope: ContentResourceScope | null = null;
 let toolCapabilityScope: ContentResourceScope | null = null;
 let toolCapabilityEpoch = 0;
@@ -909,6 +915,7 @@ function createContentCapabilityControllers(): readonly ContentCapabilityControl
       stopBackgroundCapability,
     ),
     createDomCapability("pet", startPetCapability, stopPetCapability),
+    createRemoteAgentCapability(),
     chatController,
   ];
 }
@@ -949,6 +956,7 @@ function createRuntimeStateCapability(): ContentCapabilityController {
     },
     stop() {
       runtimeStateCapabilityScope = null;
+      clearToolDescriptorRetry();
     },
   };
 }
@@ -1393,67 +1401,88 @@ async function dispatchMainWorldMessage(
 
 initConsoleLogPersistence();
 
-// Start remote agent watcher if enabled
-async function initRemoteAgentWatcher(): Promise<void> {
+/**
+ * Remote Agent watcher (mobile input -> desktop execution).
+ *
+ * Runs as a lifecycle capability instead of a bare top-level call: every
+ * content-script evaluation used to re-register the storage.onChanged listener
+ * and the local-send listener, and the re-enable path started a watcher without
+ * stopping the previous one or checking whether the setting really changed.
+ */
+function createRemoteAgentCapability(): ContentCapabilityController {
+  return {
+    id: "remote-agent",
+    async start(scope) {
+      remoteAgentCapabilityScope = scope;
+      const isCurrent = () =>
+        remoteAgentCapabilityScope === scope && scope.active;
+
+      // Deduplicates "this browser already sent it"; must be installed even
+      // when the watcher is currently off, because toggling the setting on
+      // later would otherwise leave the watcher without any local-send record.
+      scope.addCleanup("listener", setupLocalSendListener());
+      scope.addCleanup(
+        "listener",
+        installRemoteAgentSettingListener(isCurrent),
+      );
+
+      const enabled = await readRemoteAgentSetting();
+      if (!isCurrent()) return;
+      applyRemoteAgentSetting(enabled);
+    },
+    stop() {
+      remoteAgentCapabilityScope = null;
+      stopRemoteAgentWatcher();
+    },
+  };
+}
+
+async function readRemoteAgentSetting(): Promise<boolean> {
+  if (!hasLiveExtensionContext()) return false;
   try {
-    // Read from chrome.storage.local (shared between sidepanel and content script)
-    const result = await chrome.storage.local.get('dpp_remote_agent_enabled');
-    const enabled = result.dpp_remote_agent_enabled === true;
-    console.log('[DPP-REMOTE] Enabled from storage:', enabled);
-
-    if (!enabled) return;
-
-    const chatSessionId = getCurrentChatSessionId();
-    if (!chatSessionId) {
-      console.log('[DPP-REMOTE] No chat session, watcher not started');
-      return;
-    }
-
-    startRemoteAgentWatcher({
-      chatSessionId,
-      onNewMessage: (message) => {
-        console.log('[DPP-REMOTE] Re-sending message:', message.slice(0, 50) + '...');
-        resendMessageViaUI(message).catch((err) => {
-          console.error('[DPP-REMOTE] Failed to re-send:', err);
-        });
-      },
-    });
-
-    console.log('[DPP-REMOTE] Watcher initialized');
-
-    // 监听当前浏览器的发送事件（用于自适应检测，避免重复重发）
-    setupLocalSendListener();
-
-    // Listen for storage changes (toggle on/off while page is open)
-    chrome.storage.onChanged.addListener((changes, area) => {
-      if (area === 'local' && changes.dpp_remote_agent_enabled) {
-        const newEnabled = changes.dpp_remote_agent_enabled.newValue === true;
-        console.log('[DPP-REMOTE] Setting changed:', newEnabled);
-        if (newEnabled) {
-          const sid = getCurrentChatSessionId();
-          if (sid) {
-            startRemoteAgentWatcher({
-              chatSessionId: sid,
-              onNewMessage: (message) => {
-                console.log('[DPP-REMOTE] Re-sending message:', message.slice(0, 50) + '...');
-                resendMessageViaUI(message).catch((err) => {
-                  console.error('[DPP-REMOTE] Failed to re-send:', err);
-                });
-              },
-            });
-          }
-        } else {
-          stopRemoteAgentWatcher();
-        }
-      }
-    });
-  } catch (err) {
-    console.error('[DPP-REMOTE] Init error:', err);
+    const result = await chrome.storage.local.get("dpp_remote_agent_enabled");
+    return result.dpp_remote_agent_enabled === true;
+  } catch (error) {
+    if (isExtensionInvalidatedError(error)) invalidateExtensionContext();
+    console.error("[DPP-REMOTE] Failed to read setting", error);
+    return false;
   }
 }
 
-console.log('[DPP-REMOTE] content script loaded, initializing watcher...');
-initRemoteAgentWatcher();
+function installRemoteAgentSettingListener(
+  isCurrent: () => boolean,
+): () => void {
+  if (!hasLiveExtensionContext()) return () => undefined;
+  const listener: Parameters<typeof chrome.storage.onChanged.addListener>[0] =
+    (changes, area) => {
+      if (area !== "local" || !isCurrent()) return;
+      const change = changes.dpp_remote_agent_enabled;
+      if (!change) return;
+      // Chrome fires onChanged for a same-value set() too (the sidepanel writes
+      // the whole settings object), so only a real transition may restart things.
+      if (change.oldValue === change.newValue) return;
+      applyRemoteAgentSetting(change.newValue === true);
+    };
+  chrome.storage.onChanged.addListener(listener);
+  return () => chrome.storage.onChanged.removeListener(listener);
+}
+
+function applyRemoteAgentSetting(enabled: boolean): void {
+  // Stop before start so a toggle can never leave two overlapping poll chains
+  // registered against the same module-level watcher state.
+  stopRemoteAgentWatcher();
+  if (!enabled) {
+    console.log("[DPP-REMOTE] Watcher disabled");
+    return;
+  }
+  const chatSessionId = getCurrentChatSessionId();
+  if (!chatSessionId) {
+    console.log("[DPP-REMOTE] No chat session, watcher not started");
+    return;
+  }
+  startRemoteAgentWatcher({ chatSessionId });
+  console.log("[DPP-REMOTE] Watcher initialized");
+}
 
 function handleContentRuntimeMessage(
   message: any,
@@ -2154,6 +2183,7 @@ async function loadAndSyncRuntimeState(
     if (descriptorResult.ok) {
       syncLease.commit(() => {
         if (!isCurrent()) return;
+        clearToolDescriptorRetry();
         syncToMainWorld(
           currentMemories,
           currentSkills,
@@ -2165,8 +2195,13 @@ async function loadAndSyncRuntimeState(
       });
     } else {
       syncLease.commit(() => {
-        if (isCurrent())
+        if (!isCurrent()) return;
+        if (isToolDescriptorContractError(descriptorResult.error)) {
           reportToolDescriptorSyncFailure(descriptorResult.error);
+          return;
+        }
+        retainToolDescriptorsAfterTransportFailure(descriptorResult.error);
+        scheduleToolDescriptorRetry(isCurrent);
       });
     }
   });
@@ -2186,6 +2221,7 @@ async function refreshToolDescriptorsFromBackground(
     );
     syncLease.commit(() => {
       if (!isCurrent()) return;
+      clearToolDescriptorRetry();
       syncToMainWorld(
         currentMemories,
         currentSkills,
@@ -2197,7 +2233,13 @@ async function refreshToolDescriptorsFromBackground(
     });
   } catch (error) {
     syncLease.commit(() => {
-      if (isCurrent()) reportToolDescriptorSyncFailure(error);
+      if (!isCurrent()) return;
+      if (isToolDescriptorContractError(error)) {
+        reportToolDescriptorSyncFailure(error);
+        return;
+      }
+      retainToolDescriptorsAfterTransportFailure(error);
+      scheduleToolDescriptorRetry(isCurrent);
     });
   }
 }
@@ -2255,6 +2297,10 @@ function invalidateExtensionContext() {
   extensionContextValid = false;
   const lifecycle = contentDocumentLifecycle;
   contentDocumentLifecycle = null;
+  // Once Chrome invalidates the context there is no way to revive the page-side
+  // chrome.* handles, so the only useful signal left is telling the user to
+  // reload the page (previously this happened silently).
+  showContentToast(contentT("content.agent.contextInvalidated"), "warning");
   void lifecycle
     ?.dispose("extension-invalidated")
     .catch(reportContentLifecycleError);
@@ -4277,7 +4323,7 @@ async function sendRuntimeMessageStrict<T>(
     throw new Error("Extension context is unavailable.");
   }
 
-  try {
+  const sendOnce = async (): Promise<T> => {
     const result = await chrome.runtime.sendMessage(message);
     if (decode) {
       return decodeRuntimeResponse(result, decode, "Runtime request failed.");
@@ -4288,12 +4334,37 @@ async function sendRuntimeMessageStrict<T>(
       );
     }
     return result as T;
+  };
+
+  try {
+    return await sendOnce();
   } catch (error) {
     if (isExtensionInvalidatedError(error)) {
       invalidateExtensionContext();
+      throw error;
     }
-    throw error;
+    if (!isMissingRuntimeReceiverError(error)) throw error;
+    // MV3 wake race: the service worker had no listener registered yet, so the
+    // message was never delivered and no handler ran. Retrying once after a
+    // short pause is therefore safe, and it stops a routine SW reclaim from
+    // looking like a hard failure to the page.
+    await new Promise((resolve) => setTimeout(resolve, RUNTIME_RECEIVER_RETRY_DELAY_MS));
+    if (!hasLiveExtensionContext()) throw error;
+    try {
+      return await sendOnce();
+    } catch (retryError) {
+      if (isExtensionInvalidatedError(retryError)) invalidateExtensionContext();
+      throw retryError;
+    }
   }
+}
+
+function isMissingRuntimeReceiverError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("Receiving end does not exist") ||
+    message.includes("Could not establish connection")
+  );
 }
 
 function addRuntimeMessageListener(
@@ -6338,13 +6409,25 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Raised only when the background *sent back* a catalog that violates the
+ * released contract. That is untrusted-shape data, so the fail-closed path
+ * (clearing the catalog) applies. A transport failure is a different case and
+ * must not clear the last known good catalog.
+ */
+class ToolDescriptorContractError extends Error {}
+
 function decodeToolDescriptors(value: unknown): ToolDescriptor[] {
   if (!Array.isArray(value) || !value.every(isToolDescriptorRecord)) {
-    throw new Error(
+    throw new ToolDescriptorContractError(
       "Runtime tool descriptor catalog does not match the released contract.",
     );
   }
   return value as unknown as ToolDescriptor[];
+}
+
+function isToolDescriptorContractError(error: unknown): boolean {
+  return error instanceof ToolDescriptorContractError;
 }
 
 function reportToolDescriptorSyncFailure(error: unknown): void {
@@ -6360,6 +6443,48 @@ function reportToolDescriptorSyncFailure(error: unknown): void {
     [],
     currentPromptSettings,
   );
+}
+
+/**
+ * The MV3 service worker can be reclaimed at any moment, and a message sent
+ * while it is waking fails with "Receiving end does not exist". That is a
+ * transient transport error, not a bad catalog: clearing the descriptors here
+ * turned every SW restart into "tool execution disabled" until the next sync.
+ * Keep the last known catalog and retry with bounded backoff instead.
+ */
+function retainToolDescriptorsAfterTransportFailure(error: unknown): void {
+  console.warn(
+    "[DeepSeek++] tool descriptor request failed; keeping last known catalog",
+    error,
+  );
+}
+
+function clearToolDescriptorRetry(): void {
+  toolDescriptorRetryAttempts = 0;
+  if (toolDescriptorRetryTimer !== null) {
+    clearTimeout(toolDescriptorRetryTimer);
+    toolDescriptorRetryTimer = null;
+  }
+}
+
+function scheduleToolDescriptorRetry(isCurrent: () => boolean): void {
+  if (toolDescriptorRetryTimer !== null) return;
+  if (toolDescriptorRetryAttempts >= TOOL_DESCRIPTOR_RETRY_MAX_ATTEMPTS) {
+    console.error(
+      "[DeepSeek++] tool descriptor retry budget exhausted; tools unavailable until the next sync",
+    );
+    return;
+  }
+  const delay = Math.min(
+    TOOL_DESCRIPTOR_RETRY_BASE_MS * 2 ** toolDescriptorRetryAttempts,
+    TOOL_DESCRIPTOR_RETRY_MAX_MS,
+  );
+  toolDescriptorRetryAttempts += 1;
+  toolDescriptorRetryTimer = window.setTimeout(() => {
+    toolDescriptorRetryTimer = null;
+    if (!isCurrent() || !hasLiveExtensionContext()) return;
+    void refreshToolDescriptorsFromBackground(isCurrent);
+  }, delay);
 }
 
 function buildToolOpenTagRegex(descriptors: ToolDescriptor[]): RegExp {
@@ -10042,9 +10167,9 @@ function applyBackground(config: BackgroundConfig | null) {
  * 监听当前浏览器的发送事件，记录发送的消息内容
  * 用于自适应检测：如果新消息是当前浏览器刚发的，就跳过不重发
  */
-function setupLocalSendListener(): void {
+function setupLocalSendListener(): () => void {
   // 监听 textarea 的 keydown 事件（Enter 键发送）
-  document.addEventListener('keydown', (e) => {
+  const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       const target = e.target as HTMLElement;
       if (target && (target.tagName === 'TEXTAREA' || target.isContentEditable)) {
@@ -10056,10 +10181,10 @@ function setupLocalSendListener(): void {
         }
       }
     }
-  }, true);
-  
+  };
+
   // 也监听点击发送按钮的情况
-  document.addEventListener('click', (e) => {
+  const onClick = (e: MouseEvent) => {
     const target = e.target as HTMLElement;
     if (target && target.closest('button')) {
       // 找最近的 textarea
@@ -10068,7 +10193,13 @@ function setupLocalSendListener(): void {
         recordLocalSentMessage(textarea.value.trim());
       }
     }
-  }, true);
-  
-  console.log('[DPP-REMOTE] Local send listener setup');
+  };
+
+  document.addEventListener('keydown', onKeyDown, true);
+  document.addEventListener('click', onClick, true);
+
+  return () => {
+    document.removeEventListener('keydown', onKeyDown, true);
+    document.removeEventListener('click', onClick, true);
+  };
 }

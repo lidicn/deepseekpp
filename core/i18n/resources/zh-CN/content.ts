@@ -91,6 +91,7 @@ export const content = {
     starting: '启动中…',
     interrupted: '已中断',
     startFailed: 'Agent 启动失败，请重试',
+    contextInvalidated: 'DeepSeek++ 已重载或被更新，请刷新本页面以恢复工具执行。',
     budgetReached: 'DeepSeek++ 已执行 {count} 轮自动工具续跑并暂停，避免把未完成任务伪装成最终答案。请发送“继续”让当前对话接着处理剩余工作。',
     error: '执行出错',
     process: '过程',

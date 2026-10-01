@@ -66,6 +66,12 @@ const state: WatcherState = {
 };
 
 /**
+ * 每次 start/stop 递增。异步的 initial fetch 回调只有在 token 未变时
+ * 才允许启动轮询链，否则 stop→start 之后会出现两条并行的 poll 链。
+ */
+let startToken = 0;
+
+/**
  * 记录当前浏览器发送的消息（用于自适应检测，避免重复重发）
  */
 export function recordLocalSentMessage(content: string): void {
@@ -88,7 +94,6 @@ function extractChatSessionIdFromURL(): string | null {
  */
 export function startRemoteAgentWatcher(options: {
   chatSessionId: string;
-  onNewMessage: (message: string) => void;
 }): void {
   if (state.enabled) {
     console.warn('[DPP-REMOTE] Watcher already running');
@@ -101,18 +106,26 @@ export function startRemoteAgentWatcher(options: {
   state.isInitializing = true;
   state.consecutivePollFailures = 0;
   state.currentPollIntervalMs = POLL_INTERVAL_MS;
+  const token = ++startToken;
 
   // Initialize lastSeenMessageId from current history (skip existing messages)
   // B3 fix: race — 用 isInitializing 锁阻止 initial fetch 完成前的 poll
   fetchInitialState(options.chatSessionId).then((lastId) => {
+    if (token !== startToken || !state.enabled) return;
     state.lastSeenMessageId = lastId;
     state.isInitializing = false;
     console.log(`[DPP-REMOTE] Watcher started, last seen message: ${lastId}`);
     // 启动递归 setTimeout 轮询（替代固定 setInterval，支持退避）
-    scheduleNextPoll(options);
+    scheduleNextPoll();
   }).catch((err) => {
-    console.error('[DPP-REMOTE] Initial fetch failed, watcher paused:', err);
+    if (token !== startToken || !state.enabled) return;
+    console.error('[DPP-REMOTE] Initial fetch failed, retrying via poll:', err);
+    // 不能永久停在 paused：lastSeenMessageId 仍为 null 时 poll 会把当前历史
+    // 整体当作"已看过"（findNewMessages 返回 []），所以直接交给退避重试链。
     state.isInitializing = false;
+    state.consecutivePollFailures = 1;
+    state.currentPollIntervalMs = POLL_INTERVAL_MS;
+    scheduleNextPoll();
   });
 
   console.log('[DPP-REMOTE] Watcher start scheduled');
@@ -121,13 +134,13 @@ export function startRemoteAgentWatcher(options: {
 /**
  * 递归 setTimeout 调度器 — 每次 poll 完根据退避状态计算下次间隔
  */
-function scheduleNextPoll(options: { chatSessionId: string; onNewMessage: (message: string) => void }): void {
+function scheduleNextPoll(): void {
   if (!state.enabled) return;
   const interval = state.currentPollIntervalMs;
   state.pollTimer = window.setTimeout(async () => {
     if (!state.enabled) return;
     try {
-      await pollForNewMessages(options);
+      await pollForNewMessages();
       // poll 成功 — 重置失败计数 + 恢复正常间隔
       if (state.consecutivePollFailures > 0) {
         console.log(`[DPP-REMOTE] Poll recovered after ${state.consecutivePollFailures} failures`);
@@ -149,7 +162,7 @@ function scheduleNextPoll(options: { chatSessionId: string; onNewMessage: (messa
         err,
       );
     } finally {
-      scheduleNextPoll(options);
+      scheduleNextPoll();
     }
   }, interval);
 }
@@ -159,8 +172,9 @@ function scheduleNextPoll(options: { chatSessionId: string; onNewMessage: (messa
  */
 export function stopRemoteAgentWatcher(): void {
   state.enabled = false;
+  startToken++;
   if (state.pollTimer !== null) {
-    clearInterval(state.pollTimer);
+    clearTimeout(state.pollTimer);
     state.pollTimer = null;
   }
   console.log('[DPP-REMOTE] Watcher stopped');
@@ -185,9 +199,7 @@ async function fetchInitialState(chatSessionId: string): Promise<number | null> 
   }
 }
 
-async function pollForNewMessages(options: {
-  onNewMessage: (message: string) => void;
-}): Promise<void> {
+async function pollForNewMessages(): Promise<void> {
   if (state.isProcessing) return;
   // B3 fix: 首启 race — initial fetch 未完成前跳过 poll
   if (state.isInitializing) return;
@@ -239,8 +251,11 @@ async function pollForNewMessages(options: {
         return;
       }
       
-      // 自适应检测：如果这条消息是当前浏览器刚刚发送的（30秒内），就跳过
-      const isLocalMessage = state.lastSentMessageContent === contentStr && 
+      // 自适应检测：如果这条消息是当前浏览器刚刚发送的（30秒内），就跳过。
+      // 两侧都 trim：content.ts 记录的是 textarea 的 trim() 值，history 里的
+      // content 常带首尾换行，严格相等会漏判 → 本机消息被当成远程消息重发。
+      const isLocalMessage = state.lastSentMessageContent !== null &&
+                             state.lastSentMessageContent.trim() === contentStr.trim() &&
                              (Date.now() - state.lastSentMessageTime) < 30000;
       if (isLocalMessage) {
         console.log(`[DPP-REMOTE] Skip local message (sent from this browser): ${contentStr.slice(0, 50)}...`);
@@ -254,6 +269,9 @@ async function pollForNewMessages(options: {
       try {
         // 直接在页面里重发消息（不刷新，inline agent loop 状态保留）
         console.log('[DPP-REMOTE] Re-sending message via UI...');
+        // 先登记"这条是我们自己发的"：重发后它会在 history 里以新的 USER
+        // 消息出现，去重不能只依赖注入的合成 Enter 被 content.ts 监听到。
+        recordLocalSentMessage(contentStr);
         await resendMessageViaUI(contentStr);
 
         // 重发后，等 3 秒，重新拉 history，把 lastSeenMessageId 更新为最新的

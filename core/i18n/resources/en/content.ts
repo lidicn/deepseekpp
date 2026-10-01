@@ -91,6 +91,7 @@ export const content = {
     starting: 'Starting…',
     interrupted: 'Interrupted',
     startFailed: 'Agent failed to start, please retry',
+    contextInvalidated: 'DeepSeek++ was reloaded or updated. Refresh this page to restore tool execution.',
     budgetReached: 'DeepSeek++ paused after {count} automated tool-continuation rounds to avoid presenting incomplete work as a final answer. Send "continue" in this conversation to resume the remaining work.',
     error: 'Execution error',
     process: 'Process',
