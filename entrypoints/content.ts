@@ -555,7 +555,9 @@ const toolDescriptorSyncGate = createLatestSyncGate();
 const TOOL_DESCRIPTOR_RETRY_BASE_MS = 2_000;
 const TOOL_DESCRIPTOR_RETRY_MAX_MS = 30_000;
 const TOOL_DESCRIPTOR_RETRY_MAX_ATTEMPTS = 6;
-const RUNTIME_RECEIVER_RETRY_DELAY_MS = 300;
+const RUNTIME_RECEIVER_RETRY_BASE_MS = 300;
+const RUNTIME_RECEIVER_RETRY_MAX_MS = 1_200;
+const RUNTIME_RECEIVER_RETRY_MAX_ATTEMPTS = 4;
 let toolDescriptorRetryTimer: number | null = null;
 let toolDescriptorRetryAttempts = 0;
 let currentRequestMessageCount = 0;
@@ -1538,7 +1540,17 @@ function handleContentRuntimeMessage(
         ),
       );
     } catch (error) {
-      syncLease.commit(() => reportToolDescriptorSyncFailure(error));
+      // Only a catalog that violates the released contract may disable tool
+      // execution. An error from the sync itself (bridge, i18n, DOM) must not
+      // take the last known descriptors away.
+      if (isToolDescriptorContractError(error)) {
+        syncLease.commit(() => reportToolDescriptorSyncFailure(error));
+      } else {
+        console.error(
+          "[DeepSeek++] tool descriptor update rejected; keeping last known catalog",
+          error,
+        );
+      }
     }
   } else if (message.type === "MCP_SERVERS_UPDATED") {
     const scope = multimodalCapabilityScope;
@@ -4300,7 +4312,9 @@ async function sendRuntimeMessage<T>(message: unknown): Promise<T | undefined> {
   if (!hasLiveExtensionContext()) return undefined;
 
   try {
-    const result = await chrome.runtime.sendMessage(message);
+    const result = await sendMessageWithReceiverRetry(() =>
+      chrome.runtime.sendMessage(message),
+    );
     // Guard against background error responses being misinterpreted as valid data
     if (isRuntimeFailure(result)) {
       return undefined;
@@ -4323,7 +4337,7 @@ async function sendRuntimeMessageStrict<T>(
     throw new Error("Extension context is unavailable.");
   }
 
-  const sendOnce = async (): Promise<T> => {
+  return sendMessageWithReceiverRetry(async () => {
     const result = await chrome.runtime.sendMessage(message);
     if (decode) {
       return decodeRuntimeResponse(result, decode, "Runtime request failed.");
@@ -4334,29 +4348,45 @@ async function sendRuntimeMessageStrict<T>(
       );
     }
     return result as T;
-  };
+  });
+}
 
-  try {
-    return await sendOnce();
-  } catch (error) {
-    if (isExtensionInvalidatedError(error)) {
-      invalidateExtensionContext();
-      throw error;
-    }
-    if (!isMissingRuntimeReceiverError(error)) throw error;
-    // MV3 wake race: the service worker had no listener registered yet, so the
-    // message was never delivered and no handler ran. Retrying once after a
-    // short pause is therefore safe, and it stops a routine SW reclaim from
-    // looking like a hard failure to the page.
-    await new Promise((resolve) => setTimeout(resolve, RUNTIME_RECEIVER_RETRY_DELAY_MS));
-    if (!hasLiveExtensionContext()) throw error;
+// MV3 wake race: a reclaimed service worker answers the first message with
+// "Receiving end does not exist" because its listener is not registered yet.
+// That rejection means the message was never delivered and no handler ran, so
+// retrying the send is safe; without it every cold start reads as a hard
+// failure and the page loses memories, skills, tools and MCP config.
+async function sendMessageWithReceiverRetry<T>(
+  send: () => Promise<T>,
+): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < RUNTIME_RECEIVER_RETRY_MAX_ATTEMPTS; attempt += 1) {
     try {
-      return await sendOnce();
-    } catch (retryError) {
-      if (isExtensionInvalidatedError(retryError)) invalidateExtensionContext();
-      throw retryError;
+      return await send();
+    } catch (error) {
+      if (isExtensionInvalidatedError(error)) {
+        invalidateExtensionContext();
+        throw error;
+      }
+      if (!isMissingRuntimeReceiverError(error)) throw error;
+
+      lastError = error;
+      if (attempt === RUNTIME_RECEIVER_RETRY_MAX_ATTEMPTS - 1) break;
+      await new Promise((resolve) =>
+        setTimeout(
+          resolve,
+          Math.min(
+            RUNTIME_RECEIVER_RETRY_BASE_MS * 2 ** attempt,
+            RUNTIME_RECEIVER_RETRY_MAX_MS,
+          ),
+        ),
+      );
+      if (!hasLiveExtensionContext()) throw error;
     }
   }
+
+  throw lastError;
 }
 
 function isMissingRuntimeReceiverError(error: unknown): boolean {

@@ -252,6 +252,62 @@ describe('runtime sender and envelope boundary', () => {
     expect(receiver).toContain(`  } catch (error) {\n    // runtime.sendMessage reaches every extension context. A content receiver\n    // must not answer a content-to-background RPC before the background does.`);
     expect(receiver).not.toContain('createRuntimeBoundaryErrorResponse');
   });
+
+  it('retries content runtime sends only when the service worker had no receiver yet', () => {
+    const path = 'entrypoints/content.ts';
+    const program = parseTypeScriptSource(path, readFileSync(path, 'utf8'));
+    const calledNames = new Map<string, string[]>();
+
+    for (const statement of program.body) {
+      if (!t.isFunctionDeclaration(statement) || !statement.id) continue;
+      const names: string[] = [];
+      walkSourceAst(statement, (node) => {
+        if (t.isCallExpression(node) && t.isIdentifier(node.callee)) names.push(node.callee.name);
+      });
+      calledNames.set(statement.id.name, names);
+    }
+
+    for (const sender of ['sendRuntimeMessage', 'sendRuntimeMessageStrict']) {
+      expect(calledNames.has(sender), `${sender} is missing`).toBe(true);
+      expect(calledNames.get(sender)).toContain('sendMessageWithReceiverRetry');
+    }
+
+    const retry = calledNames.get('sendMessageWithReceiverRetry');
+    expect(retry, 'sendMessageWithReceiverRetry is missing').toBeDefined();
+    expect(retry).toContain('isMissingRuntimeReceiverError');
+    expect(retry).toContain('invalidateExtensionContext');
+  });
+
+  it('clears the tool catalog only on a contract violation, never on other failures', () => {
+    const path = 'entrypoints/content.ts';
+    const program = parseTypeScriptSource(path, readFileSync(path, 'utf8'));
+
+    const countReports = (root: t.Node): number => {
+      let count = 0;
+      walkSourceAst(root, (node) => {
+        if (
+          t.isCallExpression(node)
+          && t.isIdentifier(node.callee, { name: 'reportToolDescriptorSyncFailure' })
+        ) count += 1;
+      });
+      return count;
+    };
+
+    const total = countReports(program);
+    expect(total, 'no fail-closed descriptor reporter found').toBeGreaterThan(0);
+
+    let guarded = 0;
+    walkSourceAst(program, (node) => {
+      if (!t.isIfStatement(node)) return;
+      if (
+        !t.isCallExpression(node.test)
+        || !t.isIdentifier(node.test.callee, { name: 'isToolDescriptorContractError' })
+      ) return;
+      guarded += countReports(node.consequent);
+    });
+
+    expect(guarded).toBe(total);
+  });
 });
 
 function expectInOrder(source: string, fragments: Array<string | RegExp>): void {
