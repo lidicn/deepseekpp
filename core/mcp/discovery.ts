@@ -1,6 +1,8 @@
 import type { ToolCall, ToolDescriptor, ToolResult } from '../tool/types';
 import { haveEquivalentToolDescriptorSecurity } from '../tool/authorization';
+import { getExtensionVersion } from '../version';
 import { applyMcpToolPolicy, callMcpTool, initializeMcpServer, listMcpTools } from './client';
+import { nativeHostVersionHint } from './native-host-version';
 import {
   getAllMcpServers,
   getAllMcpToolCaches,
@@ -261,11 +263,19 @@ async function discoverServerTools(
 ): Promise<McpToolCacheEntry> {
   const startedAt = Date.now();
   let descriptors: ToolDescriptor[];
+  let hostVersionHint: string | null = null;
   try {
     const transport = createMcpTransport(server);
-    await initializeMcpServer(server, transport, { signal: options?.signal });
+    const initialization = await initializeMcpServer(server, transport, { signal: options?.signal });
     descriptors = await listMcpTools(server, transport, { signal: options?.signal });
     throwIfMcpExecutionAborted(options?.signal);
+    // Read after the try so a host that reports an unusable version can never
+    // turn a successful discovery into a failed one.
+    hostVersionHint = nativeHostVersionHint(
+      server,
+      initialization.serverInfo,
+      getExtensionVersion(),
+    );
   } catch (err) {
     throwIfMcpExecutionAborted(options?.signal);
     return persistMcpDiscoveryFailure(server, startedAt, err, options);
@@ -278,7 +288,7 @@ async function discoverServerTools(
     checkedAt: completedAt,
     latencyMs: completedAt - startedAt,
     toolCount: descriptors.length,
-    error: null,
+    error: hostVersionHint,
   };
   const entry: McpToolCacheEntry = {
     serverId: server.id,

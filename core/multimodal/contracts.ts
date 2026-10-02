@@ -3,6 +3,7 @@ import type { ToolRiskLevel } from '../tool/types';
 export const MULTIMODAL_MCP_SERVER_NAME = 'Multimodal Vision';
 export const MULTIMODAL_MCP_NATIVE_HOST = 'com.deepseek_pp.multimodal';
 export const MULTIMODAL_MCP_PACKAGE_NAME = 'deepseek-pp-multimodal-mcp';
+export const MULTIMODAL_MCP_PACKAGE_VERSION = '0.1.0';
 
 export const MULTIMODAL_TOOL_NAMES = ['vision_status', 'analyze_images', 'analyze_video'] as const;
 export type MultimodalToolName = typeof MULTIMODAL_TOOL_NAMES[number];
