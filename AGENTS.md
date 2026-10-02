@@ -89,7 +89,7 @@ Run applicable validation in this order:
 5. `npm run verify:manifest-policy` and `npm run verify:extension-utf8` when manifests, assets, permissions, or build output change.
 6. The narrow smoke test for the changed runtime, followed by `npm run ci:quality` at compatibility/release closure.
 
-Backend/unit tests use a hard 60-second timeout. After timeout or interruption, verify the process group exited and no orphaned Vitest/test child remains. Starting a server or host is not smoke evidence; exercise at least one real command or tool call.
+Backend/unit tests inherit Vitest's default 5-second timeout. A test that needs a real process or installer round trip declares its own per-test budget together with the reason for that budget. After timeout or interruption, verify the process group exited and no orphaned Vitest/test child remains. Starting a server or host is not smoke evidence; exercise at least one real command or tool call.
 
 ## Spec-Driven Tracking
 
