@@ -129,7 +129,8 @@ describe('Shell Native Host external contract', () => {
       id: 'unknown-tool',
       error: { code: -32602, message: 'Unknown tool: future_tool' },
     });
-  });
+    // Three host process round trips take ~10s on Windows, over the 5s default.
+  }, 60_000);
 
   it('rejects future Native envelopes and malformed JSON-RPC with stable errors', async () => {
     const futureEnvelope = {

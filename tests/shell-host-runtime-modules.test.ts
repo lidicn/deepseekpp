@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 // @ts-ignore - Shell Host runtime modules are executable .mjs files.
@@ -102,8 +102,9 @@ describe('Shell Host modular runtime ownership', () => {
     tempRoots.push(tempRoot);
     const packDir = tempRoot;
     const installDir = join(tempRoot, 'installed');
-    const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-    const packOutput = execFileSync(npm, [
+    const npmCli = resolveNpmCli();
+    const packOutput = execFileSync(process.execPath, [
+      npmCli,
       'pack',
       '--json',
       '--pack-destination',
@@ -114,7 +115,8 @@ describe('Shell Host modular runtime ownership', () => {
     });
     const [{ filename }] = JSON.parse(packOutput) as Array<{ filename: string }>;
     const tarball = resolve(packDir, filename);
-    execFileSync(npm, [
+    execFileSync(process.execPath, [
+      npmCli,
       'install',
       '--ignore-scripts',
       '--no-audit',
@@ -145,7 +147,8 @@ describe('Shell Host modular runtime ownership', () => {
       id: 'initialize',
       result: { serverInfo: { name: 'deepseek-pp-shell', version: installedPackage.version } },
     });
-  });
+    // npm pack plus a prefix install costs ~8s here, over vitest's 5s default.
+  }, 60_000);
 
   it('preserves the explicit shell timeout result through the process provider', async () => {
     const command = process.platform === 'win32' ? 'Start-Sleep -Seconds 5' : 'sleep 5';
@@ -259,6 +262,22 @@ function createNativeFrame(message: unknown): Buffer {
   const header = Buffer.alloc(4);
   header.writeUInt32LE(body.length, 0);
   return Buffer.concat([header, body]);
+}
+
+// npm.cmd is a batch shim, and spawning it directly makes Node raise EINVAL on
+// Windows, so the installed-package layout check only ever ran on Linux. Running
+// npm's own JS entry under the current node binary avoids the shim entirely, and
+// keeps temp paths with spaces intact the way shell:true would not.
+function resolveNpmCli(): string {
+  const candidates = [
+    process.env.npm_execpath,
+    join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    join(dirname(process.execPath), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ].filter((entry): entry is string => Boolean(entry));
+
+  const npmCli = candidates.find(existsSync);
+  if (!npmCli) throw new Error(`npm CLI entry not found. Checked: ${candidates.join(', ')}`);
+  return npmCli;
 }
 
 function callHost(hostPath: string, envelope: unknown): Promise<any> {
