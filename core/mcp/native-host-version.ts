@@ -52,7 +52,17 @@ export function isOlderVersion(actual: unknown, expected: unknown): boolean {
 }
 
 // Envelope v1 is shared by every host version, so an outdated host answers all
-// frames while missing whole tool paths; this hint is the only signal it lags.
+// frames while missing whole tool paths; this note is the only signal it lags.
+// The stored form is a locale-independent code so the sidepanel can render it
+// from locale resources instead of echoing protocol-layer text at the user.
+export const NATIVE_HOST_OUTDATED_CODE = 'mcp_native_host_version_outdated';
+
+export interface NativeHostOutdatedNote {
+  packageName: string;
+  hostVersion: string;
+  expectedVersion: string;
+}
+
 export function nativeHostVersionHint(
   server: Pick<McpServerConfig, 'transport'>,
   serverInfo: McpClientInfo | undefined,
@@ -63,8 +73,26 @@ export function nativeHostVersionHint(
   const hostVersion = serverInfo?.version;
   if (!isOlderVersion(hostVersion, policy.expectedVersion)) return null;
   return [
-    `${policy.packageName} ${hostVersion} is older than the ${policy.expectedVersion}`,
-    'this DeepSeek++ build expects. Reinstall it with:',
-    `npx --yes ${policy.packageName}@${policy.expectedVersion} install`,
+    NATIVE_HOST_OUTDATED_CODE,
+    `package=${policy.packageName}`,
+    `host=${hostVersion}`,
+    `expected=${policy.expectedVersion}`,
   ].join(' ');
+}
+
+export function parseNativeHostOutdatedNote(
+  value: string | null | undefined,
+): NativeHostOutdatedNote | null {
+  if (!value?.startsWith(`${NATIVE_HOST_OUTDATED_CODE} `)) return null;
+  const fields = new Map<string, string>();
+  for (const part of value.slice(NATIVE_HOST_OUTDATED_CODE.length + 1).split(' ')) {
+    const separator = part.indexOf('=');
+    if (separator <= 0 || separator === part.length - 1) return null;
+    fields.set(part.slice(0, separator), part.slice(separator + 1));
+  }
+  const packageName = fields.get('package');
+  const hostVersion = fields.get('host');
+  const expectedVersion = fields.get('expected');
+  if (!packageName || !hostVersion || !expectedVersion) return null;
+  return { packageName, hostVersion, expectedVersion };
 }

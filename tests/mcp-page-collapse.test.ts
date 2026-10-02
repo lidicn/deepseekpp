@@ -7,6 +7,7 @@ import {
   MULTIMODAL_MCP_SERVER_NAME,
 } from '../core/multimodal/contracts';
 import { createMcpDescriptorId, createMcpInvocationName } from '../core/mcp/descriptor-identity';
+import { nativeHostVersionHint } from '../core/mcp/native-host-version';
 import type { McpServerConfig, McpToolCacheEntry, ToolDescriptor } from '../core/types';
 import McpPage from '../entrypoints/sidepanel/pages/McpPage';
 
@@ -14,6 +15,7 @@ let container: HTMLDivElement;
 let root: Root | null;
 let historyResponse: unknown;
 let serversResponse: McpServerConfig[];
+let cacheResponse: McpToolCacheEntry;
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -22,6 +24,7 @@ beforeEach(() => {
   root = null;
   historyResponse = [];
   serversResponse = [multimodalServer];
+  cacheResponse = multimodalCache;
 
   vi.stubGlobal('chrome', {
     runtime: {
@@ -29,7 +32,7 @@ beforeEach(() => {
       sendMessage: vi.fn(async (message: { type?: string }) => {
         if (message.type === 'GET_MCP_SERVERS') return serversResponse;
         if (message.type === 'GET_PLATFORM_CAPABILITIES') return platformEnvironment;
-        if (message.type === 'GET_MCP_TOOL_CACHE') return multimodalCache;
+        if (message.type === 'GET_MCP_TOOL_CACHE') return cacheResponse;
         if (message.type === 'GET_TOOL_CALL_HISTORY') return historyResponse;
         if (message.type === 'GET_MCP_CAPABILITY_SETTINGS') return capabilitySettings;
         return null;
@@ -128,6 +131,72 @@ describe('McpPage discovered tool switch states', () => {
     expect(toolSwitch(row).getAttribute('aria-pressed')).toBe('false');
   });
 });
+
+describe('McpPage server health message channels', () => {
+  it('keeps a ready server carrying a note out of the danger channel', async () => {
+    cacheResponse = {
+      ...multimodalCache,
+      health: {
+        ...multimodalCache.health,
+        status: 'ready',
+        error: 'deepseek-pp-multimodal-mcp 0.0.9 is behind the 0.1.0 this build expects',
+      },
+    };
+    await renderMcpPage();
+
+    expect(channelNodes('var(--ds-danger)')).toHaveLength(0);
+    expect(channelNodes('var(--ds-warning)')).toHaveLength(1);
+  });
+
+  it('keeps a failed server in the danger channel', async () => {
+    cacheResponse = {
+      ...multimodalCache,
+      health: {
+        ...multimodalCache.health,
+        status: 'error',
+        error: 'mcp_tool_authorization_stale',
+      },
+    };
+    await renderMcpPage();
+
+    expect(channelNodes('var(--ds-danger)')).toHaveLength(1);
+    expect(channelNodes('var(--ds-warning)')).toHaveLength(0);
+  });
+
+  it('renders the lagging-host note from locale copy rather than the stored health message', async () => {
+    const hint = nativeHostVersionHint(multimodalServer, { name: 'multimodal', version: '0.0.9' }, '1.16.0');
+    expect(hint).toBeTruthy();
+    cacheResponse = {
+      ...multimodalCache,
+      health: { ...multimodalCache.health, error: hint },
+    };
+    await renderMcpPage();
+
+    const notes = channelNodes('var(--ds-warning)');
+    expect(notes).toHaveLength(1);
+    const note = notes[0].textContent ?? '';
+    expect(note).not.toContain(hint!);
+    expect(note).not.toContain(' is older than ');
+    expect(note).toContain('deepseek-pp-multimodal-mcp');
+    expect(note).toContain('0.0.9');
+    expect(note).toContain('0.1.0');
+    expect(note).toContain('npx --yes deepseek-pp-multimodal-mcp@0.1.0 install');
+  });
+});
+
+function detailPanel(): HTMLElement {
+  const panel = Array.from(container.querySelectorAll<HTMLElement>('.ds-surface-panel')).find(
+    (node) => node.textContent?.includes(MULTIMODAL_MCP_NATIVE_HOST),
+  );
+  expect(panel).toBeTruthy();
+  return panel!;
+}
+
+function channelNodes(token: string): HTMLElement[] {
+  return Array.from(detailPanel().querySelectorAll<HTMLElement>('[style]')).filter(
+    (node) => node.getAttribute('style')?.includes(token) ?? false,
+  );
+}
 
 function findToolRow(title: string): HTMLElement {
   const titleElement = findExactText(title);

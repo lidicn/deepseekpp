@@ -3,6 +3,7 @@ import {
   MULTIMODAL_MCP_PACKAGE_NAME,
 } from '../../../core/multimodal';
 import type { LocaleMessageKey, MessageParams, SupportedLocale } from '../../../core/i18n';
+import { parseNativeHostOutdatedNote } from '../../../core/mcp/native-host-version';
 import type {
   McpCapabilityExposureMode,
   McpCapabilitySettings,
@@ -810,6 +811,8 @@ function ServerDetail({
   const tools = cache?.descriptors ?? [];
   const serverHistory = history.filter((record) => record.call.provider?.id === server.id).slice(0, 5);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const healthMessage = cache?.health.error ?? server.lastError ?? null;
+  const hostOutdated = parseNativeHostOutdatedNote(healthMessage);
 
   return (
     <div className="ds-surface-panel rounded-lg p-3 space-y-3 animate-slide-down">
@@ -839,9 +842,21 @@ function ServerDetail({
         <Metric label={t('sidepanel.mcpPage.detail.transport')} value={transportLabel(server.transport.kind)} />
       </div>
 
-      {(cache?.health.error || server.lastError) && (
-        <div className="rounded-lg px-3 py-2 text-xs" style={{ color: 'var(--ds-danger)', background: 'var(--ds-danger-bg)', border: '1px solid var(--ds-danger-border)' }}>
-          {cache?.health.error ?? server.lastError}
+      {healthMessage && (
+        <div
+          className="rounded-lg px-3 py-2 text-xs"
+          style={(cache?.health.status ?? server.status) === 'ready'
+            ? { color: 'var(--ds-warning)', background: 'var(--ds-warning-bg)', border: '1px solid var(--ds-warning-border)' }
+            : { color: 'var(--ds-danger)', background: 'var(--ds-danger-bg)', border: '1px solid var(--ds-danger-border)' }}
+        >
+          {hostOutdated
+            ? t('sidepanel.mcpPage.detail.hostOutdated', {
+              packageName: hostOutdated.packageName,
+              hostVersion: hostOutdated.hostVersion,
+              expectedVersion: hostOutdated.expectedVersion,
+              command: `npx --yes ${hostOutdated.packageName}@${hostOutdated.expectedVersion} install`,
+            })
+            : healthMessage}
         </div>
       )}
 

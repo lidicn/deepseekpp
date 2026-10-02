@@ -648,6 +648,7 @@ export const sidepanel = {
       latency: '延迟',
       lastConnected: '上次连接',
       transport: '传输',
+      hostOutdated: '{packageName} {hostVersion} 低于当前 DeepSeek++ 版本要求的 {expectedVersion}，可能缺少部分工具。请用以下命令重装：{command}',
       executionPolicy: '自动执行策略',
       injectionSummary: '当前注入 {count} 个工具；禁用或手动策略不会进入 DeepSeek Prompt。',
       promptExposure: 'Prompt 暴露策略',

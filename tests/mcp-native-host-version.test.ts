@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { McpServerConfig } from '../core/mcp/types';
-import { isOlderVersion, nativeHostVersionHint } from '../core/mcp/native-host-version';
+import { isOlderVersion, NATIVE_HOST_OUTDATED_CODE, nativeHostVersionHint, parseNativeHostOutdatedNote } from '../core/mcp/native-host-version';
 import { SHELL_MCP_NATIVE_HOST } from '../core/shell';
 import {
   MULTIMODAL_MCP_NATIVE_HOST,
@@ -35,9 +35,12 @@ describe('First-party native host version gate', () => {
       '1.16.0',
     );
 
-    expect(hint).toContain('deepseek-pp-shell-host 1.14.0');
-    expect(hint).toContain('1.16.0');
-    expect(hint).toContain('npx --yes deepseek-pp-shell-host@1.16.0 install');
+    expect(hint).toContain(NATIVE_HOST_OUTDATED_CODE);
+    expect(parseNativeHostOutdatedNote(hint)).toEqual({
+      packageName: 'deepseek-pp-shell-host',
+      hostVersion: '1.14.0',
+      expectedVersion: '1.16.0',
+    });
   });
 
   it('stays silent when the Shell Host matches or leads the extension', () => {
@@ -54,8 +57,11 @@ describe('First-party native host version gate', () => {
       .toBeNull();
 
     const hint = nativeHostVersionHint(server, { name: 'multimodal', version: '0.0.9' }, '1.16.0');
-    expect(hint).toContain(`${MULTIMODAL_MCP_PACKAGE_NAME} 0.0.9`);
-    expect(hint).toContain(`${MULTIMODAL_MCP_PACKAGE_NAME}@${MULTIMODAL_MCP_PACKAGE_VERSION} install`);
+    expect(parseNativeHostOutdatedNote(hint)).toEqual({
+      packageName: MULTIMODAL_MCP_PACKAGE_NAME,
+      hostVersion: '0.0.9',
+      expectedVersion: MULTIMODAL_MCP_PACKAGE_VERSION,
+    });
   });
 
   it('ignores third-party servers and non-native transports', () => {
@@ -118,5 +124,29 @@ describe('First-party native host version gate', () => {
     expect(lock.version).toBe(root.version);
     expect(lock.packages[''].version).toBe(root.version);
     expect(lock.packages['packages/shell-host'].version).toBe(root.version);
+  });
+
+  it('rejects notes that are not the outdated-host code', () => {
+    expect(parseNativeHostOutdatedNote(null)).toBeNull();
+    expect(parseNativeHostOutdatedNote('Native Host was not found.')).toBeNull();
+    expect(parseNativeHostOutdatedNote(`${NATIVE_HOST_OUTDATED_CODE} package=a host=1.0.0`)).toBeNull();
+    expect(parseNativeHostOutdatedNote(`${NATIVE_HOST_OUTDATED_CODE} package= host=1.0.0 expected=1.1.0`)).toBeNull();
+    expect(parseNativeHostOutdatedNote(`${NATIVE_HOST_OUTDATED_CODE} stray`)).toBeNull();
+  });
+
+  it('keeps the lagging-host copy locale-backed with every field it needs', () => {
+    const localePaths = [
+      'core/i18n/resources/en/sidepanel.ts',
+      'core/i18n/resources/zh-CN/sidepanel.ts',
+    ];
+    for (const path of localePaths) {
+      const line = readFileSync(path, 'utf8')
+        .split(/\r?\n/)
+        .find((entry) => entry.includes('hostOutdated:'));
+      expect(line, `${path} must keep the hostOutdated message`).toBeTruthy();
+      for (const token of ['{packageName}', '{hostVersion}', '{expectedVersion}', '{command}']) {
+        expect(line!, `${path} hostOutdated must interpolate ${token}`).toContain(token);
+      }
+    }
   });
 });

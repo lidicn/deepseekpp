@@ -648,6 +648,7 @@ export const sidepanel = {
       latency: 'Latency',
       lastConnected: 'Last connected',
       transport: 'Transport',
+      hostOutdated: '{packageName} {hostVersion} is older than the {expectedVersion} this DeepSeek++ build expects, so some tools may be missing. Reinstall it with: {command}',
       executionPolicy: 'Auto execution policy',
       injectionSummary: '{count} tools are currently injected. Disabled or manual strategy will not enter the DeepSeek Prompt.',
       promptExposure: 'Prompt exposure',
