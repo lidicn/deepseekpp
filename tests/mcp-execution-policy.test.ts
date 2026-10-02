@@ -430,6 +430,11 @@ describe('MCP execution policy', () => {
         requestMs: 1_000,
         discoveryMs: 1_000,
       },
+      // applyMcpToolPolicy stamps the server's own limits/timeouts onto every
+      // descriptor, and the authorization check rejects any drift between that
+      // result and the authorized snapshot, so this server must match
+      // createMcpDescriptor's execution block rather than fall back to defaults.
+      limits: { maxResultBytes: 64_000, maxToolCount: 128 },
     });
     const descriptor = createMcpDescriptor(server);
     await saveMcpToolCache({
