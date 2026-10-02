@@ -40,6 +40,7 @@ After source changes:
 5. Click `测试` to verify initialize/list behavior and latency.
 6. Click `刷新工具` to populate the cache.
 7. Confirm each tool's enabled state. Only tools with server `auto` policy and enabled tool state are injected into prompts.
+8. A first-party native host older than this DeepSeek++ build still answers every envelope frame, so discovery succeeds and the server stays `ready`. The expanded server detail panel then shows a reinstall hint naming the package and the version this build expects; treat that line as the only visible sign that whole tool paths are missing.
 
 ### Shell MCP And OfficeCLI
 
