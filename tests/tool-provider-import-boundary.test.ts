@@ -46,7 +46,9 @@ describe('tool provider import boundary', () => {
       .map((component) => component.map(toRelative).sort());
 
     expect(cycles).toEqual([]);
-  });
+    // Parses every .ts under core/ with babel: measured 1.9s idle on win32, and over 5s
+    // while the rest of the suite held the forks.
+  }, 30_000);
 
   it('keeps the only production registration array in Background composition', () => {
     const productionFiles = listSourceFiles(ROOT)
@@ -61,7 +63,9 @@ describe('tool provider import boundary', () => {
       'entrypoints/background/tool-provider-composition.ts',
     ))).toEqual({ count: 1, inlineProviderArrays: 1 });
     expect(relativeImports('entrypoints/background.ts')).toContain('./background/tool-provider-composition');
-  });
+    // Parses every production .ts/.tsx in the repo (tests/ excluded): measured 3.0s idle on
+    // win32, and over 5s under full-suite contention.
+  }, 60_000);
 
   it('keeps content descriptor synchronization strict and fail-closed', () => {
     const source = readFileSync(resolve(ROOT, 'entrypoints/content.ts'), 'utf8');
