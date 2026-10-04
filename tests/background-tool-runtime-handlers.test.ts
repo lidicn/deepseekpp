@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type {
   BrowserControlSettings,
   BrowserControlState,
@@ -89,6 +89,10 @@ const call: ToolCall = {
     chatSessionId: 'chat-1',
   },
 };
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('R4.2 tool runtime handler ownership', () => {
   it('creates exactly the 32 inventory-assigned handlers without duplicate ownership', () => {
@@ -599,6 +603,12 @@ describe('tool execution runtime handlers', () => {
   });
 
   it('uses content grants, fails closed without an id, and keeps extension calls trusted', async () => {
+    // This is the only handler test that reaches the grant-authorized path, and
+    // entrypoints/background/tool-execution-handlers.ts:211 acquires the SW keepalive
+    // alarm, whose registerKeepaliveAlarm (core/chat/active-loop.ts:36) reads the bare
+    // `chrome` global. An MV3 service worker always defines it; jsdom does not, so the
+    // ReferenceError is an environment gap rather than a production defect.
+    vi.stubGlobal('chrome', { alarms: { create: vi.fn(), clear: vi.fn() } });
     const events: string[] = [];
     const dependencies = createExecutionDependencies();
     vi.mocked(dependencies.externalPayloadAuthorizationCache.deleteCall).mockImplementation(() => {
