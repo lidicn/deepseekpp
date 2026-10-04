@@ -34,18 +34,12 @@ export async function appendToolCallHistory(
 async function persistToolHistoryBurst(
   mutations: readonly ToolHistoryMutation[],
 ): Promise<ToolCallHistoryRecord[]> {
-  // B2 fix: flush 写回前检查 barrier 干扰 —— 如果 clear 在 read 和 write 之间
-  // 跑过，storage key 会消失。此时跳过写回并返回空数组，让 queue 不 reject。
-  // 注意：serial-operation-queue 虽然让 settleBatch 和 barrier 串行排队，
-  // 但 settleBatch 内部 await readToolCallHistoryAlreadyOwned() 让出后，
-  // barrier 会在下一个 tick 开始（serial queue 是"operation 串行但内部 await 可穿插"）。
-  // 这就是 race：settleBatch read → await → barrier remove → settleBatch write（复活）。
+  // B2 fix: a clear between the read and the write-back removes the key, and writing
+  // then would resurrect cleared history. The guard covers only that race: a key already
+  // absent when the burst starts means a fresh or cleared profile, and skipping there
+  // would drop every append forever, because the only writer of the key is below.
   const preCheck = await chrome.storage.local.get(TOOL_HISTORY_STORAGE_KEY) as Record<string, unknown>;
-  if (!(TOOL_HISTORY_STORAGE_KEY in preCheck)) {
-    // key 不存在 —— clear 已经先执行，跳过写回
-    console.debug('[DPP] B2 race: mutate batch skipped write-back (clear barrier won)');
-    return [];
-  }
+  const keyExistedBeforeBurst = TOOL_HISTORY_STORAGE_KEY in preCheck;
 
   let history = orderToolCallHistory(await readToolCallHistoryAlreadyOwned());
   const results: ToolCallHistoryRecord[] = [];
@@ -62,9 +56,9 @@ async function persistToolHistoryBurst(
       .slice(0, MAX_HISTORY);
     results.push(record);
   }
-  // B2 fix: write-back 前再检查一次 —— 防 clear 在 write 前瞬间执行
+  // B2 fix: write-back 前再检查一次 —— 防 clear 在 write 前瞬间执行（仅当 burst 开始时 key 还在）
   const postCheck = await chrome.storage.local.get(TOOL_HISTORY_STORAGE_KEY) as Record<string, unknown>;
-  if (!(TOOL_HISTORY_STORAGE_KEY in postCheck)) {
+  if (keyExistedBeforeBurst && !(TOOL_HISTORY_STORAGE_KEY in postCheck)) {
     console.debug('[DPP] B2 race: post-read clear detected, skipping write-back');
     return [];
   }
