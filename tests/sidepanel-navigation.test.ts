@@ -79,14 +79,18 @@ describe('sidepanel navigation', () => {
     await renderElement(React.createElement(LibraryPage));
     expect(navButtonLabels('资料子导航')).toEqual(['记忆', '保存']);
     await clickNavButton('资料子导航', '保存');
-    await vi.waitFor(() => expect(container.textContent).toContain('保存常用 Prompt'));
+    // SavedPage (969ms) and McpPage (1238ms) cold-load cost, measured on win32 in an
+    // isolated worker, both exceed vi.waitFor's 1s default before the lazy chunk lands,
+    // and multiply under full-suite fork contention. The 8s window still fails fast
+    // enough to catch a page that never renders.
+    await vi.waitFor(() => expect(container.textContent).toContain('保存常用 Prompt'), { interval: 50, timeout: 8_000 });
 
     unmountRoot();
     await renderElement(React.createElement(CapabilitiesPage));
     expect(navButtonLabels('能力子导航')).toEqual(['Skill', 'MCP', '工具', '浏览器', '预设', '自动化']);
     await clickNavButton('能力子导航', 'MCP');
-    await vi.waitFor(() => expect(container.textContent).toContain('连接本机或远程 MCP 服务'));
-  });
+    await vi.waitFor(() => expect(container.textContent).toContain('连接本机或远程 MCP 服务'), { interval: 50, timeout: 8_000 });
+  }, 30_000);
 
   it('keeps the voice settings surface reachable from Settings', async () => {
     await renderElement(React.createElement(SettingsPage));
@@ -117,12 +121,14 @@ describe('sidepanel navigation', () => {
       voiceTab!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
+    // Green in isolation, red in the full suite: the VoiceSubPage chunk is not loaded
+    // inside vi.waitFor's 1s default while the forks are busy. Same window as above.
     await vi.waitFor(() => {
       expect(container.textContent).toContain('语音');
       expect(container.textContent).toContain('语音输入');
       expect(container.textContent).toContain('朗读回复');
-    });
-  });
+    }, { interval: 50, timeout: 8_000 });
+  }, 20_000);
 
   it('renders Settings when chrome.identity is unavailable', async () => {
     delete (chrome as unknown as { identity?: unknown }).identity;
@@ -147,12 +153,14 @@ describe('sidepanel navigation', () => {
       await Promise.resolve();
     });
 
+    // Green in isolation, red in the full suite: UsageSubPage is lazy too, and its chunk
+    // does not land inside the 1s vi.waitFor default under fork contention.
     await vi.waitFor(() => {
       expect(container.textContent).toContain('Tokens 用量');
       expect(container.textContent).toContain('DeepSeek Vision');
       expect(container.textContent).toContain('按天 Token 趋势');
-    });
-  });
+    }, { interval: 50, timeout: 8_000 });
+  }, 20_000);
 
   it('keeps the top navigation from shrinking behind long settings content', () => {
     const css = readFileSync('entrypoints/sidepanel/style.css', 'utf8');
