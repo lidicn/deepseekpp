@@ -2,6 +2,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parse as parseSource } from '@babel/parser';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const failures = [];
@@ -95,12 +96,12 @@ const lineAllowlist = [
     reason: 'DeepSeek host reasoning-label detection across locales',
   },
   {
-    path: 'core/inline-agent/renderer.ts',
+    path: 'core/inline-agent/render-steps.ts',
     includes: 'REASONING_HOST_TEXT_RE',
     reason: 'DeepSeek host reasoning-label detection for auto-folding completed reasoning blocks',
   },
   {
-    path: 'core/inline-agent/renderer.ts',
+    path: 'core/inline-agent/render-steps.ts',
     includes: 'REASONING_COMPLETED_TEXT_RE',
     reason: 'DeepSeek host completed-reasoning label detection for auto-folding reasoning blocks',
   },
@@ -139,6 +140,81 @@ const lineAllowlist = [
     includes: "'财务', '新闻', '报告'",
     reason: 'generic two-character Chinese stop-words used for weak-query down-weighting (source-authored linguistic scoring data, not UI text)',
   },
+  {
+    path: 'core/debug/refactor-telemetry.ts',
+    includes: '样本不足',
+    reason: 'debug-only telemetry summary labels reachable through window.__DPP_DEBUG__.summary(); never rendered in shipped UI copy',
+  },
+  {
+    path: 'core/mcp/capability-summary.ts',
+    includes: '隐藏工具：完整 Parameters JSON Schema',
+    reason: '模型可见文案，本地化待排期（路线图无对应版本槽位）；follow-up owner dpp-worker, re-check 2026-11-02; ruled in DCD decisions/20261004-DPP审计收口四件-裁定.md §二 Q5',
+  },
+  {
+    path: 'core/mcp/client-descriptor.ts',
+    includes: '工具返回错误',
+    reason: '模型可见文案，本地化待排期（路线图无对应版本槽位）；tool execution status text carried inside the MCP tool summary; follow-up owner dpp-worker, re-check 2026-11-02; ruled in DCD decisions/20261004-DPP审计收口四件-裁定.md §二 Q5',
+  },
+  {
+    path: 'core/mcp/client-file-read.ts',
+    includes: 'buildAutoReadResult(server, options, startedAt, contents, totalChars, false',
+    reason: '模型可见文案，本地化待排期（路线图无对应版本槽位）；auto-continuation notices returned inside the local_file_read tool result body; follow-up owner dpp-worker, re-check 2026-11-02; ruled in DCD decisions/20261004-DPP审计收口四件-裁定.md §二 Q5',
+  },
+  {
+    path: 'core/mcp/client-file-read.ts',
+    includes: 'auto 续读窗口数已达上限',
+    reason: '模型可见文案，本地化待排期（路线图无对应版本槽位）；auto-continuation window-cap notice inside the tool result body; follow-up owner dpp-worker, re-check 2026-11-02; ruled in DCD decisions/20261004-DPP审计收口四件-裁定.md §二 Q5',
+  },
+  {
+    path: 'core/mcp/client-file-read.ts',
+    includes: '已通过 auto 续读分',
+    reason: '模型可见文案，本地化待排期（路线图无对应版本槽位）；auto-continuation progress summary inside the tool result body; follow-up owner dpp-worker, re-check 2026-11-02; ruled in DCD decisions/20261004-DPP审计收口四件-裁定.md §二 Q5',
+  },
+  {
+    path: 'core/mcp/client-file-read.ts',
+    includes: 'local_file_read auto 续读异常终止',
+    reason: '模型可见文案，本地化待排期（路线图无对应版本槽位）；auto-continuation abnormal-stop notice inside the tool result body; follow-up owner dpp-worker, re-check 2026-11-02; ruled in DCD decisions/20261004-DPP审计收口四件-裁定.md §二 Q5',
+  },
+  {
+    path: 'core/mcp/client-file-read.ts',
+    includes: 'auto 续读失败',
+    reason: '模型可见文案，本地化待排期（路线图无对应版本槽位）；auto-continuation failure summary and message fields inside the tool result body; follow-up owner dpp-worker, re-check 2026-11-02; ruled in DCD decisions/20261004-DPP审计收口四件-裁定.md §二 Q5',
+  },
+  {
+    path: 'core/remote-agent/watcher.ts',
+    includes: '你具有长期记忆能力',
+    reason: 'host-page detection literal: matched against the memory prompt DeepSeek injects, not copy this extension renders',
+  },
+  {
+    path: 'core/remote-agent/watcher.ts',
+    includes: 'textarea[placeholder*="发消息"]',
+    reason: 'host-page selector literal: matches the Chinese placeholder DeepSeek renders on its own composer, not our locale',
+  },
+  {
+    path: 'core/remote-agent/watcher.ts',
+    includes: 'textarea[placeholder*="输入"]',
+    reason: 'host-page selector literal: matches the Chinese placeholder DeepSeek renders on its own composer, not our locale',
+  },
+  {
+    path: 'core/prompt/catalog-template.ts',
+    includes: '### 调用格式',
+    reason: 'model-facing tool-catalog instruction header; it is prompt content aimed at the model, so localizing it would change model behaviour instead of UI language',
+  },
+  {
+    path: 'core/prompt/catalog-template.ts',
+    includes: '调用写作',
+    reason: 'model-facing tool-catalog invocation rule; prompt content aimed at the model, not UI copy',
+  },
+  {
+    path: 'core/prompt/catalog-template.ts',
+    includes: '非法格式',
+    reason: 'model-facing tool-catalog negative-format examples; prompt content aimed at the model, not UI copy',
+  },
+  {
+    path: 'core/prompt/catalog-template.ts',
+    includes: '示例体可由 schema 推导',
+    reason: 'model-facing tool-catalog note about schema-derived examples; prompt content aimed at the model, not UI copy',
+  },
 ];
 
 assertDeterministicKeyChecks();
@@ -153,24 +229,38 @@ for (const absolutePath of files) {
   const text = readFileSync(absolutePath, 'utf8');
   if (!hanText.test(text)) continue;
 
+  const extension = extname(absolutePath);
   const pathReason = getPathAllowlistReason(relativePath);
   const lines = text.split(/\r?\n/);
-  for (const [index, line] of lines.entries()) {
-    if (!hanText.test(line)) continue;
+
+  let hanLines;
+  try {
+    // JSON has no comment grammar, so it keeps the line-based scan; sources are
+    // scanned for literal occurrences so Chinese prose in comments never counts.
+    hanLines = extension === '.json'
+      ? lines.map((line, index) => (hanText.test(line) ? index + 1 : 0)).filter((lineNumber) => lineNumber > 0)
+      : collectHanLiteralLines(text, extension);
+  } catch (error) {
+    failures.push(`could not parse ${relativePath} for literal scanning: ${error.message}`);
+    continue;
+  }
+
+  for (const lineNumber of hanLines) {
+    const line = lines[lineNumber - 1] ?? '';
     if (pathReason) {
-      allowed.push({ path: relativePath, line: index + 1, reason: pathReason });
+      allowed.push({ path: relativePath, line: lineNumber, reason: pathReason });
       continue;
     }
 
     const lineReason = getLineAllowlistReason(relativePath, line);
     if (lineReason) {
-      allowed.push({ path: relativePath, line: index + 1, reason: lineReason });
+      allowed.push({ path: relativePath, line: lineNumber, reason: lineReason });
       continue;
     }
 
     offenders.push({
       path: relativePath,
-      line: index + 1,
+      line: lineNumber,
       text: line.trim(),
     });
   }
@@ -249,6 +339,56 @@ function getPathAllowlistReason(relativePath) {
 
 function getLineAllowlistReason(relativePath, line) {
   return lineAllowlist.find((rule) => rule.path === relativePath && line.includes(rule.includes))?.reason ?? null;
+}
+
+function collectHanLiteralLines(text, extension) {
+  const ast = parseSource(text, {
+    sourceType: 'module',
+    errorRecovery: false,
+    plugins: babelPluginsFor(extension),
+  });
+
+  const lineNumbers = new Set();
+  walkAst(ast, (node) => {
+    for (const value of literalTextsOf(node)) {
+      if (hanText.test(value) && typeof node.loc?.start?.line === 'number') {
+        lineNumbers.add(node.loc.start.line);
+      }
+    }
+  });
+  return [...lineNumbers].sort((left, right) => left - right);
+}
+
+function literalTextsOf(node) {
+  if (node.type === 'StringLiteral') return [node.value];
+  if (node.type === 'TemplateLiteral') return node.quasis.map((quasi) => quasi.value.raw);
+  if (node.type === 'JSXText') return [node.value];
+  if (node.type === 'RegExpLiteral') return [node.pattern];
+  if (node.type === 'NewExpression' && node.callee?.name === 'RegExp') {
+    const pattern = node.arguments?.[0];
+    return pattern?.type === 'StringLiteral' ? [pattern.value] : [];
+  }
+  return [];
+}
+
+function babelPluginsFor(extension) {
+  if (extension === '.ts') return ['typescript'];
+  if (extension === '.tsx') return ['typescript', 'jsx'];
+  if (extension === '.jsx') return ['jsx'];
+  return [];
+}
+
+function walkAst(node, visit) {
+  if (!node || typeof node !== 'object') return;
+  if (node.type) visit(node);
+  for (const [key, value] of Object.entries(node)) {
+    if (key === 'loc' || key === 'leadingComments' || key === 'trailingComments' || key === 'innerComments') continue;
+    if (Array.isArray(value)) {
+      for (const item of value) walkAst(item, visit);
+    } else if (value && typeof value === 'object') {
+      walkAst(value, visit);
+    }
+  }
 }
 
 function readText(relativePath) {
