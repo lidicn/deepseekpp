@@ -91,7 +91,9 @@ describe('Settings sync confirmed target', () => {
     ))).toBe(false);
     expect(container.textContent).toContain('上传完成');
     expect(container.textContent).toContain('01/01');
-  });
+    // renderDataSettings() can now wait up to 8s for the lazy DataSubPage chunk (first
+    // caller in this file pays the cold transform), so the 5s default is not a budget.
+  }, 15_000);
 
   it('rejects a target whose form changes after the confirmation opens', async () => {
     await renderDataSettings();
@@ -111,7 +113,8 @@ describe('Settings sync confirmed target', () => {
       (message as { type?: string }).type === 'WEBDAV_UPLOAD_LOCAL'
     ))).toBe(false);
     expect(container.textContent).toContain('同步设置已变化，请确认当前目标后重试');
-  });
+    // Shares the lazy DataSubPage window in renderDataSettings().
+  }, 15_000);
 
   it('keeps provider and credential fields disabled for the complete pending action', async () => {
     const pending = deferred<unknown>();
@@ -141,7 +144,8 @@ describe('Settings sync confirmed target', () => {
     });
     await flushPromises();
     expect(syncInputs.every((input) => !input.disabled)).toBe(true);
-  });
+    // Shares the lazy DataSubPage window in renderDataSettings().
+  }, 15_000);
 
   it('carries a committed download timestamp into the next action after notification failure', async () => {
     sendMessage.mockImplementation(async (message: { type: string; payload?: unknown }) => {
@@ -182,7 +186,8 @@ describe('Settings sync confirmed target', () => {
       config: { lastSyncAt: 99, revision: 3 },
       expectedRevision: 3,
     });
-  });
+    // Shares the lazy DataSubPage window in renderDataSettings().
+  }, 15_000);
 
   it('reloads the authoritative config after completed-action bookkeeping becomes uncertain', async () => {
     const authoritative = {
@@ -240,7 +245,8 @@ describe('Settings sync confirmed target', () => {
         expectedRevision: 3,
       },
     });
-  });
+    // Shares the lazy DataSubPage window in renderDataSettings().
+  }, 15_000);
 });
 
 describe('Settings initial load ordering', () => {
@@ -315,9 +321,12 @@ async function renderDataSettings() {
   });
   await flushPromises();
   await click(buttonByExactText('数据'));
+  // DataSubPage is lazy: its cold transform+load cost passes 1s on win32 under full-suite
+  // fork contention (npm test 2026-10-04 hit this helper's default vi.waitFor window), so
+  // the button is simply not mounted yet when the 1s poll gives up.
   await vi.waitFor(() => {
     expect(findButtonByExactText('上传本地')).toBeTruthy();
-  });
+  }, { interval: 50, timeout: 8_000 });
 }
 
 function SettingsProbe() {
