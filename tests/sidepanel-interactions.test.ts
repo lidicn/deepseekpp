@@ -637,12 +637,15 @@ describe('sidepanel interactions', () => {
       }));
     });
 
+    // Same cold-load window as sidepanel-chat-message.test.ts: RichMessageContent measured
+    // 739ms to transform and load on win32 in an isolated worker, more under fork
+    // contention, so the 1s vi.waitFor default expires before the lazy renderer commits.
     await vi.waitFor(() => {
       expect(messageList.querySelector('strong')?.textContent).toBe('world');
-    });
+    }, { interval: 50, timeout: 8_000 });
     expect(scrollAssignments).toContain(480);
     expect(scrollTop).toBe(480);
-  });
+  }, 20_000);
 
   it('uploads a vision image attachment and submits its file reference', async () => {
     const sendMessage = vi.fn(async (message: { type: string; payload?: unknown }) => {
