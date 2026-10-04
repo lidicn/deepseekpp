@@ -147,8 +147,9 @@ describe('Shell Host modular runtime ownership', () => {
       id: 'initialize',
       result: { serverInfo: { name: 'deepseek-pp-shell', version: installedPackage.version } },
     });
-    // npm pack plus a prefix install costs ~8s here, over vitest's 5s default.
-  }, 60_000);
+    // npm pack + a prefix install measured 24.7s idle on win32, and did not finish inside
+    // the previous 60s budget while the rest of the suite competed for forks.
+  }, 180_000);
 
   it('preserves the explicit shell timeout result through the process provider', async () => {
     const command = process.platform === 'win32' ? 'Start-Sleep -Seconds 5' : 'sleep 5';
@@ -172,7 +173,9 @@ describe('Shell Host modular runtime ownership', () => {
         structuredContent: { ok: false, data: { exitCode: -1, timedOut: true } },
       },
     });
-  });
+    // A PowerShell process plus the host's 1s kill measured 2.3s idle; the 5s default is
+    // not enough while other forks are running.
+  }, 15_000);
 
   it('serves control requests while a long tool call remains in the tool FIFO', async () => {
     const command = process.platform === 'win32' ? 'Start-Sleep -Milliseconds 1200' : 'sleep 1.2';
@@ -197,7 +200,9 @@ describe('Shell Host modular runtime ownership', () => {
     ]);
 
     expect(responses.map((response) => response.id)).toEqual(['tools', 'slow']);
-  });
+    // A 1.2s PowerShell sleep inside the host plus two sequential spawn round trips measured
+    // 3.0s idle; the 5s default leaves no room while other forks are running.
+  }, 15_000);
 
   it('serves control requests while tool calls wait for host environment readiness', async () => {
     const environmentReady = deferred<void>();
