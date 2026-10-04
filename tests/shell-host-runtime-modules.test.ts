@@ -290,10 +290,12 @@ function callHost(hostPath: string, envelope: unknown): Promise<any> {
   return new Promise((resolveResponse, reject) => {
     let stdout = Buffer.alloc(0);
     let stderr = '';
+    // Stay below the callers' declared 15s/180s budgets so a hang still reports as this harness
+    // error. The same spawn measured 4.3s in a full-suite run against the previous 5s ceiling.
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error(`Installed Shell Host timed out. stderr: ${stderr}`));
-    }, 5_000);
+    }, 12_000);
 
     const finish = (callback: () => void) => {
       clearTimeout(timer);
@@ -324,10 +326,12 @@ function callHostResponses(hostPath: string, envelopes: unknown[]): Promise<any[
   return new Promise((resolveResponses, reject) => {
     let stdout = Buffer.alloc(0);
     const responses: any[] = [];
+    // Below the caller's declared 15s budget so a hang still reports as this harness error. The
+    // FIFO case measured 3.5s idle and hit the previous 5s ceiling at 5.3s in a full-suite run.
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error('Timed out waiting for concurrent Shell Host responses.'));
-    }, 5_000);
+    }, 12_000);
     const finish = (callback: () => void) => {
       clearTimeout(timer);
       child.kill();
