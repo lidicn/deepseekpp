@@ -35,7 +35,9 @@ describe('shell native host local_skill_preview', () => {
     expect(nestedSkill?.scriptFiles).toEqual([
       expect.objectContaining({ path: 'nested/scripts/run.py' }),
     ]);
-  });
+    // One host spawn over a 7-file fixture measured 1.5s idle and 3.9s while the rest of the
+    // suite competed for forks.
+  }, 15_000);
 
   it('returns excess supporting files as structured on-demand resources without a generic warning', async () => {
     const root = createLargeResourceSkillFixture();
@@ -49,7 +51,9 @@ describe('shell native host local_skill_preview', () => {
     expect(skill.omittedFiles[0]).toMatchObject({ path: 'references/17.md' });
     expect(data.warnings).not.toContain('13 local supporting file(s) were omitted.');
     expect(existsSync(join(root, 'references/29.md'))).toBe(true);
-  });
+    // A 29-file fixture plus one host spawn measured 1.4s idle and did not finish inside the
+    // 5s default while the rest of the suite competed for forks (5.9s, then killed).
+  }, 15_000);
 });
 
 describe('shell native host local_folder_pick', () => {
@@ -146,7 +150,9 @@ describe('shell native host logLine resilience', () => {
     const log = readFileSync(logFile, 'utf8');
     expect(log).toContain('[shell-mcp-host] started');
     expect(log).toContain('tools/call name=shell_status');
-  });
+    // One host spawn that must create a log parent directory measured 1.3s idle and 4.5s while
+    // the rest of the suite competed for forks.
+  }, 15_000);
 
   it('returns a normal response when DPP_LOG_FILE points to an unwritable path', async () => {
     const response = await callNativeHost('shell_status', {}, {
@@ -154,7 +160,8 @@ describe('shell native host logLine resilience', () => {
     });
     expect(response.error).toBeUndefined();
     expect(response.result?.structuredContent?.data?.platform).toBeTruthy();
-  });
+    // The blocked-log spawn measured 1.2s idle and 3.9s under fork contention.
+  }, 15_000);
 
   it('writes a stderr diagnostic when DPP_LOG_FILE cannot be initialized', async () => {
     const { response, stderr } = await callNativeHostWithStderr('shell_status', {}, {
@@ -162,7 +169,9 @@ describe('shell native host logLine resilience', () => {
     });
     expect(response.error).toBeUndefined();
     expect(stderr).toContain('failed to initialize log file');
-  });
+    // Same one-spawn cost as the entries above (1.5s idle, stderr captured); none of them fits
+    // the 5s default once other forks are running.
+  }, 15_000);
 });
 
 // A log path whose parent is an existing regular file, so creating it throws on every
