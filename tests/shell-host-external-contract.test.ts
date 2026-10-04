@@ -274,7 +274,11 @@ function readNativeResponse(child: ReturnType<typeof spawn>): Promise<any> {
 
   return new Promise((resolve, reject) => {
     let buffer = Buffer.alloc(0);
-    const timer = setTimeout(() => reject(new Error('Timed out waiting for Shell Host response.')), 5_000);
+    // One cold host spawn costs ~1s idle (this whole four-call test measures 3.9s), but the
+    // same leg has been observed past the previous 5s window while the suite was running
+    // (npm test 2026-10-04: sibling host tests 1356-2646ms and this one timed out at
+    // 13766ms). 15s per response x four calls still sits under the test's own 60s budget.
+    const timer = setTimeout(() => reject(new Error('Timed out waiting for Shell Host response.')), 15_000);
     const finish = (callback: () => void) => {
       clearTimeout(timer);
       stdout.removeAllListeners();
