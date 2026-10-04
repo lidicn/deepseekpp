@@ -141,7 +141,7 @@ describe('createPiLoopBudgetMap', () => {
     expect(createPiLoopBudgetMap()).toEqual({
       maxSteps: 25,
       maxNudges: 8,
-      stepTimeoutMs: 120_000,
+      stepTimeoutMs: 300_000,
       requestDelayMinMs: 2_500,
       requestDelayMaxMs: 6_500,
       fullToolResultWindow: 4,
