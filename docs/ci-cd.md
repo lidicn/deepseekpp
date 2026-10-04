@@ -52,3 +52,19 @@ npm run ci:quality
 `npm run smoke:web` is a live network smoke against Bing-backed web search. Run
 it for release readiness when network conditions are reliable; keep it outside
 the required PR gate to avoid blocking merges on third-party availability.
+
+### Collection integrity leg
+
+`npm run verify:test-collection` sits inside `ci:quality` immediately before
+`npm test`. It reads the include patterns from `vitest.config.ts`, counts test
+files on disk, and diffs that set against the files present in the run's JSON
+report, naming every file that was collected on disk but never ran. Pool worker
+start failures and lingering Vitest child processes are printed as diagnostics,
+not as blocking causes.
+
+Transition rule (DCD `decisions/20261004-DPP审计收口四件-裁定.md` §一.2-3): a red
+collection leg is not by itself a release freeze. Release readiness is judged on
+the named difference list, each entry attributed to load, environment, or repo
+shape; a list that is empty or fully attributed is releasable. `npm test` stays
+the leg that reads pass/fail, so the collection leg reports a non-zero Vitest
+exit code without turning it into its own red.
