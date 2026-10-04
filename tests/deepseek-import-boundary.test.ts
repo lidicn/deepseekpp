@@ -32,11 +32,17 @@ describe('DeepSeek active protocol import boundary', () => {
   it('makes active and passive consumers import the shared SSE authority directly', () => {
     const activeClient = readFileSync('core/deepseek/active-client.ts', 'utf8');
     const officialApi = readFileSync('core/deepseek/official-api.ts', 'utf8');
-    const passiveInterceptor = readFileSync('core/interceptor/fetch-hook.ts', 'utf8');
+    const passiveConsumers = [
+      'core/interceptor/request-interceptor.ts',
+      'core/interceptor/response-interceptor.ts',
+    ];
     expect(activeClient).not.toMatch(/from ['"].*interceptor/);
     expect(officialApi).not.toMatch(/from ['"].*interceptor/);
-    expect(passiveInterceptor).toMatch(/from ['"]\.\.\/deepseek\/stream-codec['"]/);
-    expect(passiveInterceptor).toMatch(/from ['"]\.\.\/deepseek\/stream-metrics['"]/);
+    for (const path of passiveConsumers) {
+      const source = readFileSync(path, 'utf8');
+      expect(source, path).toMatch(/from ['"]\.\.\/deepseek\/stream-codec['"]/);
+      expect(source, path).toMatch(/from ['"]\.\.\/deepseek\/stream-metrics['"]/);
+    }
     expect(existsSync('core/interceptor/sse-parser.ts')).toBe(false);
     expect(existsSync('core/interceptor/token-speed.ts')).toBe(false);
   });
