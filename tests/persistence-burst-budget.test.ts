@@ -36,10 +36,24 @@ const PERSISTENCE_BURST_BASELINE = Object.freeze({
   toolHistory: { writes: 100, bytes: 1_380_970, observedElapsedMs: 170.32 },
   syncConfigStatus: { writes: 200, bytes: 42_083, observedElapsedMs: 270.11 },
 });
+// The double sleeps MODELED_WRITE_LATENCY_MS per write, so the elapsed budget is
+// dominated by timer resolution, not by production work. The 270.11 ms baseline above is
+// 200 writes on a ~1 ms-clock machine; Windows floors a setTimeout(1) at ~15.6 ms, which
+// alone puts 200 writes at ~3.1 s (measured 3042.86 ms here). Keep the Linux calibration
+// and give win32 the measured floor plus headroom, so the guard still bites on a real
+// regression instead of firing on the platform's clock.
+const SYNC_STATUS_MAX_ELAPSED_MS = process.platform === 'win32' ? 6_000 : 1_000;
+// Same clock problem on the two burst legs. Measured on win32 over seven runs: usage
+// 13.26-133.09 ms and toolHistory 28.81-209.35 ms, against the 100 ms Linux calibration.
+// The writes/bytes legs are the guard that matters here (maxWrites 1 for 100 mutations),
+// so the win32 elapsed leg only has to clear the clock noise: ~10x the worst measured
+// value, still well under this test's own 20s budget.
+const USAGE_MAX_ELAPSED_MS = process.platform === 'win32' ? 1_500 : 100;
+const HISTORY_MAX_ELAPSED_MS = process.platform === 'win32' ? 2_500 : 100;
 const PERSISTENCE_BURST_BUDGET = Object.freeze({
-  usage: { maxWrites: 1, maxBytes: 27_544, maxElapsedMs: 100 },
-  toolHistory: { maxWrites: 1, maxBytes: 27_370, maxElapsedMs: 100 },
-  syncConfigStatus: { exactWrites: 200, maxBytes: 42_083, maxElapsedMs: 1_000 },
+  usage: { maxWrites: 1, maxBytes: 27_544, maxElapsedMs: USAGE_MAX_ELAPSED_MS },
+  toolHistory: { maxWrites: 1, maxBytes: 27_370, maxElapsedMs: HISTORY_MAX_ELAPSED_MS },
+  syncConfigStatus: { exactWrites: 200, maxBytes: 42_083, maxElapsedMs: SYNC_STATUS_MAX_ELAPSED_MS },
 });
 const COUNTS: SyncCounts = {
   memories: 1,
@@ -182,7 +196,9 @@ describe('persistence 100-mutation trace', () => {
     expect(burst.local.metric(USAGE_STORAGE_KEY).writes).toBe(writesBeforeRestart.usage);
     expect(burst.local.metric(TOOL_HISTORY_STORAGE_KEY).writes).toBe(writesBeforeRestart.toolHistory);
     expect(syncStorage.writes).toBe(writesBeforeRestart.syncConfigStatus);
-  });
+    // 200 modeled writes put this test at 6.7s measured idle (see SYNC_STATUS_MAX_ELAPSED_MS
+    // above for why the modeled sleep dominates), which is over vitest's 5s default.
+  }, 20_000);
 
   it('keeps clear as a FIFO barrier between adjacent mutation bursts', async () => {
     installDeterministicEnvironment();
