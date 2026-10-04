@@ -128,7 +128,9 @@ describe('shell native host local_file_* tools', () => {
 
     const persisted = readFileSync(filePath, 'utf8');
     expect(persisted).toBe(content);
-  });
+    // Four host spawns plus a ~220 KB UTF-8 round trip measured 5.2s idle on win32, already
+    // above the 5s default before any fork contention.
+  }, 20_000);
 });
 
 describe('shell native host logLine resilience', () => {
