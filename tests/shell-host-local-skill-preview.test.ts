@@ -148,7 +148,7 @@ describe('shell native host logLine resilience', () => {
 
   it('returns a normal response when DPP_LOG_FILE points to an unwritable path', async () => {
     const response = await callNativeHost('shell_status', {}, {
-      DPP_LOG_FILE: '/nonexistent-dir-dpp-test-xyz/unwritable.log',
+      DPP_LOG_FILE: createBlockedLogPath(),
     });
     expect(response.error).toBeUndefined();
     expect(response.result?.structuredContent?.data?.platform).toBeTruthy();
@@ -156,12 +156,23 @@ describe('shell native host logLine resilience', () => {
 
   it('writes a stderr diagnostic when DPP_LOG_FILE cannot be initialized', async () => {
     const { response, stderr } = await callNativeHostWithStderr('shell_status', {}, {
-      DPP_LOG_FILE: '/nonexistent-dir-dpp-test-xyz/unwritable.log',
+      DPP_LOG_FILE: createBlockedLogPath(),
     });
     expect(response.error).toBeUndefined();
     expect(stderr).toContain('failed to initialize log file');
   });
 });
+
+// A log path whose parent is an existing regular file, so creating it throws on every
+// platform (EEXIST on Windows, ENOTDIR on POSIX). A "/nonexistent-dir/..." path is not
+// unwritable on Windows: it resolves to the current drive root, which is writable here.
+function createBlockedLogPath(): string {
+  const root = mkdtempSync(join(tmpdir(), 'deepseek-pp-host-log-blocked-'));
+  tempRoots.push(root);
+  const blocker = join(root, 'not-a-directory');
+  writeFileSync(blocker, '');
+  return join(blocker, 'host.log');
+}
 
 function createNestedSkillFixture(): string {
   const root = mkdtempSync(join(tmpdir(), 'deepseek-pp-local-skill-'));
