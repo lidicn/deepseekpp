@@ -43,12 +43,16 @@ describe('ChatMessage rich rendering boundary', () => {
       }));
     });
 
+    // RichMessageContent costs 739ms to transform and load cold on win32 (measured in an
+    // isolated worker), and several times that while the rest of the suite holds the
+    // forks, so vi.waitFor's 1s default expires before the Suspense boundary resolves.
+    // A renderer that never loads now costs 8s to fail instead of 1s.
     await vi.waitFor(() => {
       expect(container.querySelector('strong')?.textContent).toBe('world');
-    });
+    }, { interval: 50, timeout: 8_000 });
     expect(container.textContent).toContain('Hello world');
     expect(onRichContentRendered).toHaveBeenCalled();
-  });
+  }, 20_000);
 
   it('contains a rejected lazy renderer and keeps the surrounding route mounted', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
