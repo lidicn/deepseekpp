@@ -5563,13 +5563,54 @@ async function handleAgentLoopComplete(
   } catch {
     return false;
   }
+  if (shouldReloadNativeHistory) {
+    // The reload discards this world, so the log handoff must settle while the
+    // extension context is still alive.
+    await persistConsoleLogBufferBeforeReload();
+  }
   return shouldReloadNativeHistory;
 }
 
-// Console log persistence: save recent logs before reload, restore after reload.
-const CONSOLE_LOG_STORAGE_KEY = 'dpp_console_log_buffer';
+// Console log continuity: the buffer survives the one reload the inline-agent
+// terminal flow performs. It stays inside the isolated world and, when it must
+// cross the reload, inside extension-owned storage. chat.deepseek.com page
+// scripts can read this origin's localStorage, so nothing may be persisted there.
+const CONSOLE_LOG_BUFFER_KEY = 'dpp_console_log_buffer';
+const LEGACY_CONSOLE_LOG_STORAGE_KEY = 'dpp_console_log_buffer';
 const CONSOLE_LOG_MAX_ENTRIES = 500;
+const CONSOLE_LOG_MAX_CHARS = 128_000;
 let consoleLogBuffer: string[] = [];
+let consoleLogPersistenceWarned = false;
+
+function warnOnceConsoleLogPersistenceFailed(reason: string): void {
+  if (consoleLogPersistenceWarned) return;
+  consoleLogPersistenceWarned = true;
+  console.warn('[DeepSeek++] console log handoff degraded:', reason);
+}
+
+function clampConsoleLogBuffer(): void {
+  if (consoleLogBuffer.length > CONSOLE_LOG_MAX_ENTRIES) {
+    consoleLogBuffer = consoleLogBuffer.slice(-CONSOLE_LOG_MAX_ENTRIES);
+  }
+  let chars = 0;
+  let dropBefore = 0;
+  for (let index = consoleLogBuffer.length - 1; index >= 0; index -= 1) {
+    chars += consoleLogBuffer[index].length;
+    if (chars > CONSOLE_LOG_MAX_CHARS) {
+      dropBefore = index + 1;
+      break;
+    }
+  }
+  if (dropBefore > 0) consoleLogBuffer = consoleLogBuffer.slice(dropBefore);
+}
+
+function persistConsoleLogBufferBeforeReload(): Promise<void> {
+  return chrome.storage.local
+    .set({ [CONSOLE_LOG_BUFFER_KEY]: consoleLogBuffer })
+    .catch((error: unknown) => {
+      warnOnceConsoleLogPersistenceFailed(error instanceof Error ? error.message : String(error));
+    });
+}
 
 function initConsoleLogPersistence(): void {
   // Hook console methods
@@ -5582,14 +5623,13 @@ function initConsoleLogPersistence(): void {
     try {
       const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
       consoleLogBuffer.push(`[${new Date().toISOString()}] [${level}] ${msg}`);
-      if (consoleLogBuffer.length > CONSOLE_LOG_MAX_ENTRIES) {
-        consoleLogBuffer = consoleLogBuffer.slice(-CONSOLE_LOG_MAX_ENTRIES);
-      }
-      // Periodically save to localStorage
-      if (consoleLogBuffer.length % 50 === 0) {
-        localStorage.setItem(CONSOLE_LOG_STORAGE_KEY, JSON.stringify(consoleLogBuffer));
-      }
-    } catch {}
+      clampConsoleLogBuffer();
+    } catch (error) {
+      originalWarn(
+        '[DeepSeek++] console log capture failed:',
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   };
 
   console.log = (...args) => { addEntry('log', args); originalLog(...args); };
@@ -5597,26 +5637,32 @@ function initConsoleLogPersistence(): void {
   console.error = (...args) => { addEntry('error', args); originalError(...args); };
   console.info = (...args) => { addEntry('info', args); originalInfo(...args); };
 
-  // Restore previous logs on page load
   try {
-    const saved = localStorage.getItem(CONSOLE_LOG_STORAGE_KEY);
-    if (saved) {
-      const entries = JSON.parse(saved);
-      console.log('%c--- Restored console logs from previous session ---', 'color: #999; font-style: italic');
-      for (const entry of entries) {
-        originalLog(entry);
-      }
-      console.log('%c--- End of restored logs ---', 'color: #999; font-style: italic');
-      consoleLogBuffer = entries;
-    }
-  } catch {}
+    localStorage.removeItem(LEGACY_CONSOLE_LOG_STORAGE_KEY);
+  } catch (error) {
+    warnOnceConsoleLogPersistenceFailed(error instanceof Error ? error.message : String(error));
+  }
+
+  // The handoff buffer is single-use: it is consumed by the reload it was written for.
+  chrome.storage.local
+    .get(CONSOLE_LOG_BUFFER_KEY)
+    .then((stored) => {
+      const entries = (stored as Record<string, unknown>)[CONSOLE_LOG_BUFFER_KEY];
+      if (!Array.isArray(entries)) return undefined;
+      consoleLogBuffer = entries.filter((entry): entry is string => typeof entry === 'string');
+      clampConsoleLogBuffer();
+      if (consoleLogBuffer.length === 0) return chrome.storage.local.remove(CONSOLE_LOG_BUFFER_KEY);
+      originalLog('%c--- Restored console logs from previous session ---', 'color: #999; font-style: italic');
+      for (const entry of consoleLogBuffer) originalLog(entry);
+      originalLog('%c--- End of restored logs ---', 'color: #999; font-style: italic');
+      return chrome.storage.local.remove(CONSOLE_LOG_BUFFER_KEY);
+    })
+    .catch((error: unknown) => {
+      warnOnceConsoleLogPersistenceFailed(error instanceof Error ? error.message : String(error));
+    });
 }
 
 function reloadInlineAgentNativeHistory(): void {
-  // Save buffer before reload
-  try {
-    localStorage.setItem(CONSOLE_LOG_STORAGE_KEY, JSON.stringify(consoleLogBuffer));
-  } catch {}
   window.location.reload();
 }
 
