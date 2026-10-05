@@ -645,6 +645,8 @@ describe('sidepanel interactions', () => {
     }, { interval: 50, timeout: 8_000 });
     expect(scrollAssignments).toContain(480);
     expect(scrollTop).toBe(480);
+    // Case budget: the same 8s cold-render window as above can outlast Vitest's 5s default.
+    // Measured 1861ms under full-suite load (2026-10-06, tmp-readings/r4-verbose-full.log).
   }, 20_000);
 
   it('uploads a vision image attachment and submits its file reference', async () => {

@@ -90,6 +90,9 @@ describe('sidepanel navigation', () => {
     expect(navButtonLabels('能力子导航')).toEqual(['Skill', 'MCP', '工具', '浏览器', '预设', '自动化']);
     await clickNavButton('能力子导航', 'MCP');
     await vi.waitFor(() => expect(container.textContent).toContain('连接本机或远程 MCP 服务'), { interval: 50, timeout: 8_000 });
+    // Case budget: this case can legitimately spend two 8s cold-load windows (SavedPage,
+    // McpPage) — 16s against Vitest's 5s default. Measured 4565ms under full-suite load
+    // (2026-10-06, tmp-readings/r4-verbose-full.log).
   }, 30_000);
 
   it('keeps the voice settings surface reachable from Settings', async () => {
@@ -128,6 +131,8 @@ describe('sidepanel navigation', () => {
       expect(container.textContent).toContain('语音输入');
       expect(container.textContent).toContain('朗读回复');
     }, { interval: 50, timeout: 8_000 });
+    // Case budget: one legitimate 8s cold-load window can outlast Vitest's 5s default.
+    // Measured 666ms under full-suite load (2026-10-06, tmp-readings/r4-verbose-full.log).
   }, 20_000);
 
   it('renders Settings when chrome.identity is unavailable', async () => {
@@ -160,6 +165,8 @@ describe('sidepanel navigation', () => {
       expect(container.textContent).toContain('DeepSeek Vision');
       expect(container.textContent).toContain('按天 Token 趋势');
     }, { interval: 50, timeout: 8_000 });
+    // Case budget: same shape as the voice case — one 8s cold-load window against Vitest's
+    // 5s default. Measured 1076ms under full-suite load (2026-10-06, r4-verbose-full.log).
   }, 20_000);
 
   it('keeps the top navigation from shrinking behind long settings content', () => {

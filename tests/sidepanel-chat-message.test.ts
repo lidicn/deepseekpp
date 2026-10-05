@@ -52,6 +52,9 @@ describe('ChatMessage rich rendering boundary', () => {
     }, { interval: 50, timeout: 8_000 });
     expect(container.textContent).toContain('Hello world');
     expect(onRichContentRendered).toHaveBeenCalled();
+    // Case budget: one legitimate 8s window above can outlast Vitest's 5s default.
+    // Measured 1691ms under full-suite load (2026-10-06, tmp-readings/r4-verbose-full.log);
+    // this ceiling covers the slow-fork tail, not the median.
   }, 20_000);
 
   it('contains a rejected lazy renderer and keeps the surrounding route mounted', async () => {
