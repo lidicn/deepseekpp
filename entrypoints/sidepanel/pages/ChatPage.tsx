@@ -285,11 +285,19 @@ export default function ChatPage() {
   }, [messages, scrollMessagesToBottom]);
 
   const saveChatConfig = async (patch: Partial<OfficialApiChatConfig>) => {
+    const previous = chatConfig;
     const next = normalizeOfficialApiChatConfig({ ...chatConfig, ...patch });
     setChatConfig(next);
+    // Same request fence as the load effect: the newest save owns the state,
+    // so a slower earlier response can never overwrite a newer config.
+    const generation = requestFence.current.begin();
     try {
-      setChatConfig(await chatController.saveConfig(next));
+      const saved = await chatController.saveConfig(next);
+      if (!requestFence.current.isCurrent(generation)) return;
+      setChatConfig(saved);
     } catch (err) {
+      if (!requestFence.current.isCurrent(generation)) return;
+      setChatConfig(previous);
       setError(err instanceof Error ? err.message : String(err));
     }
   };
