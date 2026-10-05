@@ -21,6 +21,7 @@ export interface AutomationRuntimeHandlerDependencies {
   updateAutomation(id: string, patch: AutomationUpdateInput): Promise<Automation | null>;
   setAutomationStatus(id: string, status: AutomationStatus): Promise<Automation | null>;
   deleteAutomation(id: string): Promise<void>;
+  terminalizeAutomationRuns(id: string): Promise<AutomationRun[]>;
   refreshAutomationNextRunAt(id: string): Promise<Automation | null>;
   cancelActiveAutomationRun(id: string): void;
   runAutomationNow(id: string, excludeTabId?: number): Promise<AutomationRun | AutomationDomainFailure>;
@@ -61,6 +62,10 @@ export function createAutomationRuntimeHandlers(
     }),
     defineBackgroundPayloadRuntimeCommandHandler('DELETE_AUTOMATION', async ({ id }, context) => {
       dependencies.cancelActiveAutomationRun(id);
+      // Awaited on purpose: the rows must already be terminal before the
+      // definition disappears, so a result that lands later can never rewrite
+      // (or be attributed to) a run of a deleted automation.
+      await dependencies.terminalizeAutomationRuns(id);
       await dependencies.deleteAutomation(id);
       await dependencies.broadcastAutomationUpdate(context.tabId);
       await dependencies.broadcastAutomationRunsUpdate(context.tabId);

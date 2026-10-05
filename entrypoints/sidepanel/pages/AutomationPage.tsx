@@ -615,6 +615,7 @@ function formatRun(run: AutomationRun, t: ReturnType<typeof useI18n>['t']): stri
     timeout: t('sidepanel.automationPage.status.timeout'),
     cancelled: t('sidepanel.automationPage.status.cancelled'),
     skipped: t('sidepanel.automationPage.status.skipped'),
+    ambiguous: t('sidepanel.automationPage.status.ambiguous'),
   };
   return `${label[run.status]}${run.attempt > 1 ? ` · ${t('sidepanel.automationPage.attempt', { count: run.attempt })}` : ''}`;
 }

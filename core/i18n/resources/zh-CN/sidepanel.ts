@@ -866,6 +866,7 @@ export const sidepanel = {
       timeout: '超时',
       cancelled: '已取消',
       skipped: '已跳过',
+      ambiguous: '结果未知',
     },
     meta: {
       next: '下次',

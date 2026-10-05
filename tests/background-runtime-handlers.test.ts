@@ -178,11 +178,21 @@ describe('R4.4 background runtime closure', () => {
     expect(dependencies.automation.setAutomationStatus).not.toHaveBeenCalled();
 
     const events: string[] = [];
+    let inFlightRowsWereTerminal = false;
     vi.mocked(dependencies.automation.cancelActiveAutomationRun).mockImplementation(() => {
       events.push('cancel');
     });
+    // One microtask boundary inside the terminal write: if the handler ever drops
+    // its await, deleteAutomation observes live queued/running rows and the
+    // event name below turns the assertion red.
+    vi.mocked(dependencies.automation.terminalizeAutomationRuns).mockImplementation(async () => {
+      await Promise.resolve();
+      inFlightRowsWereTerminal = true;
+      events.push('terminalize');
+      return [];
+    });
     vi.mocked(dependencies.automation.deleteAutomation).mockImplementation(async () => {
-      events.push('delete');
+      events.push(inFlightRowsWereTerminal ? 'delete' : 'delete-with-live-rows');
     });
     vi.mocked(dependencies.automation.broadcastAutomationUpdate).mockImplementation(async () => {
       events.push('automations');
@@ -191,7 +201,7 @@ describe('R4.4 background runtime closure', () => {
       events.push('runs');
     });
     await dispatch(handlers, { type: 'DELETE_AUTOMATION', payload: { id: 'automation-1' } });
-    expect(events).toEqual(['cancel', 'delete', 'automations', 'runs']);
+    expect(events).toEqual(['cancel', 'terminalize', 'delete', 'automations', 'runs']);
   });
 
   it('waits for scenario menu refresh and surfaces refresh failure', async () => {
@@ -259,6 +269,7 @@ function createDependencies(): BackgroundRuntimeHandlerDependencies {
       updateAutomation: vi.fn(async () => automation('updated')),
       setAutomationStatus: vi.fn(async () => automation('status')),
       deleteAutomation: vi.fn(async () => undefined),
+      terminalizeAutomationRuns: vi.fn(async () => []),
       refreshAutomationNextRunAt: vi.fn(async () => automation('refreshed')),
       cancelActiveAutomationRun: vi.fn(),
       runAutomationNow: vi.fn(async () => automationRun()),

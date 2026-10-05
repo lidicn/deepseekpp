@@ -866,6 +866,7 @@ export const sidepanel = {
       timeout: 'Timed out',
       cancelled: 'Cancelled',
       skipped: 'Skipped',
+      ambiguous: 'Outcome unknown',
     },
     meta: {
       next: 'Next',

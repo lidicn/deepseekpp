@@ -119,6 +119,38 @@ export async function setAutomationStatus(
   return patchAutomation(id, { status });
 }
 
+/**
+ * Writes every in-flight row of one automation to a terminal status in a single
+ * storage mutation, before the definition itself is deleted.
+ *
+ * A queued row never left the process, so 'cancelled' is the truth. A running
+ * row may already have sent its message to the page, so it gets 'ambiguous' —
+ * recording 'cancelled' there would tell the history a round definitively did
+ * not happen. Terminal rows keep whatever they already settled as.
+ */
+export async function terminalizeAutomationRuns(
+  id: AutomationId,
+): Promise<AutomationRun[]> {
+  return mutateState((state) => {
+    const now = Date.now();
+    const terminalized: AutomationRun[] = [];
+    const runs = state.runs.map((run) => {
+      if (run.automationId !== id) return run;
+      if (run.status !== 'queued' && run.status !== 'running') return run;
+      const next: AutomationRun = {
+        ...run,
+        status: run.status === 'running' ? 'ambiguous' : 'cancelled',
+        completedAt: run.completedAt ?? now,
+        updatedAt: now,
+      };
+      terminalized.push(next);
+      return next;
+    });
+    if (terminalized.length === 0) return { nextState: state, result: [], changed: false };
+    return { nextState: { ...state, runs }, result: terminalized, changed: true };
+  });
+}
+
 export async function deleteAutomation(id: AutomationId): Promise<void> {
   await mutateState((state) => {
     const nextAutomations = state.automations.filter((automation) => automation.id !== id);

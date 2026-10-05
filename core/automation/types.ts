@@ -13,7 +13,8 @@ export type AutomationRunStatus =
   | 'failed'
   | 'timeout'
   | 'cancelled'
-  | 'skipped';
+  | 'skipped'
+  | 'ambiguous';
 
 export type AutomationTrigger = 'manual' | 'schedule' | 'retry';
 

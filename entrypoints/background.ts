@@ -203,6 +203,7 @@ import {
   getAutomationById,
   getAutomationRuns,
   setAutomationStatus,
+  terminalizeAutomationRuns,
   updateAutomation,
 } from '../core/automation/store';
 import { runDeepSeekAutomation } from '../core/automation/runner';
@@ -632,6 +633,7 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         updateAutomation,
         setAutomationStatus,
         deleteAutomation,
+        terminalizeAutomationRuns,
         refreshAutomationNextRunAt,
         cancelActiveAutomationRun,
         runAutomationNow,

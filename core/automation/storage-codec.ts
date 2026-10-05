@@ -32,6 +32,7 @@ const AUTOMATION_RUN_STATUSES = new Set([
   'timeout',
   'cancelled',
   'skipped',
+  'ambiguous',
 ]);
 const AUTOMATION_TRIGGERS = new Set(['manual', 'schedule', 'retry']);
 const AUTOMATION_SCHEDULE_KINDS = new Set(['manual', 'cron', 'rrule']);
