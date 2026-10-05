@@ -775,7 +775,9 @@ function registerAutomationAlarmListener() {
   });
 }
 
-async function ensureAutomationWakeAlarm() {
+export async function ensureAutomationWakeAlarm() {
+  const existing = await chrome.alarms.get(AUTOMATION_WAKE_ALARM_NAME);
+  if (existing) return;
   await chrome.alarms.create(AUTOMATION_WAKE_ALARM_NAME, {
     periodInMinutes: AUTOMATION_WAKE_INTERVAL_MINUTES,
   });
