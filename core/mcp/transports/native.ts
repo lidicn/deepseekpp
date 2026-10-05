@@ -8,7 +8,6 @@ import type {
 import { McpTransportError, normalizeJsonRpcResponse } from './common';
 import { MULTIMODAL_MCP_NATIVE_HOST } from '../../multimodal';
 import { getMultimodalNativeEnv } from '../../multimodal/settings';
-import { SHELL_MCP_NATIVE_HOST } from '../../shell';
 import {
   MCP_NATIVE_ENVELOPE_PROTOCOL,
   MCP_NATIVE_ENVELOPE_VERSION,
@@ -120,9 +119,9 @@ async function sendNativeMessage<TParams extends Record<string, unknown> | undef
 
   const expectedRequest = 'id' in message ? message as McpJsonRpcRequest<TParams> : undefined;
   const envelope = await createNativeEnvelope(server, message);
-  if (expectedRequest) {
-    assertNativePayloadSize(nativeHost, envelope);
-  }
+  // Notifications travel over the same port and the same browser cap, so they are
+  // measured too; an oversized one used to fail as an opaque port disconnect.
+  assertNativePayloadSize(nativeHost, envelope);
 
   let response: unknown;
   if (expectedRequest) {
@@ -224,7 +223,13 @@ async function createNativeEnvelope(
 }
 
 function assertNativePayloadSize(nativeHost: string, envelope: McpNativeEnvelope): void {
-  if (nativeHost !== SHELL_MCP_NATIVE_HOST) return;
+  // The bound below is Chrome's own per-message native-messaging limit, so it applies
+  // to every host, first-party or third-party: an oversized message fails inside the
+  // browser as an opaque port disconnect, and surfacing it here is what makes it
+  // actionable. Only the first-party multimodal host is exempt — its image/video
+  // payloads are handed to the provider by the host itself (regression pinned for
+  // analyze_images / analyze_video).
+  if (nativeHost === MULTIMODAL_MCP_NATIVE_HOST) return;
   const writeContent = getLocalFileWriteContent(envelope.message);
   if (writeContent !== null) {
     const contentBytes = new Blob([writeContent]).size;

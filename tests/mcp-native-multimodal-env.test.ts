@@ -189,7 +189,7 @@ describe('native messaging payload limits', () => {
       },
     });
 
-    const server = createServer({}, 'com.deepseek_pp.multimodal.test-payload');
+    const server = createServer({}, MULTIMODAL_MCP_NATIVE_HOST);
     const largeImage = 'x'.repeat(10 * 1024 * 1024);
 
     const { createMcpNativeMessagingTransport } = await import('../core/mcp/transports/native');
@@ -234,7 +234,7 @@ describe('native messaging payload limits', () => {
     expect(connectNative).not.toHaveBeenCalled();
   });
 
-  it('does not size-gate notifications on the shell host', async () => {
+  it('posts a small notification without tripping the size gate', async () => {
     const postedEnvelopes: unknown[] = [];
     vi.stubGlobal('chrome', {
       runtime: {
@@ -255,6 +255,50 @@ describe('native messaging payload limits', () => {
     });
 
     expect(postedEnvelopes).toHaveLength(1);
+  });
+
+  it('size-gates an oversized notification instead of letting the port die', async () => {
+    const connectNative = vi.fn();
+    vi.stubGlobal('chrome', { runtime: { connectNative } });
+
+    const server = createServer({}, 'com.deepseek_pp.shell');
+    const { createMcpNativeMessagingTransport } = await import('../core/mcp/transports/native');
+
+    await expect(createMcpNativeMessagingTransport(server).notify!({
+      jsonrpc: '2.0',
+      method: 'notifications/tool_progress',
+      params: { text: 'x'.repeat(2_000_000) },
+    })).rejects.toMatchObject({
+      code: 'mcp_native_payload_too_large',
+      retryable: false,
+    });
+
+    expect(connectNative).not.toHaveBeenCalled();
+  });
+
+  it('size-gates a third-party native host, not only the first-party shell host', async () => {
+    const connectNative = vi.fn();
+    vi.stubGlobal('chrome', { runtime: { connectNative } });
+
+    const server = createServer({}, 'com.example.thirdparty.host');
+    const { createMcpNativeMessagingTransport } = await import('../core/mcp/transports/native');
+
+    await expect(createMcpNativeMessagingTransport(server).request({
+      jsonrpc: '2.0',
+      id: 'third-party-big',
+      method: 'tools/call',
+      params: {
+        name: 'write_note',
+        arguments: { body: 'x'.repeat(2_000_000) },
+      },
+    })).rejects.toMatchObject({
+      code: 'mcp_native_payload_too_large',
+      retryable: false,
+    });
+
+    // Surfaced before the port opens: Chrome drops an over-1 MB message silently,
+    // which previously reached users as an unexplained host disconnect.
+    expect(connectNative).not.toHaveBeenCalled();
   });
 });
 
