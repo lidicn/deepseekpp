@@ -512,7 +512,10 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
     if (finalizeDone) return;
     finalizeDone = true;
 
-    if (signal.aborted || lastTurnWasError && signal.aborted) {
+    // An abort is a silent COMPLETE even after an errored turn: `signal.aborted`
+    // alone gates this branch (the removed `lastTurnWasError && signal.aborted`
+    // term was dead code — `||` already short-circuits on `signal.aborted`).
+    if (signal.aborted) {
       post('AGENT_LOOP_COMPLETE', {
         loopId,
         totalSteps: stepIndex,
