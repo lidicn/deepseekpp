@@ -1,4 +1,5 @@
 import { createExportFilename } from './artifact-filename';
+import { sessionLimitNotice } from './artifact-notice';
 import type {
   ConversationExport,
   ConversationExportArtifact,
@@ -17,6 +18,9 @@ export function createConversationExportHtmlArtifact(exportData: ConversationExp
 }
 
 export function renderConversationExportHtml(exportData: ConversationExport): string {
+  const warnings = exportData.failures.map((failure) => `${failure.code}: ${failure.message}`);
+  const capNotice = sessionLimitNotice(exportData);
+  if (capNotice !== null) warnings.push(capNotice);
   const sessions = exportData.sessions.map((session) => renderSession(session, exportData.attachments)).join('\n');
   const attachments = exportData.attachments.length === 0
     ? ''
@@ -60,7 +64,7 @@ export function renderConversationExportHtml(exportData: ConversationExport): st
       <div class="metric"><strong>${exportData.stats.messageCount}</strong>Messages</div>
       <div class="metric"><strong>${exportData.stats.attachmentCount}</strong>Attachments</div>
     </div>
-    ${renderWarnings(exportData.failures.map((failure) => `${failure.code}: ${failure.message}`))}
+    ${renderWarnings(warnings)}
   </section>
   ${sessions}
   ${attachments}

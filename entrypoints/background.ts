@@ -232,6 +232,7 @@ import {
   buildConversationExportArtifactsCancellable,
   runConversationExport,
 } from '../core/export/service';
+import { readConversationExportSessionLimit } from '../core/export/session-limit';
 import { buildPromptAugmentation } from '../core/prompt';
 import {
   broadcastRuntimeUpdate,
@@ -600,6 +601,7 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         getExtensionVersion,
         createExportId: () => crypto.randomUUID(),
         loadClientHeaders: loadOrRefreshClientHeaders,
+        loadSessionLimit: () => readConversationExportSessionLimit(chrome.storage.local),
         createTransport: ({ baseUrl, clientHeaders }) => (
           createDeepSeekConversationExportTransport({
             baseUrl,

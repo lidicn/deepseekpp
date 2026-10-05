@@ -323,6 +323,21 @@ export default function DataSubPage({ state }: { state: SettingsState }) {
           </span>
         </div>
 
+        <TextField
+          label={t('sidepanel.settings.exportSessionLimit')}
+          hint={t('sidepanel.settings.exportSessionLimitHint')}
+          type="number"
+          value={state.exportSessionLimit}
+          disabled={state.syncBusy}
+          onChange={(raw) => {
+            void state.handleExportSessionLimitChange(raw).then((saved) => {
+              if (!saved && raw.trim() !== '') {
+                banner.show('error', t('sidepanel.settings.exportSessionLimitInvalid'));
+              }
+            });
+          }}
+        />
+
         <div className="flex gap-2">
           <button
             onClick={state.handleExport}

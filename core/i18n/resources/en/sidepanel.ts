@@ -443,6 +443,9 @@ export const sidepanel = {
     exportMemories: 'Export memories',
     exportLogs: 'Export diagnostic logs',
     exportLogsHint: 'Exports recent background tool execution and error diagnostics for troubleshooting shell_exec / MCP / authorization issues.',
+    exportSessionLimit: 'Conversation export session cap',
+    exportSessionLimitHint: 'A bulk export reads at most this many conversations and states the stop inside the exported file (default 500). Export in smaller ranges to reach the rest.',
+    exportSessionLimitInvalid: 'Enter a whole number of 1 or more; the export cap was not changed.',
     importMemories: 'Import memories',
     clearAllMemories: 'Clear all memories',
     usage: {

@@ -5,6 +5,12 @@ import {
   normalizeBackgroundConfig,
 } from '../../../core/background/config';
 import { getChatEnabled, setChatEnabled } from '../../../core/chat/store';
+import { DEFAULT_CONVERSATION_EXPORT_SESSION_LIMIT } from '../../../core/export/schema';
+import {
+  CONVERSATION_EXPORT_SESSION_LIMIT_STORAGE_KEY,
+  normalizeStoredSessionLimit,
+  readConversationExportSessionLimit,
+} from '../../../core/export/session-limit';
 import type { FloatingChatRuntimeState } from '../../../core/floating-chat/runtime-state';
 import { decodeRuntimeConfigResponse } from '../../../core/messaging/bootstrap-client';
 import {
@@ -374,6 +380,28 @@ export function useSettingsController() {
   const handleDebugTelemetryToggle = useCallback(async (next: boolean) => {
     setDebugTelemetryEnabledState(next);
     await chrome.storage.local.set({ dpp_debug_telemetry_enabled: next });
+  }, []);
+
+  // --- conversation export cap (DPP-01 裁定 A: 上限做成设置项，默认 500) ---
+  const [exportSessionLimit, setExportSessionLimitState] = useState(
+    String(DEFAULT_CONVERSATION_EXPORT_SESSION_LIMIT),
+  );
+
+  useEffect(() => {
+    readConversationExportSessionLimit(chrome.storage.local).then((stored) => {
+      if (stored !== null) setExportSessionLimitState(String(stored));
+    });
+  }, []);
+
+  /** Persist a positive-integer cap; false means nothing was stored, so the page can say so. */
+  const handleExportSessionLimitChange = useCallback(async (next: string): Promise<boolean> => {
+    setExportSessionLimitState(next);
+    const parsed = normalizeStoredSessionLimit(Number(next.trim()));
+    if (parsed === null) return false;
+    await chrome.storage.local.set({
+      [CONVERSATION_EXPORT_SESSION_LIMIT_STORAGE_KEY]: parsed,
+    });
+    return true;
   }, []);
 
   // --- global floating chat ---
@@ -1081,6 +1109,8 @@ export function useSettingsController() {
     handleDownloadSync,
     handleAuthorizeSync,
     // data
+    exportSessionLimit,
+    handleExportSessionLimitChange,
     handleExport,
     handleExportLogs,
     handleImport,

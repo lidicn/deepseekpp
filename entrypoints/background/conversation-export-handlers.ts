@@ -13,6 +13,7 @@ import type {
   ConversationExportTransport,
   RunConversationExportInput,
 } from '../../core/export/service';
+import { applyStoredSessionLimit } from '../../core/export/session-limit';
 import { defineDeepSeekPayloadRuntimeCommandHandler } from './runtime-handler';
 
 interface ActiveConversationExport {
@@ -29,6 +30,8 @@ export interface ConversationExportRuntimeHandlerDependencies {
   getExtensionVersion(): string;
   createExportId(): string;
   loadClientHeaders(preferredTabId?: number): Promise<Record<string, string> | null>;
+  /** Stored session cap from the sidepanel setting; null means "use the schema default". */
+  loadSessionLimit(): Promise<number | null>;
   createTransport(input: {
     baseUrl: string;
     clientHeaders: Record<string, string>;
@@ -113,9 +116,12 @@ export function createConversationExportRuntimeHandlers(
         return { ok: false, exportId, error: dependencies.missingAuthMessage() };
       }
 
+      const storedSessionLimit = await dependencies.loadSessionLimit();
+      assertExportActive(entry);
+
       const exportData = await dependencies.runExport({
         exportId,
-        request: payload.request,
+        request: applyStoredSessionLimit(payload.request, storedSessionLimit),
         baseUrl: dependencies.baseUrl,
         extensionVersion: dependencies.getExtensionVersion(),
         signal: entry.controller.signal,

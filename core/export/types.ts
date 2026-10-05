@@ -45,6 +45,8 @@ export interface ConversationExportStats {
   messageCount: number;
   attachmentCount: number;
   failedSessionCount: number;
+  /** True when the session list still had more sessions than the request cap. */
+  truncatedBySessionLimit?: boolean;
   startedAt: string;
   completedAt: string;
 }

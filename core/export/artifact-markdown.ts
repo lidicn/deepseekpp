@@ -1,4 +1,5 @@
 import { createExportFilename } from './artifact-filename';
+import { sessionLimitNotice } from './artifact-notice';
 import type {
   ConversationExport,
   ConversationExportArtifact,
@@ -29,11 +30,13 @@ export function renderConversationExportMarkdown(exportData: ConversationExport)
     '',
   ];
 
-  if (exportData.failures.length > 0) {
+  const warnings = exportData.failures.map((failure) => `- ${failure.code}: ${failure.message}`);
+  const capNotice = sessionLimitNotice(exportData);
+  if (capNotice !== null) warnings.push(`- ${capNotice}`);
+
+  if (warnings.length > 0) {
     lines.push('## Export Warnings', '');
-    for (const failure of exportData.failures) {
-      lines.push(`- ${failure.code}: ${failure.message}`);
-    }
+    lines.push(...warnings);
     lines.push('');
   }
 

@@ -11,7 +11,7 @@ import {
   type RuntimeCommandHandler,
 } from '../core/messaging/runtime-command-registry';
 import type { ModelTurn } from '../core/deepseek/automation-client-port';
-import type { ConversationExport } from '../core/export/types';
+import type { ConversationExport, ConversationExportRequest } from '../core/export/types';
 import type { ToolDescriptor, ToolResult } from '../core/tool/types';
 import {
   createChatRuntimeService,
@@ -528,6 +528,32 @@ describe('conversation export coordinator', () => {
     await first;
   });
 
+  it('bounds a listing export with the stored session cap', async () => {
+    const dependencies = createExportDependencies();
+    vi.mocked(dependencies.loadSessionLimit).mockResolvedValue(800);
+    const handlers = createConversationExportRuntimeHandlers(dependencies);
+
+    await dispatch(handlers, {
+      type: 'EXPORT_DEEPSEEK_CONVERSATIONS',
+      payload: { exportId: 'capped', request: {} },
+    });
+
+    expect(exportRunRequest(dependencies).sessionLimit).toBe(800);
+  });
+
+  it('keeps an explicit-session request at the schema default cap', async () => {
+    const dependencies = createExportDependencies();
+    vi.mocked(dependencies.loadSessionLimit).mockResolvedValue(800);
+    const handlers = createConversationExportRuntimeHandlers(dependencies);
+
+    await dispatch(handlers, {
+      type: 'EXPORT_DEEPSEEK_CONVERSATIONS',
+      payload: { exportId: 'explicit', request: { sessionIds: ['session-1'] } },
+    });
+
+    expect(exportRunRequest(dependencies).sessionLimit).toBe(500);
+  });
+
   it('fails visibly when an explicit current-session export returns zero messages', async () => {
     const dependencies = createExportDependencies();
     const handlers = createConversationExportRuntimeHandlers(dependencies);
@@ -799,6 +825,7 @@ function createExportDependencies(): ConversationExportRuntimeHandlerDependencie
     baseUrl: 'https://chat.deepseek.com',
     getExtensionVersion: vi.fn(() => '1.10.0'),
     createExportId: vi.fn(() => 'generated-export'),
+    loadSessionLimit: vi.fn(async () => null),
     loadClientHeaders: vi.fn(async () => ({ Authorization: 'Bearer token' })),
     createTransport: vi.fn(() => ({
       listSessions: vi.fn(async () => []),
@@ -818,6 +845,13 @@ function createExportDependencies(): ConversationExportRuntimeHandlerDependencie
     cancelledMessage: vi.fn(() => 'Export cancelled'),
     emptyHistoryMessage: vi.fn(() => 'Empty history'),
   };
+}
+
+function exportRunRequest(
+  dependencies: ConversationExportRuntimeHandlerDependencies,
+): ConversationExportRequest {
+  const [input] = vi.mocked(dependencies.runExport).mock.calls[0] ?? [];
+  return (input as { request: ConversationExportRequest }).request;
 }
 
 async function dispatch(

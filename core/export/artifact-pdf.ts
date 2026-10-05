@@ -1,4 +1,5 @@
 import { createExportFilename } from './artifact-filename';
+import { sessionLimitNotice } from './artifact-notice';
 import type {
   ConversationExport,
   ConversationExportArtifact,
@@ -49,7 +50,7 @@ function buildPdfLines(exportData: ConversationExport): PdfLine[] {
     { text: `Sessions ${exportData.stats.sessionCount} · Messages ${exportData.stats.messageCount} · Attachments ${exportData.stats.attachmentCount}`, fontSize: BODY_FONT_SIZE, leading: 24 },
   ];
 
-  appendFailures(lines, exportData.failures);
+  appendFailures(lines, exportData.failures, sessionLimitNotice(exportData));
   for (const session of exportData.sessions) {
     appendSession(lines, session, exportData.attachments);
   }
@@ -83,11 +84,13 @@ function appendSession(lines: PdfLine[], session: ExportedSession, attachments: 
   }
 }
 
-function appendFailures(lines: PdfLine[], failures: ConversationExportFailure[]) {
-  if (failures.length === 0) return;
+function appendFailures(lines: PdfLine[], failures: ConversationExportFailure[], extraWarning?: string | null) {
+  const messages = failures.map((failure) => `${failure.code}: ${failure.message}`);
+  if (extraWarning) messages.push(extraWarning);
+  if (messages.length === 0) return;
   lines.push({ text: 'Export Warnings', fontSize: 13, leading: 18 });
-  for (const failure of failures) {
-    appendWrapped(lines, `${failure.code}: ${failure.message}`, MAX_META_CHARS_PER_LINE);
+  for (const message of messages) {
+    appendWrapped(lines, message, MAX_META_CHARS_PER_LINE);
   }
 }
 

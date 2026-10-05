@@ -11,6 +11,12 @@ const DEFAULT_PAGE_SIZE = 50;
 const MIN_PAGE_SIZE = 1;
 const MAX_PAGE_SIZE = 100;
 const MAX_SESSION_ID_COUNT = 100;
+/**
+ * Session cap applied when a caller does not state one. Listing without a cap
+ * pages the official session list until the account runs out and keeps every
+ * session in memory (audit report #15), so the boundary is always bounded.
+ */
+export const DEFAULT_CONVERSATION_EXPORT_SESSION_LIMIT = 500;
 
 export class ConversationExportValidationError extends Error {
   constructor(message: string) {
@@ -28,7 +34,8 @@ export function normalizeConversationExportRequest(input: unknown): Conversation
   const formats = dedupeFormats(requestedFormats);
   const pageSize = normalizeOptionalInteger(value.pageSize, 'pageSize', MIN_PAGE_SIZE, MAX_PAGE_SIZE)
     ?? DEFAULT_PAGE_SIZE;
-  const sessionLimit = normalizeOptionalInteger(value.sessionLimit, 'sessionLimit', 1, Number.MAX_SAFE_INTEGER);
+  const sessionLimit = normalizeOptionalInteger(value.sessionLimit, 'sessionLimit', 1, Number.MAX_SAFE_INTEGER)
+    ?? DEFAULT_CONVERSATION_EXPORT_SESSION_LIMIT;
   const sessionIds = normalizeSessionIds(value.sessionIds);
   const includeFileBodies = value.includeFileBodies === true;
   if (includeFileBodies) {
@@ -44,7 +51,7 @@ export function normalizeConversationExportRequest(input: unknown): Conversation
     includeAttachmentMetadata: value.includeAttachmentMetadata !== false,
     includeFileBodies: false,
     pageSize,
-    ...(sessionLimit === undefined ? {} : { sessionLimit }),
+    sessionLimit,
     ...(sessionIds === undefined ? {} : { sessionIds }),
   };
 }

@@ -443,6 +443,9 @@ export const sidepanel = {
     exportMemories: '导出记忆',
     exportLogs: '导出诊断日志',
     exportLogsHint: '导出最近一次会话内后台工具执行与错误诊断信息，用于排查 shell_exec / MCP / 授权问题。',
+    exportSessionLimit: '对话导出会话上限',
+    exportSessionLimitHint: '批量导出最多读取这么多条对话，并在导出文件里注明停止位置（默认 500）。需要更多请分次导出。',
+    exportSessionLimitInvalid: '请输入不小于 1 的整数，导出上限未修改。',
     importMemories: '导入记忆',
     clearAllMemories: '清除所有记忆',
     usage: {

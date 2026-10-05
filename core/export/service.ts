@@ -111,6 +111,12 @@ export async function runConversationExport(input: RunConversationExportInput): 
   const completedAt = now().toISOString();
   const messageCount = sessions.reduce((total, session) => total + session.messages.length, 0);
   const failedSessionCount = failures.filter((failure) => failure.code === 'session_history_failed').length;
+  // The listing transport stops paging as soon as it fills the cap, so a full
+  // cap cannot prove the account had no more sessions; say so instead of
+  // implying a complete export (DPP-01).
+  const truncatedBySessionLimit = !request.sessionIds?.length
+    && request.sessionLimit !== undefined
+    && sessionSummaries.length >= request.sessionLimit;
 
   const exportData: ConversationExport = {
     schemaVersion: CONVERSATION_EXPORT_SCHEMA_VERSION,
@@ -132,6 +138,7 @@ export async function runConversationExport(input: RunConversationExportInput): 
       messageCount,
       attachmentCount: attachments.length,
       failedSessionCount,
+      truncatedBySessionLimit,
       startedAt,
       completedAt,
     },
