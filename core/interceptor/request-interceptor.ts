@@ -151,6 +151,12 @@ export function hookFetch(): () => void {
       );
     }
     const requestBodyStr = modified?.body ?? initBodyStr;
+    const executableToolDescriptors = augmentationFailed
+      ? []
+      : (modified?.toolDescriptors ?? fallbackToolDescriptors);
+    const filterToolDescriptors = augmentationFailed
+      ? fallbackToolDescriptors
+      : executableToolDescriptors;
     recordRequestFromBody(requestBodyStr, route ?? "unknown", modified !== null);
     // 如果 body 没变（modified.body === init.body），直接复用 originalContext
     // 的 parsed body 来消除第二次 JSON.parse。
@@ -160,9 +166,8 @@ export function hookFetch(): () => void {
           requestId: modified?.requestId ?? originalContext.requestId,
           originalPrompt: modified?.originalPrompt ?? originalContext.originalPrompt,
           agentTaskPrompt: modified?.agentTaskPrompt ?? originalContext.agentTaskPrompt,
-          toolDescriptors: augmentationFailed
-            ? []
-            : (modified?.toolDescriptors ?? fallbackToolDescriptors),
+          toolDescriptors: executableToolDescriptors,
+          filterToolDescriptors,
           ...(modified?.promptOptions ? { promptOptions: modified.promptOptions } : {}),
           ...(modified?.activeLocalSkillDir !== undefined
             ? { activeLocalSkillDir: modified.activeLocalSkillDir } : {}),
@@ -174,9 +179,8 @@ export function hookFetch(): () => void {
             ...(modified?.requestId ? { requestId: modified.requestId } : {}),
             originalPrompt: modified?.originalPrompt ?? originalContext.originalPrompt,
             agentTaskPrompt: modified?.agentTaskPrompt ?? originalContext.agentTaskPrompt,
-            toolDescriptors: augmentationFailed
-              ? []
-              : (modified?.toolDescriptors ?? fallbackToolDescriptors),
+            toolDescriptors: executableToolDescriptors,
+            filterToolDescriptors,
             ...(modified?.promptOptions ? { promptOptions: modified.promptOptions } : {}),
             ...(modified?.activeLocalSkillDir !== undefined
               ? { activeLocalSkillDir: modified.activeLocalSkillDir } : {}),
@@ -294,6 +298,12 @@ export function hookXHR(): () => void {
             );
           }
           const requestBody = modified?.body ?? body;
+          const executableToolDescriptors = augmentationFailed
+            ? []
+            : (modified?.toolDescriptors ?? fallbackToolDescriptors);
+          const filterToolDescriptors = augmentationFailed
+            ? fallbackToolDescriptors
+            : executableToolDescriptors;
           recordRequestFromBody(requestBody, route ?? "unknown", modified !== null);
           cancelResponseInterceptor = setupXHRResponseInterceptor(
             xhr,
@@ -304,9 +314,8 @@ export function hookXHR(): () => void {
                 modified?.originalPrompt ?? originalContext.originalPrompt,
               agentTaskPrompt:
                 modified?.agentTaskPrompt ?? originalContext.agentTaskPrompt,
-              toolDescriptors: augmentationFailed
-                ? []
-                : (modified?.toolDescriptors ?? fallbackToolDescriptors),
+              toolDescriptors: executableToolDescriptors,
+              filterToolDescriptors,
               ...(modified?.promptOptions
                 ? { promptOptions: modified.promptOptions }
                 : {}),

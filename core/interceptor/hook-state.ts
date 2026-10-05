@@ -121,6 +121,10 @@ export interface RequestContext {
   promptOptions: ResponseCompletePayload["promptOptions"];
   suppressPageEvents: boolean;
   toolDescriptors: ToolDescriptor[];
+  // Presentation-only snapshot for the SSE/XML filter. When request augmentation
+  // fails open, execution rights are cleared but the page must still not see the
+  // raw XML of a known tool, so the filter keeps reading the authorized set.
+  filterToolDescriptors: ToolDescriptor[];
   // The active local skill's skillDir for the current request (isolated by requestId);
   // computed at augment time and passed via RequestBodyModification, pinning cwd during response parsing.
   // Request-scoped data; never use global mutable state (Review #1 concurrency isolation requirement).
@@ -132,6 +136,7 @@ export interface RequestContextOverrides {
   originalPrompt?: string;
   agentTaskPrompt?: string;
   toolDescriptors?: ToolDescriptor[];
+  filterToolDescriptors?: ToolDescriptor[];
   promptOptions?: ResponseCompletePayload["promptOptions"];
   activeLocalSkillDir?: string;
 }

@@ -189,7 +189,7 @@ function createPassiveDeepSeekStreamState(
   const frameDecoder = createDeepSeekSseFrameDecoder();
   const summary = createDeepSeekStreamSummary();
   const filter = new XmlToolStreamFilter(
-    requestContext.toolDescriptors,
+    requestContext.filterToolDescriptors,
     requestContext.originalPrompt,
   );
   let cancelled = false;

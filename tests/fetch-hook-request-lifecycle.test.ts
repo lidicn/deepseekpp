@@ -596,6 +596,64 @@ describe('fetch hook request lifecycle', () => {
     }
   });
 
+  it('hides raw tool XML from the page when augmentation succeeds', async () => {
+    // Positive control: proves the assertions below can bite at all. Without
+    // this, "no raw tag in the visible stream" would also be satisfied by a
+    // filter that never matches anything.
+    const nativeFetch = window.fetch;
+    updateHookState({ toolDescriptors: [makeDescriptor('artifact_create')] });
+    const wire = [
+      'data: {"p":"response/content","o":"APPEND","v":"前文<artifact_create>{\\"filename\\":\\"x.html\\"</artifact_create>后文"}',
+      'data: {"p":"response/status","v":"FINISHED"}',
+    ].join('\n\n') + '\n\n';
+    window.fetch = vi.fn(async () => new Response(sseStream(wire)));
+
+    const uninstall = hookFetch();
+    try {
+      const response = await window.fetch('https://chat.deepseek.com/api/v0/chat/completion', {
+        method: 'POST',
+        body: '{"prompt":"hello"}',
+      });
+      const visible = await response.text();
+      expect(visible).not.toContain('<artifact_create>');
+      expect(visible).toContain('前文');
+    } finally {
+      uninstall();
+      window.fetch = nativeFetch;
+    }
+  });
+
+  it('still hides raw tool XML after request augmentation fails open', async () => {
+    // A failed augmentation must not execute anything, but the historical
+    // prompt context can still make the model emit a known tag: the native
+    // request stays intact while that raw XML keeps out of the page.
+    const nativeFetch = window.fetch;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    updateHookState({ toolDescriptors: [makeDescriptor('artifact_create')] });
+    onRequestBody.mockRejectedValue(new Error('DeepSeek++ main/content bridge disconnected.'));
+    const wire = [
+      'data: {"p":"response/content","o":"APPEND","v":"前文<artifact_create>{\\"filename\\":\\"x.html\\"</artifact_create>后文"}',
+      'data: {"p":"response/status","v":"FINISHED"}',
+    ].join('\n\n') + '\n\n';
+    window.fetch = vi.fn(async () => new Response(sseStream(wire)));
+
+    const uninstall = hookFetch();
+    try {
+      const response = await window.fetch('https://chat.deepseek.com/api/v0/chat/completion', {
+        method: 'POST',
+        body: '{"prompt":"hello"}',
+      });
+      const visible = await response.text();
+      expect(visible).not.toContain('<artifact_create>');
+      expect(onToolCall).not.toHaveBeenCalled();
+      expect(onToolCallStarted).not.toHaveBeenCalled();
+    } finally {
+      uninstall();
+      consoleError.mockRestore();
+      window.fetch = nativeFetch;
+    }
+  });
+
   it('cancels XHR network failures without publishing a false completion', async () => {
     const nativeXMLHttpRequest = globalThis.XMLHttpRequest;
     const rawWire = 'data: {"p":"response/content","o":"APPEND","v":"partial"}\n\n';
@@ -705,6 +763,15 @@ function createFakeXMLHttpRequest(
       this.dispatchEvent(new Event(terminalEvent));
     }
   } as unknown as typeof XMLHttpRequest;
+}
+
+function sseStream(wire: string): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode(wire));
+      controller.close();
+    },
+  });
 }
 
 function makeDescriptor(id: string): ToolDescriptor {

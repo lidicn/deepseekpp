@@ -93,6 +93,8 @@ export function createRequestContextFromBody(
       toolDescriptors: overrides.toolDescriptors ?? [
         ...state.toolDescriptors,
       ],
+      filterToolDescriptors: overrides.filterToolDescriptors ??
+        overrides.toolDescriptors ?? [...state.toolDescriptors],
       ...(overrides.activeLocalSkillDir !== undefined
         ? { activeLocalSkillDir: overrides.activeLocalSkillDir }
         : {}),
@@ -113,6 +115,8 @@ export function createRequestContextFromBody(
     toolDescriptors: overrides.toolDescriptors ?? [
       ...state.toolDescriptors,
     ],
+    filterToolDescriptors: overrides.filterToolDescriptors ??
+      overrides.toolDescriptors ?? [...state.toolDescriptors],
     ...(overrides.activeLocalSkillDir !== undefined
       ? { activeLocalSkillDir: overrides.activeLocalSkillDir }
       : {}),
