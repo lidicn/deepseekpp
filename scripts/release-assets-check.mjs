@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { listZipEntries, readZipEntry as readEntryBytes, readZipMetrics as readEntryMetrics } from './zip-reader.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const packageJson = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'));
@@ -120,7 +120,7 @@ function assertVersion(actual, expected, label) {
 
 function readZipJson(zipFile, entry) {
   try {
-    return JSON.parse(execFileSync('unzip', ['-p', zipFile, entry], { encoding: 'utf8' }));
+    return JSON.parse(readEntryBytes(zipFile, entry).toString('utf8'));
   } catch (error) {
     failures.push(`${zipFile}: cannot read ${entry}: ${error.message}`);
     return null;
@@ -128,9 +128,7 @@ function readZipJson(zipFile, entry) {
 }
 
 function readZipListing(zipFile) {
-  return execFileSync('unzip', ['-Z1', zipFile], { encoding: 'utf8' })
-    .split('\n')
-    .filter(Boolean);
+  return listZipEntries(zipFile);
 }
 
 function assertZipContains(zipFile, entry, message) {
@@ -201,7 +199,7 @@ function inspectPyodidePackage(browser, zipFile) {
   const expectedZipEntries = pyodidePolicy.assets.map(({ file }) => `pyodide/${file}`).sort();
   assertExactEntries([...zipEntries].sort(), expectedZipEntries, `${browser} zip Pyodide assets`);
 
-  const zipMetrics = readZipMetrics(zipFile).filter(({ name }) =>
+  const zipMetrics = readEntryMetrics(zipFile).filter(({ name }) =>
     name.startsWith('pyodide/') && !name.endsWith('/'),
   );
   let zipCompressedBytes = 0;
@@ -363,23 +361,11 @@ function readBundledSkillPolicy(file) {
 
 function readZipEntry(zipFile, entry) {
   try {
-    return execFileSync('unzip', ['-p', zipFile, entry], { maxBuffer: 32 * 1024 * 1024 });
+    return readEntryBytes(zipFile, entry);
   } catch (error) {
     failures.push(`${zipFile}: cannot read ${entry}: ${error.message}`);
     return null;
   }
-}
-
-function readZipMetrics(zipFile) {
-  return execFileSync('unzip', ['-v', zipFile], { encoding: 'utf8' })
-    .split('\n')
-    .map((line) => line.trim().split(/\s+/))
-    .filter((parts) => parts.length >= 8 && /^\d+$/.test(parts[0]) && /^\d+$/.test(parts[2]))
-    .map((parts) => ({
-      rawBytes: Number(parts[0]),
-      compressedBytes: Number(parts[2]),
-      name: parts.slice(7).join(' '),
-    }));
 }
 
 function collectFiles(directory, prefix = '') {

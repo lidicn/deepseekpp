@@ -18,7 +18,12 @@ beforeEach(() => {
       local: {
         // Tiny quota so trimToFit must kick in after a few records.
         QUOTA_BYTES: 600,
-        get: vi.fn(async (key: string) => ({ [key]: storage[key] })),
+        // Faithful chrome.storage.local semantics: a missing key is absent from the
+        // result object, not present with an `undefined` value. The B2 write-back
+        // guard in core/tool/history.ts branches on `key in result`, so a stub that
+        // always materialized the key would make that leg unexercisable here. The
+        // race leg itself is covered by tests/coalescing-mutation-queue.test.ts.
+        get: vi.fn(async (key: string) => (key in storage ? { [key]: storage[key] } : {})),
         set: vi.fn(async (values: Record<string, unknown>) => {
           setCalls.push(Object.values(values)[0] as unknown[]);
           Object.assign(storage, values);

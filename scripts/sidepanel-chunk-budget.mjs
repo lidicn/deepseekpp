@@ -95,9 +95,22 @@ if (requestedBrowsers.some((browser) => !browser)) {
 // baseline is set to the CI measurement per convention to stay green on both
 // runtimes. Same-build measurements under node@22.23.1: firstChatScreen gzip
 // 125600 (cap raised below from 125500), all other chunks inside budget.
+// Refreshed for 1.16.0: the inline-agent / skill-boundary / MCP-status prompt
+// and i18n additions since 1.14.0 grew the static graph. Local Node-24.14.0
+// measurement of the same build: initialShell 381168 raw / 116972 gzip and
+// firstChatScreen 411533 raw / 127027 gzip (chrome, edge and firefox measure
+// identically). This is accumulated content growth, not a mis-import: the
+// shell is still the same four modules and carries none of the heavy optional
+// payloads (katex / pyodide / highlight.js / hls.js / @babel / zod / yaml /
+// marked markers all absent from the shell bytes). Declared deviations: the
+// +2876 / +2985 raw growth is not attributed byte-by-byte, and the CI
+// Node-22.23.1 side was not measured for this build, so each gzip baseline
+// below is the local measurement plus that leg's own same-build drift from
+// this file's history (+271 for initialShell at 1.14.0, +293 for
+// firstChatScreen) to keep the CI-derived convention.
 // The initial shell is sidepanel.html's entry script plus every static modulepreload.
 const BASELINE = Object.freeze({
-  initialShell: { raw: 378_292, gzip: 115_558 },
+  initialShell: { raw: 381_168, gzip: 117_243 },
   routeChunks: {
     ChatPage: { raw: 134_938, gzip: 40_056 },
     CapabilitiesPage: { raw: 160_137, gzip: 35_259 },
@@ -156,12 +169,16 @@ const GZIP_ENCODER_VARIANCE_BYTES = 256;
 // Raised 125500 -> 125600 for 1.14.0: the same-build measurement under the
 // CI Node-22.23.1 runtime is 125600 gzip (local Node-25: 125307), so the cap
 // is set to the CI measurement to stay green on both runtimes.
+// Raised 408548 -> 411533 raw (gzip 125600 -> 127320) for 1.16.0: the initial
+// shell growth above also flows into the first-chat-screen graph. Local
+// Node-24.14.0 measurement: 411533 raw / 127027 gzip; the cap takes the
+// same-leg +293 CI drift recorded at 1.14.0. See the initialShell note.
 const BUDGET = Object.freeze({
   initialShell: {
     raw: BASELINE.initialShell.raw,
     gzip: BASELINE.initialShell.gzip + GZIP_ENCODER_VARIANCE_BYTES,
   },
-  firstChatScreen: { raw: 408_548, gzip: 125_600 },
+  firstChatScreen: { raw: 411_533, gzip: 127_320 },
   richRendererIncrement: { raw: 120_000, gzip: 36_000 },
   routeChunks: {
     ChatPage: { raw: 25_000, gzip: 8_000 },
