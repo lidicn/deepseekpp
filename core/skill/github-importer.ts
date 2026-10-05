@@ -26,6 +26,13 @@ const MAX_RESOURCE_FILES_PER_SKILL = 16;
 const MAX_RESOURCE_BYTES_PER_SKILL = 100_000;
 const MAX_RESOURCE_FILE_BYTES = 40_000;
 const REQUEST_TIMEOUT_MS = 20_000;
+// A remote repo's SKILL.md frontmatter is untrusted text that becomes Skill
+// context (import-time prompt-injection surface). Cap the imported description's
+// length and reduce it to a single line before use. The whole file is already
+// bounded by MAX_SKILL_BYTES; this tighter bound keeps a runaway `description:`
+// from flooding the Skill index card. Oversize input degrades visibly (a
+// truncation marker), never a silent pass-through.
+const MAX_IMPORT_DESCRIPTION_CHARS = 512;
 
 const TEXT_RESOURCE_EXTENSIONS = new Set([
   '.md',
@@ -658,12 +665,17 @@ function buildImportedInstructions(input: {
   return [header, body, resourceDocs, omitted].filter(Boolean).join('\n\n---\n\n');
 }
 
-function parseSkillDoc(raw: string, path: string): ParsedSkillDoc {
-  const frontmatter = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+export function parseSkillDoc(raw: string, path: string): ParsedSkillDoc {
+  // Strip a leading UTF-8 BOM before matching the `^---` frontmatter fence, so a
+  // BOM-saved SKILL.md keeps its `name:`/`description:` — matching local-importer's
+  // parseSkillDoc so the same document parses identically through either importer.
+  const bomStripped = raw.replace(/^﻿/, '');
+  const frontmatter = bomStripped.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   const meta = frontmatter ? parseYamlSubset(frontmatter[1]) : {};
-  const body = frontmatter ? raw.slice(frontmatter[0].length).trim() : raw.trim();
+  const body = frontmatter ? bomStripped.slice(frontmatter[0].length).trim() : bomStripped.trim();
   const name = normalizeSkillName(readString(meta, 'name') ?? parentDirectory(path).split('/').pop() ?? path.replace(/\/?SKILL\.md$/, ''));
-  const description = readString(meta, 'description') ?? firstParagraph(body) ?? `Imported GitHub Skill from ${path}`;
+  const rawDescription = readString(meta, 'description') ?? firstParagraph(body) ?? `Imported GitHub Skill from ${path}`;
+  const description = sanitizeImportedDescription(rawDescription);
   const metadata = readObject(meta, 'metadata');
   const version = readString(metadata, 'version') ?? readString(meta, 'version');
   const lastUpdated = readString(metadata, 'last_updated') ?? readString(metadata, 'lastUpdated') ?? readString(meta, 'last_updated');
@@ -888,8 +900,33 @@ function parentDirectory(path: string): string {
 
 function normalizeSkillName(name: string): string {
   const normalized = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-  if (!normalized) throw new Error('GitHub Skill 缺少有效名称');
+  if (!normalized) return `skill-${shortHash(name || 'unnamed')}`;
   return normalized;
+}
+
+// Identical to local-importer's shortHash so a degraded `skill-<hash>` slug matches
+// byte-for-byte across both importers for the same source name.
+function shortHash(input: string): string {
+  let hash = 0;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = (hash << 5) - hash + input.charCodeAt(i);
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36).slice(0, 8).padStart(2, '0');
+}
+
+// Neutralize untrusted remote description text before it becomes Skill context:
+// strip C0/C1 control characters (including newlines/tabs, so the value cannot
+// forge structure or span multiple lines) and collapse the remaining whitespace to
+// single spaces. A well-formed single-line description is returned byte-for-byte
+// unchanged; an oversized one is truncated with a visible marker (never silent).
+function sanitizeImportedDescription(value: string): string {
+  const cleaned = value
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (cleaned.length <= MAX_IMPORT_DESCRIPTION_CHARS) return cleaned;
+  return `${cleaned.slice(0, MAX_IMPORT_DESCRIPTION_CHARS).trimEnd()}…[truncated]`;
 }
 
 function createUniqueSkillName(preferred: string, occupiedNames: Set<string>): string {
