@@ -1,9 +1,15 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { INLINE_AGENT_STEP_TIMEOUT_MS } from '../core/inline-agent/types';
 import {
   createOfficialDeepSeekRequestBody,
   DEEPSEEK_OFFICIAL_API_URL,
+  OFFICIAL_API_STREAM_DEADLINE_MS,
   submitOfficialDeepSeekStreaming,
 } from '../core/deepseek/official-api';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('DeepSeek official API adapter', () => {
   it('builds current official model and thinking request bodies', () => {
@@ -127,6 +133,71 @@ describe('DeepSeek official API adapter', () => {
       role: 'assistant',
       content: 'final',
     });
+  });
+
+  it('documents the streaming ceiling at one inline-agent step budget', () => {
+    expect(OFFICIAL_API_STREAM_DEADLINE_MS).toBe(INLINE_AGENT_STEP_TIMEOUT_MS);
+    expect(OFFICIAL_API_STREAM_DEADLINE_MS).toBe(300_000);
+  });
+
+  it('bounds a signal-less streaming request with a default deadline signal', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(async () => createSseResponse(
+      'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]',
+    ));
+
+    await submitOfficialDeepSeekStreaming({
+      apiKey: 'sk-test',
+      messages: [{ role: 'user', content: 'hello' }],
+      fetchImpl,
+    }, {});
+
+    const init = fetchImpl.mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('cuts a stalled signal-less stream at the deadline and returns the partial turn', async () => {
+    vi.useFakeTimers();
+    const encoder = new TextEncoder();
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(
+            'data: {"choices":[{"delta":{"content":"Hel"},"finish_reason":null}]}\n\n',
+          ));
+        },
+      }),
+      { headers: { 'content-type': 'text/event-stream' } },
+    ));
+
+    const pending = submitOfficialDeepSeekStreaming({
+      apiKey: 'sk-test',
+      messages: [{ role: 'user', content: 'hello' }],
+      fetchImpl,
+    }, {});
+
+    await vi.advanceTimersByTimeAsync(OFFICIAL_API_STREAM_DEADLINE_MS + 50);
+
+    await expect(pending).resolves.toEqual({
+      assistantText: 'Hel',
+      reasoningText: '',
+      finished: false,
+    });
+  });
+
+  it('passes a caller-supplied signal through untouched instead of imposing the default', async () => {
+    const controller = new AbortController();
+    const fetchImpl = vi.fn<typeof fetch>(async () => createSseResponse(
+      'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]',
+    ));
+
+    await submitOfficialDeepSeekStreaming({
+      apiKey: 'sk-test',
+      messages: [{ role: 'user', content: 'hello' }],
+      fetchImpl,
+    }, {}, controller.signal);
+
+    const init = fetchImpl.mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBe(controller.signal);
   });
 });
 
