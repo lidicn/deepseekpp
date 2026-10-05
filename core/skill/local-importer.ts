@@ -22,6 +22,7 @@ import {
   stageUpsertLocalSkillSourceAlreadyLocked,
   type SkillCollisionCandidate,
 } from './registry';
+import { sanitizeImportedDescription } from './imported-description';
 import { extractScenarioBlock } from './local-skill-scorer';
 
 const MAX_SKILL_BYTES = 120_000;
@@ -818,7 +819,10 @@ export function parseSkillDoc(raw: string, path: string): ParsedSkillDoc {
     ?? parentDirectory(path).split('/').pop()
     ?? path.replace(/\/?SKILL\.md$/i, ''),
   );
-  const description = readString(meta, 'description') ?? firstParagraph(body) ?? `Imported local Skill from ${path}`;
+  const rawDescription = readString(meta, 'description')
+    ?? firstParagraph(body)
+    ?? `Imported local Skill from ${path}`;
+  const description = sanitizeImportedDescription(rawDescription);
   const metadata = readObject(meta, 'metadata');
   const version = readString(metadata, 'version') ?? readString(meta, 'version');
   const lastUpdated = readString(metadata, 'last_updated') ?? readString(metadata, 'lastUpdated') ?? readString(meta, 'last_updated');

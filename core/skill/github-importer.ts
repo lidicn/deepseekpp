@@ -17,6 +17,7 @@ import {
   updateGitHubSkillSourceLastCheckedAt,
   type SkillCollisionCandidate,
 } from './registry';
+import { sanitizeImportedDescription } from './imported-description';
 
 const GITHUB_API_BASE = 'https://api.github.com';
 const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com';
@@ -26,13 +27,6 @@ const MAX_RESOURCE_FILES_PER_SKILL = 16;
 const MAX_RESOURCE_BYTES_PER_SKILL = 100_000;
 const MAX_RESOURCE_FILE_BYTES = 40_000;
 const REQUEST_TIMEOUT_MS = 20_000;
-// A remote repo's SKILL.md frontmatter is untrusted text that becomes Skill
-// context (import-time prompt-injection surface). Cap the imported description's
-// length and reduce it to a single line before use. The whole file is already
-// bounded by MAX_SKILL_BYTES; this tighter bound keeps a runaway `description:`
-// from flooding the Skill index card. Oversize input degrades visibly (a
-// truncation marker), never a silent pass-through.
-const MAX_IMPORT_DESCRIPTION_CHARS = 512;
 
 const TEXT_RESOURCE_EXTENSIONS = new Set([
   '.md',
@@ -913,20 +907,6 @@ function shortHash(input: string): string {
     hash |= 0;
   }
   return Math.abs(hash).toString(36).slice(0, 8).padStart(2, '0');
-}
-
-// Neutralize untrusted remote description text before it becomes Skill context:
-// strip C0/C1 control characters (including newlines/tabs, so the value cannot
-// forge structure or span multiple lines) and collapse the remaining whitespace to
-// single spaces. A well-formed single-line description is returned byte-for-byte
-// unchanged; an oversized one is truncated with a visible marker (never silent).
-function sanitizeImportedDescription(value: string): string {
-  const cleaned = value
-    .replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (cleaned.length <= MAX_IMPORT_DESCRIPTION_CHARS) return cleaned;
-  return `${cleaned.slice(0, MAX_IMPORT_DESCRIPTION_CHARS).trimEnd()}…[truncated]`;
 }
 
 function createUniqueSkillName(preferred: string, occupiedNames: Set<string>): string {
