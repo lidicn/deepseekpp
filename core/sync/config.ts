@@ -1,4 +1,11 @@
-import type { SyncCommandTarget, SyncConfig } from '../types';
+import type { SyncCommandTarget, SyncConfig, SyncProvider } from '../types';
+import {
+  createBrowserSyncCredentialStore,
+  missingSyncCredentialFields,
+  pickSyncConfigCredentials,
+  splitSyncConfigCredentials,
+  type SyncCredentialField,
+} from './credentials';
 
 export const SYNC_CONFIG_STORAGE_KEY = 'deepseek_pp_sync_config';
 export const SYNC_CONFIG_SCHEMA_VERSION = 1 as const;
@@ -72,17 +79,72 @@ export class SyncConfigCommitIndeterminateError extends AggregateError {
   }
 }
 
+export class SyncConfigReauthorizationRequiredError extends Error {
+  readonly code = 'sync_reauthorization_required' as const;
+
+  constructor(
+    readonly missingFields: readonly SyncCredentialField[],
+    readonly storedRevision: number | null = null,
+    message = 'Sync credentials are no longer available in this browser session. Re-enter them to resume syncing.',
+  ) {
+    super(message);
+    this.name = 'SyncConfigReauthorizationRequiredError';
+  }
+}
+
 export function createBrowserSyncConfigStoragePort(): SyncConfigStoragePort {
+  const credentialStore = createBrowserSyncCredentialStore();
   return {
     async read() {
       const data = await chrome.storage.local.get(SYNC_CONFIG_STORAGE_KEY) as Record<string, unknown>;
-      return {
-        present: Object.prototype.hasOwnProperty.call(data, SYNC_CONFIG_STORAGE_KEY),
-        value: data[SYNC_CONFIG_STORAGE_KEY],
-      };
+      if (!Object.prototype.hasOwnProperty.call(data, SYNC_CONFIG_STORAGE_KEY)) {
+        return { present: false };
+      }
+      const localRecord = clonePlainJsonRecord(data[SYNC_CONFIG_STORAGE_KEY], 'Sync configuration');
+      const { publicValue, credentials: releasedSecrets } = splitSyncConfigCredentials(localRecord);
+      let storedCredentials = await credentialStore.read();
+
+      if (Object.keys(releasedSecrets).length > 0) {
+        // An earlier release kept these on disk. Move them out and scrub the
+        // disk copy in the same read, whether or not the move succeeded.
+        const movedRecord = { ...storedCredentials, ...releasedSecrets };
+        const moveFailure = await credentialStore.write(movedRecord).then(
+          () => null,
+          (error: unknown) => error,
+        );
+        await chrome.storage.local.set({ [SYNC_CONFIG_STORAGE_KEY]: publicValue });
+        if (moveFailure !== null) {
+          throw new SyncConfigReauthorizationRequiredError(
+            Object.keys(releasedSecrets) as SyncCredentialField[],
+            decodeStoredRevision(publicValue),
+            'Sync credentials could not be moved out of disk storage. Re-enter them to keep syncing.',
+          );
+        }
+        storedCredentials = movedRecord;
+      }
+
+      const provider = decodeStoredSyncProvider(publicValue);
+      if (provider !== null) {
+        storedCredentials = pickSyncConfigCredentials(provider, storedCredentials);
+        const missingFields = missingSyncCredentialFields(provider, storedCredentials);
+        if (missingFields.length > 0) {
+          throw new SyncConfigReauthorizationRequiredError(
+            missingFields,
+            decodeStoredRevision(publicValue),
+          );
+        }
+      }
+
+      return { present: true, value: { ...publicValue, ...storedCredentials } };
     },
     async write(value) {
-      await chrome.storage.local.set({ [SYNC_CONFIG_STORAGE_KEY]: value });
+      const { publicValue, credentials } = splitSyncConfigCredentials(
+        value as unknown as Record<string, unknown>,
+      );
+      // The session half first: a failed write must not leave the disk copy
+      // holding a credential whose other half never arrived.
+      await credentialStore.write(credentials);
+      await chrome.storage.local.set({ [SYNC_CONFIG_STORAGE_KEY]: publicValue });
     },
   };
 }
@@ -114,6 +176,30 @@ export function createSyncConfigStore(
       );
     }
     return current;
+  };
+
+  /**
+   * The revision `replace` counts from. Identical to `assertExpectedRevision`
+   * except for one cell: a record whose credential the browser cleared cannot
+   * have been read by any page, so a page holding no revision at all is the
+   * re-authorization click and may write a complete configuration over it. The
+   * new revision still counts from the stripped record, never from zero.
+   */
+  const replaceableRevision = async (expectedRevision: number | null): Promise<number | null> => {
+    try {
+      return (await assertExpectedRevision(expectedRevision))?.revision ?? null;
+    } catch (error) {
+      if (!(error instanceof SyncConfigReauthorizationRequiredError)) throw error;
+      if (
+        expectedRevision === null
+        || expectedRevision === error.storedRevision
+      ) return error.storedRevision;
+      throw new SyncConfigConflictError(
+        expectedRevision,
+        error.storedRevision,
+        options.conflictMessage?.(expectedRevision, error.storedRevision),
+      );
+    }
   };
 
   const commit = async (record: SyncConfigRecord): Promise<void> => {
@@ -151,8 +237,8 @@ export function createSyncConfigStore(
     assertExpectedRevision,
     async replace(target: SyncCommandTarget) {
       const decoded = decodeSyncCommandTarget(target);
-      const current = await assertExpectedRevision(decoded.expectedRevision);
-      const revision = (current?.revision ?? 0) + 1;
+      const currentRevision = await replaceableRevision(decoded.expectedRevision);
+      const revision = (currentRevision ?? 0) + 1;
       const record = createRecord(decoded.config, revision);
       await commit(record);
       return record;
@@ -178,22 +264,43 @@ export function createSyncConfigStore(
 export function decodeStoredSyncConfig(value: unknown): SyncConfigRecord {
   const object = clonePlainJsonRecord(value, 'Sync configuration');
   const hasSchemaVersion = Object.prototype.hasOwnProperty.call(object, 'schemaVersion');
+  const revision = decodeStoredRevision(object);
+  return createRecord(object, revision, !hasSchemaVersion);
+}
+
+/** Read the revision of a stored record without requiring its credential. */
+function decodeStoredRevision(object: Record<string, unknown>): number {
+  const hasSchemaVersion = Object.prototype.hasOwnProperty.call(object, 'schemaVersion');
   const hasRevision = Object.prototype.hasOwnProperty.call(object, 'revision');
 
-  let revision: number;
   if (!hasSchemaVersion) {
     if (hasRevision) {
       throw new Error('Versionless sync configuration cannot declare a revision');
     }
-    revision = 0;
-  } else {
-    if (object.schemaVersion !== SYNC_CONFIG_SCHEMA_VERSION) {
-      throw new Error('Sync configuration schema is not supported');
-    }
-    revision = assertRevision(object.revision, 'Sync configuration revision', false);
+    return 0;
   }
+  if (object.schemaVersion !== SYNC_CONFIG_SCHEMA_VERSION) {
+    throw new Error('Sync configuration schema is not supported');
+  }
+  return assertRevision(object.revision, 'Sync configuration revision', false);
+}
 
-  return createRecord(object, revision, !hasSchemaVersion);
+/**
+ * The provider a stored record belongs to, decided without the credential. A
+ * released versionless record is recognized by its non-credential fields,
+ * because its password now lives in the session bucket. Returns null for a
+ * record this store cannot classify, leaving the decoder to reject it.
+ */
+function decodeStoredSyncProvider(object: Record<string, unknown>): SyncProvider | null {
+  const provider = object.provider;
+  if (provider === 'webdav' || provider === 'gdrive' || provider === 'onedrive') return provider;
+  if (
+    provider === undefined
+    && ['url', 'username', 'remotePath'].every((key) => (
+      Object.prototype.hasOwnProperty.call(object, key)
+    ))
+  ) return 'webdav';
+  return null;
 }
 
 /** Validate and deep-clone an untrusted runtime action target before queuing it. */

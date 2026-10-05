@@ -141,7 +141,7 @@ Lists browser tabs and lets the user choose which tab Browser Control should ope
 #### `identity`
 
 ```text
-Starts the user-approved Google Drive or OneDrive OAuth sign-in flow when the user enables one of those sync providers. DeepSeek++ uses this permission only to connect the user's own OAuth app configuration and stores sync credentials locally.
+Starts the user-approved Google Drive or OneDrive OAuth sign-in flow when the user enables one of those sync providers. DeepSeek++ uses this permission only to connect the user's own OAuth app configuration and keeps sync credentials in browser session storage, which the browser clears when it exits.
 ```
 
 #### `sidePanel`
