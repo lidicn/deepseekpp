@@ -110,6 +110,9 @@ export const content = {
     codeRunnerUnavailable: 'Code runner unavailable',
     concurrencyGuard: 'An agent is still running. A duplicate task from this message was skipped. To interrupt, click Stop in the agent panel.',
   },
+  remoteAgent: {
+    resendFailed: 'DeepSeek++ could not resend a message from your other device after several attempts. Send it again in this chat.',
+  },
   permission: {
     webFetch: 'DeepSeek++ needs permission to access {origin} so it can fetch that page',
     deny: 'Deny',

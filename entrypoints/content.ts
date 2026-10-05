@@ -1584,7 +1584,12 @@ function applyRemoteAgentSetting(enabled: boolean): void {
     console.log("[DPP-REMOTE] No chat session, watcher not started");
     return;
   }
-  startRemoteAgentWatcher({ chatSessionId });
+  startRemoteAgentWatcher({
+    chatSessionId,
+    // DPP-04: a dropped remote message must be visible, not just a log line.
+    onResendFailed: () =>
+      showContentToast(contentT("content.remoteAgent.resendFailed"), "warning"),
+  });
   console.log("[DPP-REMOTE] Watcher initialized");
 }
 

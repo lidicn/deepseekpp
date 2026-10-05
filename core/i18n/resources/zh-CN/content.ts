@@ -110,6 +110,9 @@ export const content = {
     codeRunnerUnavailable: '代码运行器不可用',
     concurrencyGuard: 'Agent 正在执行中，已忽略此消息触发的重复任务。如需中断，请点击 Agent 面板的「停止」。',
   },
+  remoteAgent: {
+    resendFailed: 'DeepSeek++ 多次尝试后仍未把另一台设备发来的消息发出。请在当前对话中重新发送这条消息。',
+  },
   permission: {
     webFetch: 'DeepSeek++ 需要访问 {origin} 的权限以获取该页面内容',
     deny: '拒绝',

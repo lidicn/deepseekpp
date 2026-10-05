@@ -22,6 +22,8 @@ import { createClientHeaders } from '../deepseek/active-client';
 const POLL_INTERVAL_MS = 5000; // 5 seconds
 const MAX_BACKOFF_MS = 60_000; // 60 seconds ceiling
 const MAX_RETRIES = 3;
+/** How long to wait for the platform to store our re-sent copy before checking. */
+const RESEND_RECEIPT_WAIT_MS = 3000;
 
 interface HistoryMessage {
   message_id: number;
@@ -39,6 +41,12 @@ interface HistoryResponse {
   messages: HistoryMessage[];
 }
 
+/** The remote message we have injected but not yet seen come back. */
+interface PendingResend {
+  messageId: number;
+  attempts: number;
+}
+
 interface WatcherState {
   enabled: boolean;
   pollTimer: number | null;
@@ -50,6 +58,8 @@ interface WatcherState {
   lastSentMessageTime: number;
   consecutivePollFailures: number;  // 连续轮询失败计数（用于退避 + 错误分级）
   currentPollIntervalMs: number;    // 当前轮询间隔（退避后可能 > POLL_INTERVAL_MS）
+  pendingResend: PendingResend | null;
+  notifyResendFailed: ((content: string) => void) | null;
 }
 
 const state: WatcherState = {
@@ -63,6 +73,8 @@ const state: WatcherState = {
   lastSentMessageTime: 0,
   consecutivePollFailures: 0,
   currentPollIntervalMs: POLL_INTERVAL_MS,
+  pendingResend: null,
+  notifyResendFailed: null,
 };
 
 /**
@@ -80,6 +92,11 @@ export function recordLocalSentMessage(content: string): void {
   console.log(`[DPP-REMOTE] Recorded local sent message: ${content.slice(0, 50)}...`);
 }
 
+/** A history row's text body: DeepSeek stores it in fragments, content is the fallback. */
+function messageText(message: HistoryMessage): string {
+  return message.fragments?.[0]?.content || message.content || '';
+}
+
 /**
  * Extract chat_session_id from URL.
  * URL format: https://chat.deepseek.com/a/chat/s/{chat_session_id}
@@ -94,6 +111,8 @@ function extractChatSessionIdFromURL(): string | null {
  */
 export function startRemoteAgentWatcher(options: {
   chatSessionId: string;
+  /** Called once when a remote message is dropped after MAX_RETRIES attempts. */
+  onResendFailed?: (content: string) => void;
 }): void {
   if (state.enabled) {
     console.warn('[DPP-REMOTE] Watcher already running');
@@ -106,6 +125,8 @@ export function startRemoteAgentWatcher(options: {
   state.isInitializing = true;
   state.consecutivePollFailures = 0;
   state.currentPollIntervalMs = POLL_INTERVAL_MS;
+  state.pendingResend = null;
+  state.notifyResendFailed = options.onResendFailed ?? null;
   const token = ++startToken;
 
   // Initialize lastSeenMessageId from current history (skip existing messages)
@@ -173,6 +194,8 @@ function scheduleNextPoll(): void {
 export function stopRemoteAgentWatcher(): void {
   state.enabled = false;
   startToken++;
+  state.pendingResend = null;
+  state.notifyResendFailed = null;
   if (state.pollTimer !== null) {
     clearTimeout(state.pollTimer);
     state.pollTimer = null;
@@ -229,7 +252,7 @@ async function pollForNewMessages(): Promise<void> {
     
     if (latestUserMessage) {
       // 从 fragments[0].content 取消息内容
-      const contentStr = latestUserMessage.fragments?.[0]?.content || latestUserMessage.content || '';
+      const contentStr = messageText(latestUserMessage);
       
       // v1.17 安全修复：跳过 inline-agent continuation 请求。
       // DeepSeek 把续跑的 `<original_task>` + `<tool_results>` 块存成 USER role，
@@ -254,7 +277,12 @@ async function pollForNewMessages(): Promise<void> {
       // 自适应检测：如果这条消息是当前浏览器刚刚发送的（30秒内），就跳过。
       // 两侧都 trim：content.ts 记录的是 textarea 的 trim() 值，history 里的
       // content 常带首尾换行，严格相等会漏判 → 本机消息被当成远程消息重发。
-      const isLocalMessage = state.lastSentMessageContent !== null &&
+      // 但正在等回执的那条不能走这个短路：重发前我们刚刚登记过同样的文本，
+      // 否则一次失败的注入会被判成"本机发的"，消息从此静默丢失。
+      const isRetryOfPendingResend =
+        state.pendingResend?.messageId === latestUserMessage.message_id;
+      const isLocalMessage = !isRetryOfPendingResend &&
+                             state.lastSentMessageContent !== null &&
                              state.lastSentMessageContent.trim() === contentStr.trim() &&
                              (Date.now() - state.lastSentMessageTime) < 30000;
       if (isLocalMessage) {
@@ -267,27 +295,46 @@ async function pollForNewMessages(): Promise<void> {
       console.log(`[DPP-REMOTE] Detected remote message: ${contentStr.slice(0, 100)}...`);
 
       try {
+        if (!beginResendAttempt(latestUserMessage.message_id)) {
+          // 三次都没回执：这条消息只能放弃，但放弃必须是用户看得见的，
+          // 不能只留一行插件日志（"手机端发了、电脑端没收到"）。
+          console.error(
+            `[DPP-REMOTE] Dropping message ${latestUserMessage.message_id} after ${MAX_RETRIES} attempts`,
+          );
+          state.lastSeenMessageId = latestUserMessage.message_id;
+          state.notifyResendFailed?.(contentStr);
+          return;
+        }
+        const attempts = state.pendingResend?.attempts ?? 1;
+
         // 直接在页面里重发消息（不刷新，inline agent loop 状态保留）
         console.log('[DPP-REMOTE] Re-sending message via UI...');
         // 先登记"这条是我们自己发的"：重发后它会在 history 里以新的 USER
         // 消息出现，去重不能只依赖注入的合成 Enter 被 content.ts 监听到。
         recordLocalSentMessage(contentStr);
-        await resendMessageViaUI(contentStr);
 
-        // 重发后，等 3 秒，重新拉 history，把 lastSeenMessageId 更新为最新的
-        // （包括电脑端重发的那条，避免下次轮询又检测到）
-        await new Promise(resolve => setTimeout(resolve, 3000));
+        let cursorAfterReceipt: number | null = null;
         try {
-          const currentChatSessionId = extractChatSessionIdFromURL();
-          if (currentChatSessionId) {
-            const freshMessages = await fetchHistoryMessages(currentChatSessionId);
-            if (freshMessages.length > 0) {
-              state.lastSeenMessageId = freshMessages[freshMessages.length - 1].message_id;
-              console.log(`[DPP-REMOTE] Updated last seen to: ${state.lastSeenMessageId}`);
-            }
-          }
+          await resendMessageViaUI(contentStr);
+          cursorAfterReceipt = await readResendReceipt(
+            contentStr,
+            latestUserMessage.message_id,
+            currentChatSessionId,
+          );
         } catch (err) {
-          console.warn('[DPP-REMOTE] Failed to refresh last seen:', err);
+          console.warn(`[DPP-REMOTE] Resend attempt ${attempts}/${MAX_RETRIES} failed:`, err);
+        }
+
+        if (cursorAfterReceipt !== null) {
+          state.pendingResend = null;
+          state.lastSeenMessageId = cursorAfterReceipt;
+          console.log(`[DPP-REMOTE] Receipt confirmed, last seen -> ${cursorAfterReceipt}`);
+        } else {
+          // 游标原地不动：下一轮还会看到这条，重试直到上限。
+          console.warn(
+            `[DPP-REMOTE] No receipt for message ${latestUserMessage.message_id} ` +
+              `(attempt ${attempts}/${MAX_RETRIES}), keeping last seen at ${state.lastSeenMessageId}`,
+          );
         }
       } finally {
         // B4 fix: try-finally 替代裸 8s setTimeout
@@ -302,6 +349,59 @@ async function pollForNewMessages(): Promise<void> {
     console.debug('[DPP-REMOTE] Poll inner failure (rethrown for backoff):', err);
     throw err;  // re-throw，让外层 scheduleNextPoll 处理退避
   }
+}
+
+/**
+ * Count one resend attempt for `messageId`. Returns false once the cap is
+ * reached (and clears the pending entry) so the caller can drop the message
+ * instead of looping on it for the rest of the session.
+ */
+function beginResendAttempt(messageId: number): boolean {
+  const pending = state.pendingResend?.messageId === messageId ? state.pendingResend : null;
+  const attempts = (pending?.attempts ?? 0) + 1;
+  if (attempts > MAX_RETRIES) {
+    state.pendingResend = null;
+    return false;
+  }
+  state.pendingResend = { messageId, attempts };
+  return true;
+}
+
+/**
+ * Wait for the platform to store the copy we just injected, then return the
+ * id the cursor may move to — or null when there is no evidence the message
+ * actually left this browser.
+ *
+ * The receipt has to be a *newer* USER row with the same text: the remote
+ * original is already in history, so matching on content alone would confirm
+ * a send that never happened.
+ */
+async function readResendReceipt(
+  content: string,
+  detectedMessageId: number,
+  sentInChatSessionId: string,
+): Promise<number | null> {
+  await new Promise((resolve) => setTimeout(resolve, RESEND_RECEIPT_WAIT_MS));
+
+  const currentChatSessionId = extractChatSessionIdFromURL();
+  if (!currentChatSessionId) return null;
+  if (currentChatSessionId !== sentInChatSessionId) {
+    console.warn(
+      '[DPP-REMOTE] Chat switched while awaiting the resend receipt; cursor left untouched',
+    );
+    return null;
+  }
+
+  const freshMessages = await fetchHistoryMessages(currentChatSessionId);
+  const expected = content.trim();
+  const received = freshMessages.some(
+    (message) =>
+      message.role === 'USER' &&
+      message.message_id > detectedMessageId &&
+      messageText(message).trim() === expected,
+  );
+  if (!received) return null;
+  return freshMessages[freshMessages.length - 1]?.message_id ?? null;
 }
 
 async function fetchHistoryMessages(chatSessionId: string): Promise<HistoryMessage[]> {
