@@ -18,20 +18,6 @@ import {
 } from "../deepseek/request-codec";
 import type { ToolCallSource } from "../types";
 import { createToolInvocationCatalog } from "../tool";
-import {
-  consumeDeepSeekSseFrames,
-  createDeepSeekSseFrameDecoder,
-  createDeepSeekStreamSummary,
-  extractResponseTextForTokenSpeed,
-  extractResponseTextFromParsed,
-  extractResponseUsageStatsFromParsed,
-  isResponseTextPatchPath,
-  replaceDeepSeekSseFrameData,
-  type DeepSeekSseFrame,
-} from "../deepseek/stream-codec";
-import {
-  createResponseTokenSpeedTracker,
-} from "../deepseek/stream-metrics";
 import { createStreamingToolTextAccumulator } from "./streaming-tool-text";
 import {
   createStreamingToolCallParser,
@@ -41,7 +27,6 @@ import { extractToolCalls } from "./tool-parser";
 import { recordRequestFromBody, mountDebugToWindow } from "../debug/refactor-telemetry";
 
 const BYPASS_HOOK_HEADER = DEEPSEEK_BYPASS_HOOK_HEADER;
-const TOKEN_SPEED_EMIT_INTERVAL_MS = 250;
 
 /**
  * v1.15 结构校验（风险 R1 缓解）：DeepSeek 网页版改版时请求体结构可能变化。

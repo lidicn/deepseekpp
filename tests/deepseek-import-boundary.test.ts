@@ -33,7 +33,6 @@ describe('DeepSeek active protocol import boundary', () => {
     const activeClient = readFileSync('core/deepseek/active-client.ts', 'utf8');
     const officialApi = readFileSync('core/deepseek/official-api.ts', 'utf8');
     const passiveConsumers = [
-      'core/interceptor/request-interceptor.ts',
       'core/interceptor/response-interceptor.ts',
     ];
     expect(activeClient).not.toMatch(/from ['"].*interceptor/);
@@ -43,6 +42,12 @@ describe('DeepSeek active protocol import boundary', () => {
       expect(source, path).toMatch(/from ['"]\.\.\/deepseek\/stream-codec['"]/);
       expect(source, path).toMatch(/from ['"]\.\.\/deepseek\/stream-metrics['"]/);
     }
+    // request-interceptor.ts was listed above until 2026-10-05: the file references no SSE
+    // symbol at all, so that assertion could only be satisfied by keeping a dead import in
+    // place (roadmap B5). The pin is now the opposite way — the request path stays
+    // protocol-free, and re-adding SSE parsing there must go through this test.
+    const requestPath = readFileSync('core/interceptor/request-interceptor.ts', 'utf8');
+    expect(requestPath).not.toMatch(/from ['"]\.\.\/deepseek\/stream-(codec|metrics)['"]/);
     expect(existsSync('core/interceptor/sse-parser.ts')).toBe(false);
     expect(existsSync('core/interceptor/token-speed.ts')).toBe(false);
   });
