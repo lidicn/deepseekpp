@@ -305,6 +305,59 @@ describe('automation runner execution context', () => {
     expect(adapterMocks.submitPrompt).toHaveBeenCalledTimes(2);
   });
 
+  it('clamps oversized tool detail/output in the persisted record with a visible truncation marker', async () => {
+    adapterMocks.submitPrompt
+      .mockResolvedValueOnce(modelTurn(
+        '<mcp_mock_echo>{"text":"run"}</mcp_mock_echo>',
+        101,
+      ))
+      .mockResolvedValueOnce(modelTurn('All done.', 102));
+    const executeToolCall = vi.fn(async (): Promise<ToolResult> => ({
+      ok: true,
+      summary: 'echo',
+      detail: 'x'.repeat(10_000),
+      output: { text: 'y'.repeat(10_000) },
+    }));
+
+    const result = await runAutomation(createRequest(), { executeToolCall });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    const record = (result.toolExecutions ?? [])[0]!;
+    const detailBytes = new TextEncoder().encode(record.result.detail ?? '').byteLength;
+    const outputBytes = new TextEncoder().encode(String(record.result.output ?? '')).byteLength;
+    // Bound to the same budgets the continuation prompt already sends to DeepSeek.
+    expect(detailBytes).toBeLessThanOrEqual(4_000);
+    expect(outputBytes).toBeLessThanOrEqual(8_000);
+    expect(record.result.detail).toContain('[truncated]');
+    expect(String(record.result.output)).toContain('[truncated]');
+  });
+
+  it('leaves a below-budget tool detail/output untouched in the persisted record', async () => {
+    adapterMocks.submitPrompt
+      .mockResolvedValueOnce(modelTurn(
+        '<mcp_mock_echo>{"text":"run"}</mcp_mock_echo>',
+        101,
+      ))
+      .mockResolvedValueOnce(modelTurn('All done.', 102));
+    const executeToolCall = vi.fn(async (): Promise<ToolResult> => ({
+      ok: true,
+      summary: 'echo',
+      detail: 'short detail',
+      output: { value: 7 },
+    }));
+
+    const result = await runAutomation(createRequest(), { executeToolCall });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    const record = (result.toolExecutions ?? [])[0]!;
+    expect(record.result.detail).toBe('short detail');
+    expect(record.result.output).toBe(JSON.stringify({ value: 7 }));
+    expect(record.result.detail).not.toContain('[truncated]');
+    expect(String(record.result.output)).not.toContain('[truncated]');
+  });
+
   it('continues through catalog controls so on-demand MCP capabilities can discover before invoking', async () => {
     const discover = createMcpCapabilityToolDescriptors('en')
       .find((descriptor) => descriptor.invocationName === 'mcp_discover');

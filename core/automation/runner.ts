@@ -30,6 +30,13 @@ import type {
 } from './types';
 
 const AUTOMATION_MCP_CONTINUATION_LIMIT = 3;
+// Bound each persisted tool-execution record to the same detail/output budgets
+// that buildAutomationToolContinuationPrompt already sends to DeepSeek (4 KB /
+// 8 KB), so a multi-step run can never push megabytes per row into the capped
+// chrome.storage.local run history. Records at or below the budget are stored
+// verbatim; over-budget detail/output is truncated with the shared marker.
+const AUTOMATION_TOOL_DETAIL_MAX_BYTES = 4_000;
+const AUTOMATION_TOOL_OUTPUT_MAX_BYTES = 8_000;
 const AUTOMATION_MISSING_TOKEN_MESSAGE =
   'DeepSeek login token is missing. Refresh chat.deepseek.com or sign in again, then retry the automation.';
 
@@ -301,8 +308,8 @@ async function runAutomationToolLoop(
         throw new AutomationToolOutcomeAmbiguousError(executionCall.name);
       }
       return createToolExecutionRecord(executionCall, result, {
-        detailMaxLength: 1_000_000,
-        outputMaxLength: 2_000_000,
+        detailMaxLength: AUTOMATION_TOOL_DETAIL_MAX_BYTES,
+        outputMaxLength: AUTOMATION_TOOL_OUTPUT_MAX_BYTES,
       });
     },
     buildContinuationPrompt: (executions) => buildAutomationToolContinuationPrompt(executions, locale),
