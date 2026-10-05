@@ -21,6 +21,11 @@ import {
   stopRemoteAgentWatcher,
   recordLocalSentMessage,
 } from "../core/remote-agent/watcher";
+import {
+  applyTelemetryGate,
+  readTelemetrySetting,
+  TELEMETRY_SETTING_STORAGE_KEY,
+} from "../core/debug/telemetry-gate";
 import { getDeepSeekApiKey } from "../core/chat/api-key";
 import { normalizePetConfig } from "../core/pet/config";
 import { pickPetLine, type PetState } from "../core/pet/lines";
@@ -582,6 +587,7 @@ let inlineAgentCapabilityScope: ContentResourceScope | null = null;
 let inlineAgentCapabilityEpoch = 0;
 const pendingInlineAgentPersistenceOperations = new Set<Promise<unknown>>();
 let multimodalCapabilityScope: ContentResourceScope | null = null;
+let debugTelemetryCapabilityScope: ContentResourceScope | null = null;
 let exportCapabilityScope: ContentResourceScope | null = null;
 let exportDownloadManager: BrowserDownloadManager | null = null;
 let backgroundCapabilityScope: ContentResourceScope | null = null;
@@ -918,6 +924,7 @@ function createContentCapabilityControllers(): readonly ContentCapabilityControl
     ),
     createDomCapability("pet", startPetCapability, stopPetCapability),
     createRemoteAgentCapability(),
+    createDebugTelemetryCapability(),
     chatController,
   ];
 }
@@ -1579,6 +1586,54 @@ function applyRemoteAgentSetting(enabled: boolean): void {
   }
   startRemoteAgentWatcher({ chatSessionId });
   console.log("[DPP-REMOTE] Watcher initialized");
+}
+
+/**
+ * Debug telemetry gate mirror.
+ *
+ * The sidepanel setting is the authoritative source, but the capture switch is
+ * read in the MAIN world, so this capability copies it into the page's
+ * localStorage gate. A missing key means "on" — manual `dpp_debug='0'` in the
+ * page console keeps working as the fallback.
+ */
+function createDebugTelemetryCapability(): ContentCapabilityController {
+  return {
+    id: "debug-telemetry",
+    async start(scope) {
+      debugTelemetryCapabilityScope = scope;
+      const isCurrent = () => debugTelemetryCapabilityScope === scope && scope.active;
+      scope.addCleanup("listener", installDebugTelemetrySettingListener(isCurrent));
+
+      let enabled = true;
+      if (hasLiveExtensionContext()) {
+        try {
+          enabled = await readTelemetrySetting(chrome.storage.local);
+        } catch (error) {
+          if (isExtensionInvalidatedError(error)) invalidateExtensionContext();
+        }
+      }
+      if (!isCurrent()) return;
+      applyTelemetryGate(enabled);
+    },
+    stop() {
+      debugTelemetryCapabilityScope = null;
+    },
+  };
+}
+
+function installDebugTelemetrySettingListener(
+  isCurrent: () => boolean,
+): () => void {
+  if (!hasLiveExtensionContext()) return () => undefined;
+  const listener: Parameters<typeof chrome.storage.onChanged.addListener>[0] =
+    (changes, area) => {
+      if (area !== "local" || !isCurrent()) return;
+      const change = changes[TELEMETRY_SETTING_STORAGE_KEY];
+      if (!change || change.oldValue === change.newValue) return;
+      applyTelemetryGate(change.newValue !== false);
+    };
+  chrome.storage.onChanged.addListener(listener);
+  return () => chrome.storage.onChanged.removeListener(listener);
 }
 
 function handleContentRuntimeMessage(

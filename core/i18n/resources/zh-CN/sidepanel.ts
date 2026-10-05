@@ -368,6 +368,8 @@ export const sidepanel = {
     remoteTaskWatch: '远程任务监听',
     remoteTaskWatchDescription: '开启后，自动检测手机版 DeepSeek 发来的新消息，并自动在当前浏览器执行 tools。适合手机端发消息、电脑端执行的场景',
     remoteTaskPollDescription: '开启后每 5 秒轮询一次对话历史，检测到新消息自动重发',
+    debugTelemetry: '调试遥测面板',
+    debugTelemetryDescription: '开启后当前标签页提供 window.__DPP_DEBUG__，记录请求体积、工具数量与截断比率。只保留计数与字节数，不存储提示词原文和请求体。',
     apiKeyDescription: '配置后右键场景可在普通网页使用',
     configured: '已配置',
     notConfigured: '未配置',

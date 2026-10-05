@@ -368,6 +368,8 @@ export const sidepanel = {
     remoteTaskWatch: 'Remote task watcher',
     remoteTaskWatchDescription: 'When enabled, new messages sent from the mobile DeepSeek app are detected and the tools run automatically in this browser. Use it to send a task on your phone and execute it on your computer.',
     remoteTaskPollDescription: 'When enabled, polls the conversation history every 5 seconds and automatically resends when a new message is detected',
+    debugTelemetry: 'Debug telemetry panel',
+    debugTelemetryDescription: 'When enabled, this tab exposes window.__DPP_DEBUG__ with request sizes, tool counts and truncation rates. Only counts and byte sizes are recorded — prompt text and request bodies are never stored.',
     apiKeyDescription: 'After configuration, context menu scenarios can run on regular webpages',
     configured: 'Configured',
     notConfigured: 'Not configured',

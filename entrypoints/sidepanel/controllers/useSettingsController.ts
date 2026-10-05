@@ -361,6 +361,21 @@ export function useSettingsController() {
     await chrome.storage.local.set({ dpp_remote_agent_enabled: next });
   }, []);
 
+  // --- debug telemetry panel (DCD 20261005 §二 裁定 A: 开关做进侧栏设置) ---
+  const [debugTelemetryEnabled, setDebugTelemetryEnabledState] = useState(true);
+
+  // Missing key means "on" so historical triage flows keep their data.
+  useEffect(() => {
+    chrome.storage.local.get('dpp_debug_telemetry_enabled').then((result) => {
+      setDebugTelemetryEnabledState(result.dpp_debug_telemetry_enabled !== false);
+    });
+  }, []);
+
+  const handleDebugTelemetryToggle = useCallback(async (next: boolean) => {
+    setDebugTelemetryEnabledState(next);
+    await chrome.storage.local.set({ dpp_debug_telemetry_enabled: next });
+  }, []);
+
   // --- global floating chat ---
   const handleFloatingChatToggle = useCallback(async (next: boolean) => {
     setFloatingChatMessage('');
@@ -995,6 +1010,8 @@ export function useSettingsController() {
     handleChatToggle,
     remoteAgentWatcherEnabled,
     handleRemoteAgentWatcherToggle,
+    debugTelemetryEnabled,
+    handleDebugTelemetryToggle,
     floatingChatEnabled: floatingChatRuntimeState?.kind === 'ready',
     floatingChatRuntimeState,
     floatingChatMessage,

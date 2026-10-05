@@ -2,8 +2,10 @@
  * Refactor Telemetry — 常驻调试数据采集（v1.17 增强版）
  *
  * 用途：采集请求侧和结果侧的关键指标，通过 window.__DPP_DEBUG__ 导出。
- * 默认开启，仅 localStorage.dpp_debug === '0' 时关闭挂载。
- * 数据持久化到 localStorage，刷新不丢。
+ * 门控见 core/debug/telemetry-gate.ts：默认开启，侧栏设置项为权威来源，
+ * localStorage.dpp_debug === '0' 作为页面手动兜底。
+ * 只记录并持久化计数、比率与字节数；提示词原文与请求体样本一律不留存
+ * （MAIN world 的内容对页面上任何脚本都可见，视为不可信通道）。
  *
  * 接入点：
  *   1. request-interceptor.ts — 最终请求体确定后，统计 tools 字段
@@ -18,6 +20,8 @@
  *   __DPP_DEBUG__.reset()   // 清空数据（含 localStorage）
  */
 
+import { isTelemetryCaptureEnabled } from "./telemetry-gate";
+
 export interface RequestMetrics {
   timestamp: number;
   route: string;
@@ -28,10 +32,8 @@ export interface RequestMetrics {
   toolsByProvider: Record<string, number>;
   messageCount: number;
   augmentationApplied: boolean;
-  bodySample: string;
   candidateToolFields: Record<string, number>;
   promptBytes: number;
-  promptText: string;
   toolCountInPrompt: number;
   toolCatalogBytes: number;
 }
@@ -137,10 +139,11 @@ class RefactorTelemetry {
     }
   }
 
-  recordRequest(metrics: RequestMetrics): void {
+  recordRequest(metrics: RequestMetrics, promptText = ""): void {
+    if (!isTelemetryCaptureEnabled()) return;
     if (this.requests.length >= MAX_RECORDS) this.requests.shift();
     if (this.lastPromptText !== null && metrics.promptBytes > 0) {
-      const lcpBytes = longestCommonPrefixBytes(this.lastPromptText, metrics.promptText);
+      const lcpBytes = longestCommonPrefixBytes(this.lastPromptText, promptText);
       const totalBytes = Math.max(this.lastPromptText.length, metrics.promptBytes) > 0
         ? Math.max(
             new TextEncoder().encode(this.lastPromptText).length,
@@ -149,7 +152,8 @@ class RefactorTelemetry {
         : 1;
       this.prefixConsistencyRates.push(lcpBytes / totalBytes);
     }
-    this.lastPromptText = metrics.promptText || null;
+    // 提示词原文只作为本次 LCP 计算的入参，比较完即丢：既不进记录，也不进 dump()。
+    this.lastPromptText = promptText || null;
     this.requests.push(metrics);
     console.log(
       `[DPP-DEBUG] request: route=${metrics.route} ` +
@@ -159,6 +163,7 @@ class RefactorTelemetry {
   }
 
   recordTruncation(metrics: TruncationMetrics): void {
+    if (!isTelemetryCaptureEnabled()) return;
     if (this.truncations.length >= MAX_RECORDS) this.truncations.shift();
     this.truncations.push(metrics);
     if (metrics.truncated) {
@@ -172,6 +177,7 @@ class RefactorTelemetry {
 
   // v1.17 新增：工具调用结果记录
   recordToolCall(success: boolean, errorType?: string): void {
+    if (!isTelemetryCaptureEnabled()) return;
     if (success) {
       this.toolCallSuccess++;
     } else {
@@ -185,6 +191,7 @@ class RefactorTelemetry {
 
   // v1.17 新增：转义修复结果记录
   recordEscapeRepair(success: boolean): void {
+    if (!isTelemetryCaptureEnabled()) return;
     if (success) {
       this.escapeRepairSuccess++;
     } else {
@@ -195,6 +202,7 @@ class RefactorTelemetry {
 
   // v1.17 新增：工具目录缓存命中记录
   recordToolSchemaCache(hit: boolean): void {
+    if (!isTelemetryCaptureEnabled()) return;
     if (hit) {
       this.toolSchemaCacheHits++;
     } else {
@@ -386,8 +394,6 @@ export function recordRequestFromBody(
       toolsByProvider[provider] = (toolsByProvider[provider] ?? 0) + 1;
     }
 
-    const bodySample = body.length > 2000 ? body.substring(0, 2000) + '...[truncated sample]' : body;
-
     const promptText = typeof parsed.prompt === 'string' ? parsed.prompt : '';
     const promptBytes = promptText ? new TextEncoder().encode(promptText).length : 0;
     const toolMatches = promptText.match(/### Tool /g);
@@ -397,6 +403,7 @@ export function recordRequestFromBody(
       ? new TextEncoder().encode(promptText.substring(catalogStart)).length
       : 0;
 
+    // 提示词原文只在这里参与计算，recordRequest 不保存它，请求体样本同样不落记录。
     refactorTelemetry.recordRequest({
       timestamp: Date.now(),
       route,
@@ -407,13 +414,11 @@ export function recordRequestFromBody(
       toolsByProvider,
       messageCount: messages,
       augmentationApplied,
-      bodySample,
       candidateToolFields,
       promptBytes,
-      promptText,
       toolCountInPrompt,
       toolCatalogBytes,
-    });
+    }, promptText);
 
     if (promptText) {
       console.log(
@@ -434,18 +439,11 @@ export function recordRequestFromBody(
 
 /**
  * 挂载到 window，供页面控制台访问。
- * v1.17：默认开启，dpp_debug='0' 可关闭。
+ * 门控由 core/debug/telemetry-gate.ts 提供：默认挂载，页面手动 dpp_debug='0' 可关。
  */
 export function mountDebugToWindow(): void {
   if (typeof window === "undefined") return;
-  const debugEnabled = (() => {
-    try {
-      return window.localStorage.getItem("dpp_debug") !== "0";
-    } catch {
-      return true;
-    }
-  })();
-  if (!debugEnabled) return;
+  if (!isTelemetryCaptureEnabled()) return;
   const w = window as unknown as Record<string, unknown>;
   if (w.__DPP_DEBUG__) return;
   w.__DPP_DEBUG__ = {

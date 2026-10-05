@@ -115,6 +115,17 @@ export default function GeneralSubPage({ state }: { state: SettingsState }) {
           onToggle={state.handleRemoteAgentWatcherToggle}
         />
       </SettingsSection>
+
+      <SettingsSection
+        title={t('sidepanel.settings.debugTelemetry')}
+        description={t('sidepanel.settings.debugTelemetryDescription')}
+      >
+        <ToggleRow
+          title={t('sidepanel.settings.debugTelemetry')}
+          enabled={state.debugTelemetryEnabled}
+          onToggle={state.handleDebugTelemetryToggle}
+        />
+      </SettingsSection>
     </div>
   );
 }
