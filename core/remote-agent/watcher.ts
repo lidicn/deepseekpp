@@ -498,41 +498,48 @@ export async function resendMessageViaUI(message: string): Promise<void> {
     'textarea',
   ];
   
-  let textarea: HTMLTextAreaElement | null = null;
+  let found: HTMLElement | null = null;
   for (const sel of selectors) {
     const el = document.querySelector(sel);
     if (el) {
-      textarea = el as HTMLTextAreaElement;
+      found = el as HTMLElement;
       console.log(`[DPP-REMOTE] Found input box with selector: ${sel}`);
       break;
     }
   }
-  
-  if (!textarea) {
-    throw new Error('Chat input textarea not found');
+
+  if (!found) {
+    throw new Error('Chat input not found');
   }
+  const input = found;
+
+  const isNativeInput = input instanceof HTMLTextAreaElement;
 
   // Focus and set value (use native setter so React recognizes it)
-  textarea.focus();
-  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-  if (setter) {
-    setter.call(textarea, message);
+  input.focus();
+  if (isNativeInput) {
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+    if (setter) {
+      setter.call(input, message);
+    } else {
+      input.value = message;
+    }
   } else {
-    textarea.value = message;
+    input.textContent = message;
   }
 
   // Trigger input event so React updates its state
   if (typeof InputEvent === 'function') {
     const inputEvent = new InputEvent('input', {
       bubbles: true,
-      inputType: 'insertFromPaste',
+      inputType: isNativeInput ? 'insertFromPaste' : 'insertText',
       data: message,
     });
-    textarea.dispatchEvent(inputEvent);
+    input.dispatchEvent(inputEvent);
   } else {
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('input', { bubbles: true }));
   }
-  textarea.dispatchEvent(new Event('change', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
 
   // Wait a bit for React to update
   await new Promise((resolve) => setTimeout(resolve, 200));
@@ -546,7 +553,7 @@ export async function resendMessageViaUI(message: string): Promise<void> {
     bubbles: true,
     cancelable: true,
   });
-  textarea.dispatchEvent(enterEvent);
+  input.dispatchEvent(enterEvent);
 
   console.log('[DPP-REMOTE] Message re-sent via UI (Enter key)');
 }

@@ -29,6 +29,7 @@ vi.mock('../core/deepseek/active-client', () => ({
 import {
   isRemoteAgentWatcherEnabled,
   recordLocalSentMessage,
+  resendMessageViaUI,
   startRemoteAgentWatcher,
   stopRemoteAgentWatcher,
 } from '../core/remote-agent/watcher';
@@ -325,5 +326,27 @@ describe('remote agent resend notice wiring', () => {
     expect(region).toMatch(/onResendFailed/);
     expect(region).toMatch(/content\.remoteAgent\.resendFailed/);
     expect(region).toMatch(/showContentToast\(/);
+  });
+});
+
+describe('resendMessageViaUI input shapes', () => {
+  it('types into a contenteditable input instead of throwing on the textarea setter', async () => {
+    // The selector list falls back to div[contenteditable="true"]; driving it
+    // with the HTMLTextAreaElement value setter is an illegal invocation, so
+    // the whole resend dies exactly on the hosts that need the fallback.
+    document.body.innerHTML = '';
+    const box = document.createElement('div');
+    box.setAttribute('contenteditable', 'true');
+    document.body.appendChild(box);
+    const inputEvents: Event[] = [];
+    box.addEventListener('input', (event) => inputEvents.push(event));
+
+    const pending = resendMessageViaUI('重发的消息');
+    await drain();
+    vi.advanceTimersByTime(UI_SETTLE_MS);
+    await expect(pending).resolves.toBeUndefined();
+
+    expect(box.textContent).toBe('重发的消息');
+    expect(inputEvents).toHaveLength(1);
   });
 });
