@@ -110,6 +110,50 @@ describe('calculateNextRunAt cron solver', () => {
   });
 });
 
+describe('calculateNextRunAt DST wall-clock semantics', () => {
+  // 2026 US DST: clocks jump 02:00 -> 03:00 in America/New_York on Mar 8, and
+  // fall back 02:00 -> 01:00 on Nov 1. The reference instants below sit after the
+  // previous valid occurrence so the DST day itself is the next candidate.
+  const AFTER_MAR_7 = Date.UTC(2026, 2, 7, 10, 0, 0);
+  const AFTER_OCT_31 = Date.UTC(2026, 10, 1, 4, 0, 0);
+
+  it('shifts a spring-forward non-existent local time to the post-transition instant', () => {
+    const timezone = 'America/New_York';
+    const result = calculateNextRunAt(cronSchedule('30 2 * * *', timezone), AFTER_MAR_7);
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.value == null) return;
+
+    // 02:30 never exists that day: clocks jump 02:00 -> 03:00 at 07:00Z. The run
+    // resolves to that first post-transition instant (cron convention for a skipped
+    // wall time). Anything earlier — e.g. the 06:30Z candidate the two-pass offset
+    // correction used to return — is 01:30 local, which runs the whole schedule an
+    // hour early on the DST day.
+    expect(result.value).toBe(Date.UTC(2026, 2, 8, 7, 0, 0));
+    const parts = zonedParts(result.value, timezone);
+    expect([parts.hour, parts.minute]).toEqual([3, 0]);
+  });
+
+  it('keeps a valid wall time on the DST day at its own instant', () => {
+    const timezone = 'America/New_York';
+    const result = calculateNextRunAt(cronSchedule('0 3 * * *', timezone), AFTER_MAR_7);
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.value == null) return;
+
+    // 03:00 exists on Mar 8 (it is the first instant after the jump): 07:00Z.
+    expect(result.value).toBe(Date.UTC(2026, 2, 8, 7, 0, 0));
+  });
+
+  it('resolves a fall-back duplicated local time to its first occurrence', () => {
+    const timezone = 'America/New_York';
+    const result = calculateNextRunAt(cronSchedule('30 1 * * *', timezone), AFTER_OCT_31);
+    expect(result.ok).toBe(true);
+    if (!result.ok || result.value == null) return;
+
+    // 01:30 occurs twice (EDT then EST); the first is 05:30Z.
+    expect(result.value).toBe(Date.UTC(2026, 10, 1, 5, 30, 0));
+  });
+});
+
 describe('calculateNextRunAt frequency guard', () => {
   it('flags an every-minute cron below the default minimum interval (F5 guard stays live)', () => {
     // A NaN-poisoned guard would let this pass; a correct guard rejects it.

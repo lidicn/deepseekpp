@@ -397,6 +397,11 @@ function zonedPartsOf(timestamp: number, timezone: string): ZonedWallParts {
  * exist (DST spring-forward) resolves to the post-transition instant and one
  * that occurs twice (fall-back) resolves to the first — the documented DST
  * limitation for cron scheduling.
+ *
+ * The read-back check is what makes that guarantee real rather than aspirational:
+ * a non-existent time makes the two passes disagree, and the later pass alone
+ * lands *before* the transition (02:30 on a spring-forward day resolved to an
+ * 01:30 local instant, i.e. the run fired an hour early).
  */
 function wallToUtc(
   timezone: string,
@@ -407,9 +412,43 @@ function wallToUtc(
   minute: number,
 ): number {
   const asUtc = Date.UTC(year, month - 1, day, hour, minute, 0);
-  let instant = asUtc - zonedOffsetAt(timezone, asUtc);
-  instant = asUtc - zonedOffsetAt(timezone, instant);
-  return instant;
+  const firstPass = asUtc - zonedOffsetAt(timezone, asUtc);
+  const secondPass = asUtc - zonedOffsetAt(timezone, firstPass);
+  if (zonedWallMatches(timezone, secondPass, year, month, day, hour, minute)) return secondPass;
+  if (zonedWallMatches(timezone, firstPass, year, month, day, hour, minute)) return firstPass;
+
+  // Neither candidate reads back as the requested wall time, so that local time
+  // falls inside the spring-forward gap. Binary-search the offset change between
+  // the two candidates and return the first minute on the far side of it.
+  let low = Math.min(firstPass, secondPass);
+  let high = Math.max(firstPass, secondPass);
+  const offsetBeforeTransition = zonedOffsetAt(timezone, low);
+  while (high - low >= MINUTE_MS) {
+    const middle = Math.floor((low + high) / (2 * MINUTE_MS)) * MINUTE_MS;
+    if (zonedOffsetAt(timezone, middle) === offsetBeforeTransition) {
+      low = middle + MINUTE_MS;
+    } else {
+      high = middle;
+    }
+  }
+  return high;
+}
+
+function zonedWallMatches(
+  timezone: string,
+  timestamp: number,
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+): boolean {
+  const parts = zonedPartsOf(timestamp, timezone);
+  return parts.year === year
+    && parts.month === month
+    && parts.day === day
+    && parts.hour === hour
+    && parts.minute === minute;
 }
 
 function zonedOffsetAt(timezone: string, timestamp: number): number {
