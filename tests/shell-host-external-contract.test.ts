@@ -129,8 +129,9 @@ describe('Shell Native Host external contract', () => {
       id: 'unknown-tool',
       error: { code: -32602, message: 'Unknown tool: future_tool' },
     });
-    // Three host process round trips take ~10s on Windows, over the 5s default.
-  }, 60_000);
+    // Three host process round trips take ~10s on Windows, over the 5s default; four calls at
+    // the 30s per-response ceiling need this test's own 140s budget.
+  }, 140_000);
 
   it('rejects future Native envelopes and malformed JSON-RPC with stable errors', async () => {
     const futureEnvelope = {
@@ -274,11 +275,13 @@ function readNativeResponse(child: ReturnType<typeof spawn>): Promise<any> {
 
   return new Promise((resolve, reject) => {
     let buffer = Buffer.alloc(0);
-    // One cold host spawn costs ~1s idle (this whole four-call test measures 3.9s), but the
-    // same leg has been observed past the previous 5s window while the suite was running
-    // (npm test 2026-10-04: sibling host tests 1356-2646ms and this one timed out at
-    // 13766ms). 15s per response x four calls still sits under the test's own 60s budget.
-    const timer = setTimeout(() => reject(new Error('Timed out waiting for Shell Host response.')), 15_000);
+    // One cold host spawn costs ~1s idle, but the same leg keeps blowing the window under real
+    // desktop load: the 2026-10-05 probe (tmp-readings/dpp-shell-host-latency.mjs) measured
+    // 3.8-5.2s per spawn+response with the machine already at 78-91% CPU, a 20s ceiling still
+    // lost one of these four responses in the 231-file run (npm test 2026-10-05, 46355ms for the
+    // file), and the same file is green in 62s when it runs alone. 30s per response x four calls
+    // sits under the test's own 140s budget.
+    const timer = setTimeout(() => reject(new Error('Timed out waiting for Shell Host response.')), 30_000);
     const finish = (callback: () => void) => {
       clearTimeout(timer);
       stdout.removeAllListeners();

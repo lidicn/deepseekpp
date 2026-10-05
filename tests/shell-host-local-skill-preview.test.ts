@@ -37,7 +37,7 @@ describe('shell native host local_skill_preview', () => {
     ]);
     // One host spawn over a 7-file fixture measured 1.5s idle and 3.9s while the rest of the
     // suite competed for forks.
-  }, 15_000);
+  }, 45_000);
 
   it('returns excess supporting files as structured on-demand resources without a generic warning', async () => {
     const root = createLargeResourceSkillFixture();
@@ -53,7 +53,7 @@ describe('shell native host local_skill_preview', () => {
     expect(existsSync(join(root, 'references/29.md'))).toBe(true);
     // A 29-file fixture plus one host spawn measured 1.4s idle and did not finish inside the
     // 5s default while the rest of the suite competed for forks (5.9s, then killed).
-  }, 15_000);
+  }, 45_000);
 });
 
 describe('shell native host local_folder_pick', () => {
@@ -132,9 +132,12 @@ describe('shell native host local_file_* tools', () => {
 
     const persisted = readFileSync(filePath, 'utf8');
     expect(persisted).toBe(content);
-    // Four host spawns plus a ~220 KB UTF-8 round trip measured 5.2s idle on win32, already
-    // above the 5s default before any fork contention.
-  }, 20_000);
+    // Four host spawns plus a 144022-byte UTF-8 round trip measured 5.2s idle on win32 and
+    // 17501ms on 2026-10-05 with the desktop already at 78-91% CPU (the probe in
+    // tmp-readings/dpp-shell-host-latency.mjs); the case then failed its old 20000ms budget in
+    // the isolated rerun and the old 10s per-response harness in the full run. Four calls against
+    // the 30s harness ceiling need this 135s budget.
+  }, 135_000);
 });
 
 describe('shell native host logLine resilience', () => {
@@ -152,7 +155,7 @@ describe('shell native host logLine resilience', () => {
     expect(log).toContain('tools/call name=shell_status');
     // One host spawn that must create a log parent directory measured 1.3s idle and 4.5s while
     // the rest of the suite competed for forks.
-  }, 15_000);
+  }, 45_000);
 
   it('returns a normal response when DPP_LOG_FILE points to an unwritable path', async () => {
     const response = await callNativeHost('shell_status', {}, {
@@ -161,7 +164,7 @@ describe('shell native host logLine resilience', () => {
     expect(response.error).toBeUndefined();
     expect(response.result?.structuredContent?.data?.platform).toBeTruthy();
     // The blocked-log spawn measured 1.2s idle and 3.9s under fork contention.
-  }, 15_000);
+  }, 45_000);
 
   it('writes a stderr diagnostic when DPP_LOG_FILE cannot be initialized', async () => {
     const { response, stderr } = await callNativeHostWithStderr('shell_status', {}, {
@@ -171,7 +174,7 @@ describe('shell native host logLine resilience', () => {
     expect(stderr).toContain('failed to initialize log file');
     // Same one-spawn cost as the entries above (1.5s idle, stderr captured); none of them fits
     // the 5s default once other forks are running.
-  }, 15_000);
+  }, 45_000);
 });
 
 // A log path whose parent is an existing regular file, so creating it throws on every
@@ -236,6 +239,10 @@ function createLargeResourceSkillFixture(): string {
   return root;
 }
 
+// One host spawn plus its response measured 3.8-5.2s on 2026-10-05 while the desktop already sat
+// at 78-91% CPU (probe: tmp-readings/dpp-shell-host-latency.mjs); the same legs cost 1.2-1.5s
+// when the machine was quiet. Both harnesses therefore allow 30s for one response before a
+// missing answer counts as a hang, and the per-test budgets above stay above that ceiling.
 async function callNativeHost(name: string, args: Record<string, unknown>, env?: Record<string, string>) {
   const child = spawn(process.execPath, [hostPath], {
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -251,7 +258,7 @@ async function callNativeHost(name: string, args: Record<string, unknown>, env?:
       settled = true;
       child.kill();
       reject(new Error(`Native host timed out. stderr: ${stderr}`));
-    }, 10_000);
+    }, 30_000);
 
     child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
@@ -312,7 +319,7 @@ async function callNativeHostWithStderr(name: string, args: Record<string, unkno
       settled = true;
       child.kill();
       reject(new Error(`Native host timed out. stderr: ${stderr}`));
-    }, 10_000);
+    }, 30_000);
 
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
     child.stdout.on('data', (chunk: Buffer) => {

@@ -173,9 +173,10 @@ describe('Shell Host modular runtime ownership', () => {
         structuredContent: { ok: false, data: { exitCode: -1, timedOut: true } },
       },
     });
-    // A PowerShell process plus the host's 1s kill measured 2.3s idle; the 5s default is
-    // not enough while other forks are running.
-  }, 15_000);
+    // A PowerShell process plus the host's 1s kill measured 2.3s idle and 12991ms under load on
+    // 2026-10-05 (npm test, Installed Shell Host timed out); the harness ceiling is 30s, so one
+    // call plus teardown needs this 45s budget.
+  }, 45_000);
 
   it('serves control requests while a long tool call remains in the tool FIFO', async () => {
     const command = process.platform === 'win32' ? 'Start-Sleep -Milliseconds 1200' : 'sleep 1.2';
@@ -201,8 +202,9 @@ describe('Shell Host modular runtime ownership', () => {
 
     expect(responses.map((response) => response.id)).toEqual(['tools', 'slow']);
     // A 1.2s PowerShell sleep inside the host plus two sequential spawn round trips measured
-    // 3.0s idle; the 5s default leaves no room while other forks are running.
-  }, 15_000);
+    // 3.0s idle and 12496ms under load on 2026-10-05 (npm test); the harness ceiling is 30s per
+    // response set, so this case needs its own 45s budget.
+  }, 45_000);
 
   it('serves control requests while tool calls wait for host environment readiness', async () => {
     const environmentReady = deferred<void>();
@@ -290,12 +292,14 @@ function callHost(hostPath: string, envelope: unknown): Promise<any> {
   return new Promise((resolveResponse, reject) => {
     let stdout = Buffer.alloc(0);
     let stderr = '';
-    // Stay below the callers' declared 15s/180s budgets so a hang still reports as this harness
-    // error. The same spawn measured 4.3s in a full-suite run against the previous 5s ceiling.
+    // Stay below the callers' declared 45s/180s budgets so a hang still reports as this harness
+    // error. The same spawn measured 4.3s in a full-suite run and 3.8-5.2s on 2026-10-05 with the
+    // desktop already at 78-91% CPU (tmp-readings/dpp-shell-host-latency.mjs), so the old 12s
+    // ceiling was being hit by load alone.
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error(`Installed Shell Host timed out. stderr: ${stderr}`));
-    }, 12_000);
+    }, 30_000);
 
     const finish = (callback: () => void) => {
       clearTimeout(timer);
@@ -326,12 +330,13 @@ function callHostResponses(hostPath: string, envelopes: unknown[]): Promise<any[
   return new Promise((resolveResponses, reject) => {
     let stdout = Buffer.alloc(0);
     const responses: any[] = [];
-    // Below the caller's declared 15s budget so a hang still reports as this harness error. The
-    // FIFO case measured 3.5s idle and hit the previous 5s ceiling at 5.3s in a full-suite run.
+    // Below the caller's declared 45s budget so a hang still reports as this harness error. The
+    // FIFO case measured 3.5s idle, 5.3s in a full-suite run, and hit 12.5s on 2026-10-05 while
+    // the desktop sat at 78-91% CPU (tmp-readings/dpp-shell-host-latency.mjs).
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error('Timed out waiting for concurrent Shell Host responses.'));
-    }, 12_000);
+    }, 30_000);
     const finish = (callback: () => void) => {
       clearTimeout(timer);
       child.kill();
