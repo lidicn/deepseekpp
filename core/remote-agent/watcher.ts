@@ -482,31 +482,59 @@ function findPendingUserMessage(messages: HistoryMessage[]): HistoryMessage | nu
 }
 
 /**
+ * Composer selectors, most specific first. The bare `textarea` is a
+ * last-resort fallback, so it must never be the *first* thing a caller looks
+ * at — see `recordLocalSendFromActiveInput`.
+ */
+const CHAT_INPUT_SELECTORS = [
+  'textarea#chat-input',
+  'textarea[placeholder*="发消息"]',
+  'textarea[placeholder*="chat"]',
+  'textarea[placeholder*="Message"]',
+  'textarea[placeholder*="输入"]',
+  'div[contenteditable="true"]',
+  'textarea',
+];
+
+/** The DeepSeek composer, or null when this page shape is unknown. */
+export function findChatInputElement(): HTMLElement | null {
+  for (const selector of CHAT_INPUT_SELECTORS) {
+    const el = document.querySelector<HTMLElement>(selector);
+    if (el) {
+      console.log(`[DPP-REMOTE] Found input box with selector: ${selector}`);
+      return el;
+    }
+  }
+  return null;
+}
+
+/** A composer's current text: `value` for a textarea, the body for contenteditable. */
+function readComposerText(input: HTMLElement): string {
+  return input instanceof HTMLTextAreaElement ? input.value : input.textContent || '';
+}
+
+/**
+ * Remember what this browser is about to send from the composer, so the
+ * watcher does not read the echo back out of history and re-send it.
+ *
+ * The text has to come from the composer itself: the page can hold unrelated
+ * textareas (a sidebar draft, a rename box), and recording one of those would
+ * suppress the *real* remote message that happens to match it.
+ */
+export function recordLocalSendFromActiveInput(): void {
+  const input = findChatInputElement();
+  if (!input) return;
+  const content = readComposerText(input).trim();
+  if (content) recordLocalSentMessage(content);
+}
+
+/**
  * Re-send a message by injecting it into the DeepSeek input box and clicking send.
  * This ensures the request goes through the normal UI flow (and thus through
  * our fetch interceptor).
  */
 export async function resendMessageViaUI(message: string): Promise<void> {
-  // Try multiple selectors for the input box
-  const selectors = [
-    'textarea#chat-input',
-    'textarea[placeholder*="发消息"]',
-    'textarea[placeholder*="chat"]',
-    'textarea[placeholder*="Message"]',
-    'textarea[placeholder*="输入"]',
-    'div[contenteditable="true"]',
-    'textarea',
-  ];
-  
-  let found: HTMLElement | null = null;
-  for (const sel of selectors) {
-    const el = document.querySelector(sel);
-    if (el) {
-      found = el as HTMLElement;
-      console.log(`[DPP-REMOTE] Found input box with selector: ${sel}`);
-      break;
-    }
-  }
+  const found = findChatInputElement();
 
   if (!found) {
     throw new Error('Chat input not found');

@@ -19,6 +19,7 @@ import type {
 import {
   startRemoteAgentWatcher,
   stopRemoteAgentWatcher,
+  recordLocalSendFromActiveInput,
   recordLocalSentMessage,
 } from "../core/remote-agent/watcher";
 import {
@@ -10323,11 +10324,7 @@ function setupLocalSendListener(): () => void {
   const onClick = (e: MouseEvent) => {
     const target = e.target as HTMLElement;
     if (target && target.closest('button')) {
-      // 找最近的 textarea
-      const textarea = document.querySelector('textarea') as HTMLTextAreaElement;
-      if (textarea && textarea.value && textarea.value.trim()) {
-        recordLocalSentMessage(textarea.value.trim());
-      }
+      recordLocalSendFromActiveInput();
     }
   };
 

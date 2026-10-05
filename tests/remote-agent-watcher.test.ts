@@ -28,6 +28,7 @@ vi.mock('../core/deepseek/active-client', () => ({
 
 import {
   isRemoteAgentWatcherEnabled,
+  recordLocalSendFromActiveInput,
   recordLocalSentMessage,
   resendMessageViaUI,
   startRemoteAgentWatcher,
@@ -348,5 +349,65 @@ describe('resendMessageViaUI input shapes', () => {
 
     expect(box.textContent).toBe('重发的消息');
     expect(inputEvents).toHaveLength(1);
+  });
+});
+
+describe('local send recording from the page', () => {
+  /**
+   * A sidebar draft and the composer, in that document order. Textareas are
+   * filled through textContent so the prototype value spy (which is how a
+   * resend is observed) does not see the fixture being built.
+   */
+  function composerDom(): void {
+    document.body.innerHTML = '';
+    const unrelated = document.createElement('textarea');
+    unrelated.textContent = '侧栏草稿';
+    document.body.appendChild(unrelated);
+    const chat = document.createElement('textarea');
+    chat.id = 'chat-input';
+    chat.textContent = '要发出去的那条';
+    document.body.appendChild(chat);
+  }
+
+  it('records the composer text, not the first textarea on the page', async () => {
+    composerDom();
+    recordLocalSendFromActiveInput();
+
+    histories.set(CHAT_SESSION_ID, [userMessage(1, '已有的历史消息')]);
+    stubFetch();
+    await startAndSettle();
+
+    // This row came from another device. If the click branch had recorded the
+    // sidebar draft instead, the watcher would now swallow it as "already sent".
+    histories.get(CHAT_SESSION_ID)!.push(userMessage(2, '侧栏草稿'));
+    onSend = appendEcho(CHAT_SESSION_ID, 3);
+    await attempt();
+
+    expect(sent).toEqual(['侧栏草稿']);
+    expect(notices).toEqual([]);
+  });
+
+  it('suppresses the composer text it just recorded', async () => {
+    composerDom();
+    recordLocalSendFromActiveInput();
+
+    histories.set(CHAT_SESSION_ID, [userMessage(1, '已有的历史消息')]);
+    stubFetch();
+    await startAndSettle();
+
+    histories.get(CHAT_SESSION_ID)!.push(userMessage(2, '要发出去的那条'));
+    await attempt();
+
+    expect(sent).toEqual([]);
+    expect(notices).toEqual([]);
+  });
+
+  it('is the single source the content script click branch uses', () => {
+    const source = readFileSync(join(process.cwd(), 'entrypoints/content.ts'), 'utf8');
+    const start = source.indexOf('function setupLocalSendListener');
+    expect(start).toBeGreaterThanOrEqual(0);
+    const region = source.slice(start, start + 1_600);
+    expect(region).toMatch(/recordLocalSendFromActiveInput/);
+    expect(region).not.toMatch(/document\.querySelector\(['"]textarea['"]\)/);
   });
 });
