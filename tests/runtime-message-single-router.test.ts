@@ -55,7 +55,9 @@ describe('runtime message single router', () => {
       return messagingFileImport.test(source);
     });
     expect(importers).toEqual([]);
-  });
+    // Reads every first-party source off disk: under 1s idle, measured 8.5s while the
+    // rest of the suite held the forks (NAS-resident working tree).
+  }, 30_000);
 
   it('keeps the lossy sendToBackground/sendToContentScript helpers unreferenced', () => {
     const users = firstPartySourceFiles(SRC_ROOT).filter((file) => {
@@ -63,5 +65,6 @@ describe('runtime message single router', () => {
       return /sendToBackground|sendToContentScript/.test(source);
     });
     expect(users).toEqual([]);
-  });
+    // Same full-tree read as the case above: measured 5.4s under suite load.
+  }, 30_000);
 });

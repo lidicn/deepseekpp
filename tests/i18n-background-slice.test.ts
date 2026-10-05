@@ -115,7 +115,9 @@ describe('background i18n slice', () => {
     }
 
     expect([...missing].sort()).toEqual([]);
-  });
+    // Reads and regex-scans every source file for t() keys: measured 9.3s while the
+    // rest of the suite held the forks (NAS-resident working tree).
+  }, 30_000);
 
   it('narrows the background key type to the four sections', () => {
     // Compile-time sanity: the exported key type must reject a sidepanel key.
