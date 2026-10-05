@@ -1,6 +1,6 @@
-import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, readSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   DEFAULT_LOCAL_FILE_READ_CHARS,
   MAX_LOCAL_FILE_READ_CHARS,
@@ -131,7 +131,35 @@ export function resolveUnderRoot(rootPath, relativePath) {
   if (rel.startsWith('..') || rel === '..' || isAbsolute(rel)) {
     throw new Error(`Path escapes local Skill root: ${relativePath}`);
   }
+  // Lexical resolve() never follows symlinks, so a link inside the Skill root that
+  // points outside it would pass the prefix check above and escape the root. Resolve
+  // the real filesystem location of both the root and the candidate, then re-check
+  // containment before returning. The returned path stays lexical to preserve the
+  // on-disk/preview paths callers display; only the escape decision uses realpath.
+  // The root goes through the same tolerant helper so a not-yet-existing root keeps
+  // the previous behaviour (the caller fails on the actual read) instead of throwing
+  // a raw ENOENT out of this guard.
+  const realRoot = realpathContaining(rootPath);
+  const realResolved = realpathContaining(resolved);
+  if (realResolved !== realRoot && !realResolved.startsWith(realRoot + sep)) {
+    throw new Error(`Path escapes local Skill root: ${relativePath}`);
+  }
   return resolved;
+}
+
+// Resolve symlinks for `target`. When the target does not exist yet (e.g. a create
+// path), fall back to resolving its nearest existing ancestor and re-joining the
+// unresolved tail, so the containment check still runs against a fully-realpathed
+// prefix instead of silently skipping the guard.
+function realpathContaining(target) {
+  try {
+    return realpathSync(target);
+  } catch (error) {
+    if (!isMissingPathError(error)) throw error;
+    const parent = dirname(target);
+    if (parent === target) return target;
+    return join(realpathContaining(parent), basename(target));
+  }
 }
 
 export function readTextFile(filePath) {
