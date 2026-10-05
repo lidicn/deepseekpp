@@ -8,6 +8,7 @@ import {
 } from '../prompt/settings';
 import { parseSkillCommand } from '../skill/parser';
 import { isLocalIndexInstructions, buildLocalExecutionBoundary } from '../skill/local-importer';
+import { wrapUntrustedSkillContent } from '../skill/untrusted-content';
 import { selectImplicitSkill, type LocalSkillIndex } from '../skill/local-skill-scorer';
 import { absolutizeSkillReferences, joinUnderRoot } from '../skill/local-path-rewriter';
 import { DEFAULT_SKILL_AUTO_ACTIVATION_SETTINGS, type SkillAutoActivationSettings } from '../skill/auto-activation-settings';
@@ -226,7 +227,7 @@ export function augmentDecodedRequestBody(
       if (picked) {
         activeLocalSkillDir = picked.remote?.localDirectory || undefined;
         resolved = {
-          combinedPrompt: composeLocalSkillPrompt(picked),
+          combinedPrompt: composeResolvedInstructions(picked, locale),
           memoryEnabled: picked.memoryEnabled,
           skillName: picked.name,
         };
@@ -399,14 +400,14 @@ function resolveSkills(
   const primarySkill = skills.find((s) => s.name === skillName);
   if (!primarySkill) return null;
 
-  const primaryPrompt = composeResolvedInstructions(primarySkill);
+  const primaryPrompt = composeResolvedInstructions(primarySkill, locale);
 
   const secondInvocation = parseSkillCommand('/' + args);
   if (secondInvocation) {
     const secondSkill = skills.find((s) => s.name === secondInvocation.skillName);
     if (secondSkill) {
       const userArgs = secondInvocation.args;
-      const combinedInstructions = primaryPrompt + '\n\n---\n\n' + composeResolvedInstructions(secondSkill);
+      const combinedInstructions = primaryPrompt + '\n\n---\n\n' + composeResolvedInstructions(secondSkill, locale);
       return {
         combinedPrompt: userArgs
           ? wrapUserInput(combinedInstructions, userArgs, locale)
@@ -427,10 +428,16 @@ function resolveSkills(
 }
 
 // Local indexed skills return "index instruction + D4 boundary + D1 defensive rewrite"; other sources keep
-// their original frozen instructions (builtin/bundled/github unchanged).
-function composeResolvedInstructions(skill: AugmentationSkill): string {
-  if (isLocalIndexSkill(skill)) return composeLocalSkillPrompt(skill);
-  return skill.instructions;
+// their original frozen instructions (builtin/bundled unchanged). Everything that came in through an importer
+// (GitHub or local folder, index form or legacy snapshot body) is wrapped in the untrusted-content boundary,
+// because its text was written by whoever produced the SKILL.md (DPP-06 ruling A).
+function composeResolvedInstructions(skill: AugmentationSkill, locale: SupportedLocale): string {
+  const prompt = isLocalIndexSkill(skill) ? composeLocalSkillPrompt(skill) : skill.instructions;
+  return isImportedSkill(skill) ? wrapUntrustedSkillContent(prompt, locale) : prompt;
+}
+
+function isImportedSkill(skill: AugmentationSkill): boolean {
+  return skill.remote?.provider === 'github' || skill.remote?.provider === 'local';
 }
 
 function wrapUserInput(

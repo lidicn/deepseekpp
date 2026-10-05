@@ -23,6 +23,14 @@ import {
   type SkillCollisionCandidate,
 } from './registry';
 import { sanitizeImportedDescription } from './imported-description';
+import {
+  createSkillDocParser,
+  LOCAL_SKILL_DOC_PROFILE,
+  normalizeSkillName,
+  type ParsedSkillDoc,
+} from './parse-skill-doc';
+
+export type { ParsedSkillDoc };
 import { extractScenarioBlock } from './local-skill-scorer';
 
 const MAX_SKILL_BYTES = 120_000;
@@ -82,15 +90,6 @@ interface LoadedLocalSkill {
 interface LoadedLocalSource {
   preview: LocalSkillPreview;
   skills: LoadedLocalSkill[];
-}
-
-/** Parsed SKILL.md document shape (B3: exported with the parser). */
-export interface ParsedSkillDoc {
-  name: string;
-  description: string;
-  body: string;
-  version?: string;
-  lastUpdated?: string;
 }
 
 interface ExistingSkillContext {
@@ -799,92 +798,8 @@ function relativeToSkillDirectory(path: string, directory: string): string {
   return normalizedPath.startsWith(prefix) ? normalizedPath.slice(prefix.length) : normalizedPath;
 }
 
-/**
- * Parses a SKILL.md document (agentskills.io / pi-ecosystem format) into the
- * local-import record shape. Exported (B3) so the pi-ecosystem bridge and
- * its contract tests share the same parser truth; behavior unchanged.
- */
-export function parseSkillDoc(raw: string, path: string): ParsedSkillDoc {
-  // Strip a leading UTF-8/UTF-16 BOM so the `^---` frontmatter fence still
-  // matches. Editors on Windows (notably Notepad/VS Code with BOM presets)
-  // commonly save SKILL.md with a BOM, which previously made the frontmatter
-  // regex miss and dropped `name:` along with it (issue #296).
-  const bomStripped = raw.replace(/^\uFEFF/, '');
-  const frontmatter = bomStripped.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
-  const meta = frontmatter ? parseYamlSubset(frontmatter[1]) : {};
-  const body = frontmatter ? bomStripped.slice(frontmatter[0].length).trim() : bomStripped.trim();
-  const name = normalizeSkillName(
-    readString(meta, 'name')
-    ?? extractH1Title(body)
-    ?? parentDirectory(path).split('/').pop()
-    ?? path.replace(/\/?SKILL\.md$/i, ''),
-  );
-  const rawDescription = readString(meta, 'description')
-    ?? firstParagraph(body)
-    ?? `Imported local Skill from ${path}`;
-  const description = sanitizeImportedDescription(rawDescription);
-  const metadata = readObject(meta, 'metadata');
-  const version = readString(metadata, 'version') ?? readString(meta, 'version');
-  const lastUpdated = readString(metadata, 'last_updated') ?? readString(metadata, 'lastUpdated') ?? readString(meta, 'last_updated');
-
-  return { name, description, body, version, lastUpdated };
-}
-
-function extractH1Title(body: string): string | undefined {
-  const match = body.match(/^\s*#\s+(.+?)\s*$/m);
-  return match ? match[1] : undefined;
-}
-
-function parseYamlSubset(raw: string): Record<string, unknown> {
-  const lines = raw.replace(/\r\n/g, '\n').split('\n');
-  const result: Record<string, unknown> = {};
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const match = line.match(/^([A-Za-z0-9_-]+):(?:\s*(.*))?$/);
-    if (!match) continue;
-    const key = match[1];
-    const value = match[2] ?? '';
-    if (value === '|' || value === '|-' || value === '>' || value === '>-') {
-      const block: string[] = [];
-      while (i + 1 < lines.length && /^(\s+|$)/.test(lines[i + 1])) {
-        i += 1;
-        block.push(lines[i].replace(/^\s{2,}/, ''));
-      }
-      result[key] = value.startsWith('>') ? block.join(' ').replace(/\s+/g, ' ').trim() : block.join('\n').trim();
-      continue;
-    }
-    if (value === '') {
-      const nested: Record<string, string> = {};
-      while (i + 1 < lines.length && /^\s+/.test(lines[i + 1])) {
-        i += 1;
-        const nestedMatch = lines[i].match(/^\s+([A-Za-z0-9_-]+):\s*(.*)$/);
-        if (nestedMatch) nested[nestedMatch[1]] = cleanYamlScalar(nestedMatch[2]);
-      }
-      result[key] = nested;
-      continue;
-    }
-    result[key] = cleanYamlScalar(value);
-  }
-  return result;
-}
-
-function cleanYamlScalar(value: string): string {
-  const trimmed = value.trim();
-  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-    return trimmed.slice(1, -1);
-  }
-  return trimmed;
-}
-
-function readString(record: Record<string, unknown> | undefined, key: string): string | undefined {
-  const value = record?.[key];
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function readObject(record: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
-  const value = record[key];
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-}
+/** Shared SKILL.md parser bound to the local profile (B3: exported for the pi bridge and its contract tests). */
+export const parseSkillDoc = createSkillDocParser(LOCAL_SKILL_DOC_PROFILE);
 
 function readRequiredString(record: Record<string, unknown>, key: string): string {
   const value = record[key];
@@ -904,44 +819,8 @@ function readStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
-function firstParagraph(body: string): string | undefined {
-  const paragraph = body
-    .replace(/^# .+$/m, '')
-    .split(/\n\s*\n/)
-    .map((part) => part.replace(/\s+/g, ' ').trim())
-    .find((part) => part.length > 0 && !part.startsWith('```'));
-  return paragraph ? paragraph.slice(0, 240) : undefined;
-}
-
 function createLocalSourceId(rootPath: string): string {
   return `local:${rootPath}`;
-}
-
-function parentDirectory(path: string): string {
-  // Normalize Windows backslashes so D:\foo\bar\SKILL.md resolves correctly.
-  const normalized = path.replace(/\\/g, '/');
-  const parts = normalized.split('/');
-  parts.pop();
-  return parts.join('/');
-}
-
-function normalizeSkillName(name: string): string {
-  const normalized = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-  // Slug collision with non-ASCII names (Chinese titles, etc.) used to throw a
-  // hard error and block local Skill import entirely (issue #296). Fall back to
-  // a stable hash-derived slug so the import always succeeds; the user can
-  // rename it from the Skills UI afterwards.
-  if (!normalized) return `skill-${shortHash(name || 'unnamed')}`;
-  return normalized;
-}
-
-function shortHash(input: string): string {
-  let hash = 0;
-  for (let i = 0; i < input.length; i += 1) {
-    hash = (hash << 5) - hash + input.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(36).slice(0, 8).padStart(2, '0');
 }
 
 function createUniqueSkillName(preferred: string, occupiedNames: Set<string>): string {

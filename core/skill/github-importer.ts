@@ -18,6 +18,13 @@ import {
   type SkillCollisionCandidate,
 } from './registry';
 import { sanitizeImportedDescription } from './imported-description';
+import {
+  createSkillDocParser,
+  GITHUB_SKILL_DOC_PROFILE,
+  normalizeSkillName,
+  parentDirectory,
+  type ParsedSkillDoc,
+} from './parse-skill-doc';
 
 const GITHUB_API_BASE = 'https://api.github.com';
 const GITHUB_RAW_BASE = 'https://raw.githubusercontent.com';
@@ -86,14 +93,6 @@ interface LoadedGitHubSkill {
 interface LoadedGitHubSource {
   preview: GitHubSkillPreview;
   skills: LoadedGitHubSkill[];
-}
-
-interface ParsedSkillDoc {
-  name: string;
-  description: string;
-  body: string;
-  version?: string;
-  lastUpdated?: string;
 }
 
 interface ResourceBundle {
@@ -659,74 +658,8 @@ function buildImportedInstructions(input: {
   return [header, body, resourceDocs, omitted].filter(Boolean).join('\n\n---\n\n');
 }
 
-export function parseSkillDoc(raw: string, path: string): ParsedSkillDoc {
-  // Strip a leading UTF-8 BOM before matching the `^---` frontmatter fence, so a
-  // BOM-saved SKILL.md keeps its `name:`/`description:` — matching local-importer's
-  // parseSkillDoc so the same document parses identically through either importer.
-  const bomStripped = raw.replace(/^﻿/, '');
-  const frontmatter = bomStripped.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
-  const meta = frontmatter ? parseYamlSubset(frontmatter[1]) : {};
-  const body = frontmatter ? bomStripped.slice(frontmatter[0].length).trim() : bomStripped.trim();
-  const name = normalizeSkillName(readString(meta, 'name') ?? parentDirectory(path).split('/').pop() ?? path.replace(/\/?SKILL\.md$/, ''));
-  const rawDescription = readString(meta, 'description') ?? firstParagraph(body) ?? `Imported GitHub Skill from ${path}`;
-  const description = sanitizeImportedDescription(rawDescription);
-  const metadata = readObject(meta, 'metadata');
-  const version = readString(metadata, 'version') ?? readString(meta, 'version');
-  const lastUpdated = readString(metadata, 'last_updated') ?? readString(metadata, 'lastUpdated') ?? readString(meta, 'last_updated');
-
-  return { name, description, body, version, lastUpdated };
-}
-
-function parseYamlSubset(raw: string): Record<string, unknown> {
-  const lines = raw.replace(/\r\n/g, '\n').split('\n');
-  const result: Record<string, unknown> = {};
-  for (let i = 0; i < lines.length; i += 1) {
-    const line = lines[i];
-    const match = line.match(/^([A-Za-z0-9_-]+):(?:\s*(.*))?$/);
-    if (!match) continue;
-    const key = match[1];
-    const value = match[2] ?? '';
-    if (value === '|' || value === '|-' || value === '>' || value === '>-') {
-      const block: string[] = [];
-      while (i + 1 < lines.length && /^(\s+|$)/.test(lines[i + 1])) {
-        i += 1;
-        block.push(lines[i].replace(/^\s{2,}/, ''));
-      }
-      result[key] = value.startsWith('>') ? block.join(' ').replace(/\s+/g, ' ').trim() : block.join('\n').trim();
-      continue;
-    }
-    if (value === '') {
-      const nested: Record<string, string> = {};
-      while (i + 1 < lines.length && /^\s+/.test(lines[i + 1])) {
-        i += 1;
-        const nestedMatch = lines[i].match(/^\s+([A-Za-z0-9_-]+):\s*(.*)$/);
-        if (nestedMatch) nested[nestedMatch[1]] = cleanYamlScalar(nestedMatch[2]);
-      }
-      result[key] = nested;
-      continue;
-    }
-    result[key] = cleanYamlScalar(value);
-  }
-  return result;
-}
-
-function cleanYamlScalar(value: string): string {
-  const trimmed = value.trim();
-  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
-    return trimmed.slice(1, -1);
-  }
-  return trimmed;
-}
-
-function readString(record: Record<string, unknown> | undefined, key: string): string | undefined {
-  const value = record?.[key];
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function readObject(record: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
-  const value = record[key];
-  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-}
+// DPP-06a: the parser body lives in core/skill/parse-skill-doc.ts; only the profile stays here.
+export const parseSkillDoc = createSkillDocParser(GITHUB_SKILL_DOC_PROFILE);
 
 async function fetchPackageInfo(owner: string, repo: string, ref: string): Promise<{ version?: string; description?: string }> {
   for (const path of ['.codex-plugin/plugin.json', '.claude-plugin/plugin.json', 'package.json']) {
@@ -861,15 +794,6 @@ function pathExtension(path: string): string {
   return index >= 0 ? name.slice(index).toLowerCase() : '';
 }
 
-function firstParagraph(body: string): string | undefined {
-  const paragraph = body
-    .replace(/^# .+$/m, '')
-    .split(/\n\s*\n/)
-    .map((part) => part.replace(/\s+/g, ' ').trim())
-    .find((part) => part.length > 0 && !part.startsWith('```'));
-  return paragraph ? paragraph.slice(0, 240) : undefined;
-}
-
 function createSourceId(owner: string, repo: string, ref: string, rootPath: string): string {
   return `github:${owner}/${repo}:${ref}:${rootPath || '.'}`;
 }
@@ -884,29 +808,6 @@ function stripGitSuffix(value: string): string {
 
 function trimSlashes(value: string): string {
   return value.replace(/^\/+|\/+$/g, '');
-}
-
-function parentDirectory(path: string): string {
-  const parts = path.split('/');
-  parts.pop();
-  return parts.join('/');
-}
-
-function normalizeSkillName(name: string): string {
-  const normalized = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
-  if (!normalized) return `skill-${shortHash(name || 'unnamed')}`;
-  return normalized;
-}
-
-// Identical to local-importer's shortHash so a degraded `skill-<hash>` slug matches
-// byte-for-byte across both importers for the same source name.
-function shortHash(input: string): string {
-  let hash = 0;
-  for (let i = 0; i < input.length; i += 1) {
-    hash = (hash << 5) - hash + input.charCodeAt(i);
-    hash |= 0;
-  }
-  return Math.abs(hash).toString(36).slice(0, 8).padStart(2, '0');
 }
 
 function createUniqueSkillName(preferred: string, occupiedNames: Set<string>): string {

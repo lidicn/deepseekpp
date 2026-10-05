@@ -65,11 +65,12 @@ When prose and executable behavior disagree, verify the code and tests, then upd
 - **双模型后端单一选择 authority（B2 起）**：inline agent 后端选择只经 `InlineAgentStartPayload.modelBackend`（`'web'` 缺省 = 页面路径 golden 锁定；`'official-api'` = 官方 API，OpenAI 兼容消息 + reasoning，经 `core/inline-agent/pi/official-api-provider.ts` 的 `createDeepSeekApiProvider`）；未显式指定时由调用方按官方 API key 有无自动选择（与 sidepanel 聊天一致），禁止在 loop 内发明第二套选择逻辑。链 authority 按后端：web = 页面会话链（`DeepSeekSessionState.parentMessageId`），official-api = pi Context transcript（工具执行前 fail-closed 验证 Context 含 assistant 回合）。消息映射（`createDeepSeekApiMessageMapper`）受 `tests/deepseek-api-provider.test.ts` 契约保护：assistant toolCall 块重序列化为 XML wire 协议（官方 API 无原生 function calling）。
 - **工具执行单一路径**：pi 桥接工具（`core/inline-agent/pi/tool-bridge.ts`）只通过注入的授权执行路径（background grant）向下调用；调用 source 必须携带与 grant 绑定的 requestId/chatSessionId；不得发明第二条执行路径。
 - **AGENT_* 事件协议受契约测试保护**：`tests/inline-agent-event-protocol-golden.test.ts` 是 inline agent 页面协议的逐字节基线（含全量工具记录载荷）；任何 loop 引擎变更必须保持该测试全绿。
-- **pi 生态技能只走现有导入管线（B3 起）**：pi/agentskills.io 生态的 SKILL.md 目录经既有 local-import 管线导入（`core/skill/local-importer.ts` 的 `parseSkillDoc` 是 SKILL.md 解析单一真源；`core/skill/pi-importer.ts` 是显式桥接面）；禁止 import `@earendil-works/*` harness（skill 加载器/prompt 格式化器零引用——pi 模板不得进入 wire，`tests/pi-skill-importer.test.ts` grep 断言）；技能内容只进现有 Skill 存储（无新持久化键）；`disable-model-invocation` 等 pi 字段仅 metadata 保留，启停语义归应用。
+- **pi 生态技能只走现有导入管线（B3 起）**：pi/agentskills.io 生态的 SKILL.md 目录经既有 local-import 管线导入（SKILL.md 解析单一真源是 `core/skill/parse-skill-doc.ts`，`local-importer.ts` 与 `github-importer.ts` 各自只绑定一个 profile，不得再复制第二份解析器；`core/skill/pi-importer.ts` 是显式桥接面）；禁止 import `@earendil-works/*` harness（skill 加载器/prompt 格式化器零引用——pi 模板不得进入 wire，`tests/pi-skill-importer.test.ts` grep 断言）；技能内容只进现有 Skill 存储（无新持久化键）；`disable-model-invocation` 等 pi 字段仅 metadata 保留，启停语义归应用。
 ## Security Baseline
 
 - Never hardcode secrets, API keys, credentials, or tokens.
 - Validate and sanitize external input at page, runtime-message, native-host, sync, and network boundaries before privileged work.
+- **导入 Skill 正文按不可信数据隔离**：GitHub / 本地来源的 Skill 内容在装配进请求时包进 `[[DEEPSEEK_PP_UNTRUSTED_SKILL_CONTENT]]` 标记块（`core/skill/untrusted-content.ts`），块内自带的同名标记先中和；提示词文案跟随界面语言（`prompt.skillUntrustedContentNotice`，en/zh 两份进 `prompt:freeze` 基线），用户输入与本应用自身的指令段必须落在块外（`tests/skill-untrusted-boundary.test.ts`）。
 - Keep public security Issues limited to repair goals and verifiable outcomes. Detailed trust-boundary or exploit evidence stays in local analysis until disclosure is appropriate.
 
 ## Testing and Validation
