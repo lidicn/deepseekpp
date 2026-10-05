@@ -12,6 +12,7 @@ import {
   setPendingProjectContext,
   updateProjectContext,
 } from '../core/project';
+import { PROJECT_CONVERSATIONS_PER_PROJECT_LIMIT } from '../core/project/store';
 
 let storage: Record<string, unknown>;
 
@@ -125,5 +126,71 @@ describe('session-based project context', () => {
     expect(updated.name).toBe('Alpha Prime');
     expect(state.projects[0].instructions).toBe('New');
     expect(state.conversations).toEqual([]);
+  });
+
+  it('caps each project conversation list at the newest N and evicts oldest-first', async () => {
+    const project = await createProjectContext({ name: 'Alpha' });
+    const total = PROJECT_CONVERSATIONS_PER_PROJECT_LIMIT + 5;
+
+    for (let index = 0; index < total; index++) {
+      await addConversationToProject(project.id, { conversationId: `session-${index}` });
+    }
+
+    const state = await getProjectContextState();
+    const remaining = state.conversations.filter((item) => item.projectId === project.id);
+    expect(remaining).toHaveLength(PROJECT_CONVERSATIONS_PER_PROJECT_LIMIT);
+    // Oldest five evicted first; newest kept, and ordering preserved (newest last).
+    expect(remaining.map((item) => item.conversationId)).toEqual(
+      Array.from(
+        { length: PROJECT_CONVERSATIONS_PER_PROJECT_LIMIT },
+        (_value, index) => `session-${index + 5}`,
+      ),
+    );
+    expect(remaining.some((item) => item.conversationId === 'session-0')).toBe(false);
+    expect(remaining[remaining.length - 1]!.conversationId).toBe(`session-${total - 1}`);
+  });
+
+  it('leaves a conversation list at or below the cap untouched', async () => {
+    const project = await createProjectContext({ name: 'Alpha' });
+    const count = PROJECT_CONVERSATIONS_PER_PROJECT_LIMIT;
+
+    for (let index = 0; index < count; index++) {
+      await addConversationToProject(project.id, { conversationId: `session-${index}` });
+    }
+
+    const state = await getProjectContextState();
+    expect(state.conversations).toHaveLength(count);
+    expect(state.conversations.map((item) => item.conversationId)).toEqual(
+      Array.from({ length: count }, (_value, index) => `session-${index}`),
+    );
+  });
+
+  it('re-adding an existing conversation keeps dedupe and does not evict within the cap', async () => {
+    const project = await createProjectContext({ name: 'Alpha' });
+    await addConversationToProject(project.id, { conversationId: 'session-1', title: 'First' });
+    await addConversationToProject(project.id, { conversationId: 'session-2' });
+    await addConversationToProject(project.id, { conversationId: 'session-1', title: 'Renamed' });
+
+    const state = await getProjectContextState();
+    expect(state.conversations).toHaveLength(2);
+    expect(state.conversations.map((item) => item.conversationId)).toEqual(['session-2', 'session-1']);
+    expect(state.conversations[1]).toMatchObject({ conversationId: 'session-1', title: 'Renamed' });
+  });
+
+  it('applies the cap per project rather than across the whole store', async () => {
+    const alpha = await createProjectContext({ name: 'Alpha' });
+    const beta = await createProjectContext({ name: 'Beta' });
+    await addConversationToProject(beta.id, { conversationId: 'beta-1' });
+
+    for (let index = 0; index < PROJECT_CONVERSATIONS_PER_PROJECT_LIMIT + 3; index++) {
+      await addConversationToProject(alpha.id, { conversationId: `alpha-${index}` });
+    }
+
+    const state = await getProjectContextState();
+    const alphaRemaining = state.conversations.filter((item) => item.projectId === alpha.id);
+    const betaRemaining = state.conversations.filter((item) => item.projectId === beta.id);
+    expect(alphaRemaining).toHaveLength(PROJECT_CONVERSATIONS_PER_PROJECT_LIMIT);
+    expect(betaRemaining).toHaveLength(1);
+    expect(betaRemaining[0]!.conversationId).toBe('beta-1');
   });
 });

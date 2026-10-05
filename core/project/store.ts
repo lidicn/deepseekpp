@@ -25,6 +25,15 @@ import {
 
 export const PROJECT_CONTEXT_STORAGE_KEY = 'deepseek_pp_project_context';
 
+// Upper bound on how many conversations a single project keeps in the persisted
+// project-state object. The whole object is rewritten on every mutation, so an
+// unbounded per-project list eventually exceeds the extension storage quota and
+// fails writes. 200 recent conversations is far above typical per-project
+// usage while keeping the serialized state small. The add path appends the
+// newest conversation last, so array order is the recency signal and trimming
+// the trailing N per project evicts oldest-first without a schema change.
+export const PROJECT_CONVERSATIONS_PER_PROJECT_LIMIT = 200;
+
 const projectContextRepository = createVersionedRepository({
   label: 'projectContext',
   createDefault: createEmptyProjectContextState,
@@ -144,14 +153,29 @@ async function addConversationToProjectState(
   await writeProjectContextState({
     ...state,
     projects: state.projects.map((item) => item.id === projectId ? { ...item, updatedAt: now } : item),
-    conversations: [
+    conversations: capConversationsPerProject([
       ...state.conversations.filter((item) => item.conversationId !== conversationId),
       conversation,
-    ],
+    ]),
     pendingProjectId: state.pendingProjectId === projectId ? null : state.pendingProjectId,
   });
 
   return conversation;
+}
+
+function capConversationsPerProject(
+  conversations: ProjectConversation[],
+): ProjectConversation[] {
+  const keptByProject = new Map<string, number>();
+  const keptReversed: ProjectConversation[] = [];
+  for (let index = conversations.length - 1; index >= 0; index--) {
+    const conversation = conversations[index]!;
+    const kept = keptByProject.get(conversation.projectId) ?? 0;
+    if (kept >= PROJECT_CONVERSATIONS_PER_PROJECT_LIMIT) continue;
+    keptByProject.set(conversation.projectId, kept + 1);
+    keptReversed.push(conversation);
+  }
+  return keptReversed.reverse();
 }
 
 export async function refreshProjectConversation(
