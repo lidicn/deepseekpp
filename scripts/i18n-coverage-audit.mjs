@@ -111,11 +111,6 @@ const lineAllowlist = [
     reason: 'negative assertion checks README public-doc leakage fragments',
   },
   {
-    path: 'scripts/automation-contract-smoke.mjs',
-    includes: "['Agent', '任务']",
-    reason: 'negative assertion checks README public-doc leakage fragments',
-  },
-  {
     path: 'core/skill/local-skill-scorer.ts',
     includes: '适用场景',
     reason: 'scenario-matching regex keywords for applicable scenarios (source-authored matching data, not UI text)',
