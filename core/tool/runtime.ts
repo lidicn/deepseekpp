@@ -1,5 +1,5 @@
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n/background';
-import { appendToolCallHistory } from './history';
+import { appendToolCallHistory, BurstSupersededError } from './history';
 import { ToolPostEffectPersistenceError } from './execution-error';
 import type {
   RuntimeToolAuthorizationContext,
@@ -332,6 +332,12 @@ async function appendRuntimeToolHistory(
   try {
     await appendToolCallHistory(call, result, source);
   } catch (error) {
+    if (error instanceof BurstSupersededError) {
+      // A user-initiated clear superseded this burst; dropping the record is
+      // the intended outcome, not a persistence failure.
+      console.debug('[DeepSeek++] tool history burst superseded by clear', error);
+      return;
+    }
     if (!isRecoverableToolHistoryError(error)) throw error;
     console.warn('[DeepSeek++] tool history persistence failed', error);
   }

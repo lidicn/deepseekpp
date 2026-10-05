@@ -10,6 +10,22 @@ interface MutationBatch<Input, Output> {
   pending: Array<PendingMutation<Input, Output>>;
 }
 
+/**
+ * Typed outcome for a burst whose physical write-back was intentionally
+ * dropped because an observed barrier (a user-initiated clear) superseded it
+ * between the burst read and the write-back. Flusher implementations reject
+ * with this error instead of returning a wrong-length output array, so callers
+ * see an explicit "burst_superseded" result rather than a fabricated `{}`.
+ */
+export class BurstSupersededError extends Error {
+  readonly code = 'burst_superseded' as const;
+
+  constructor(message = 'Coalescing burst was superseded by an observed barrier.') {
+    super(message);
+    this.name = 'BurstSupersededError';
+  }
+}
+
 export interface CoalescingMutationQueue<Input, Output> {
   mutate(input: Input): Promise<Output>;
   barrier<T>(operation: () => Promise<T>): Promise<T>;
@@ -31,9 +47,11 @@ export function createCoalescingMutationQueue<Input, Output>(
     try {
       const outputs = await flush(batch.pending.map(({ input }) => input));
       if (outputs.length !== batch.pending.length) {
-        // B2 fix: flush 返回空数组表示 barrier 干扰（clear 先执行了），
-        // 不 reject（clear 是用户主动操作，不应让 mutate 调用方收到异常）
-        batch.pending.forEach((pending) => pending.resolve({} as Output));
+        // A wrong-length result is a flusher bug, never a success. Superseded
+        // bursts must be signalled by rejecting with a typed BurstSupersededError.
+        batch.pending.forEach((pending) => pending.reject(new Error(
+          `Coalescing flush returned ${outputs.length} outputs for ${batch.pending.length} pending mutations.`,
+        )));
         return;
       }
       batch.pending.forEach((pending, index) => pending.resolve(outputs[index]));

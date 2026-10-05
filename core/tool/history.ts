@@ -1,6 +1,10 @@
 import type { ToolCall, ToolCallHistoryRecord, ToolExecutionTrigger, ToolResult } from './types';
 import { decodeToolCallHistory, encodeToolCallHistory } from './history-codec';
-import { createCoalescingMutationQueue } from '../persistence/coalescing-mutation-queue';
+import { BurstSupersededError, createCoalescingMutationQueue } from '../persistence/coalescing-mutation-queue';
+// Re-exported so history's consumers can branch on the superseded outcome without
+// reaching into the persistence layer: core/tool/runtime.ts keeps its pinned
+// import whitelist (tests/tool-provider-import-boundary.test.ts).
+export { BurstSupersededError };
 import { refactorTelemetry } from '../debug/refactor-telemetry';
 
 export const TOOL_HISTORY_STORAGE_KEY = 'deepseek_pp_tool_history';
@@ -59,8 +63,8 @@ async function persistToolHistoryBurst(
   // B2 fix: write-back 前再检查一次 —— 防 clear 在 write 前瞬间执行（仅当 burst 开始时 key 还在）
   const postCheck = await chrome.storage.local.get(TOOL_HISTORY_STORAGE_KEY) as Record<string, unknown>;
   if (keyExistedBeforeBurst && !(TOOL_HISTORY_STORAGE_KEY in postCheck)) {
-    console.debug('[DPP] B2 race: post-read clear detected, skipping write-back');
-    return [];
+    console.debug('[DPP] B2 race: post-read clear detected, dropping burst');
+    throw new BurstSupersededError();
   }
   await chrome.storage.local.set({
     [TOOL_HISTORY_STORAGE_KEY]: encodeToolCallHistory(history),
