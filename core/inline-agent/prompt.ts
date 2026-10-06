@@ -9,6 +9,19 @@ const PENDING_ACTION_AFTER_MAX_CHARS = 80;
 const TASK_COMPLETE_RE = /<task_complete>\s*([\s\S]*?)\s*<\/task_complete>/;
 export const TASK_COMPLETE_BLOCK_RE = /<task_complete>\s*([\s\S]*?)\s*<\/task_complete>/g;
 
+/**
+ * Phrases that indicate the model considers the turn complete (past-tense
+ * claims, summaries, deliverable presentations). Used by shouldNudge to avoid
+ * over-nudging on genuine final answers.
+ */
+const COMPLETION_MARKER_RE = /(?:已经|已为|已完成|完毕|创建了|生成了|制作了|编写了|保存了|写好了|完成了|总结一下|总结如下|总结|结论是|综上所述|总的来看|这是|报告如下|如下所示|final answer|in summary|to summarize|summarize|here is|here's|the answer is|as you can see|i'?ve already|we'?ve already|created|generated|saved|completed|done)/i;
+
+/**
+ * Sentence-final punctuation. If the visible tail ends with one of these,
+ * the model likely completed a full sentence — treat as complete, no nudge.
+ */
+const ENDS_WITH_SENTENCE_TERMINAL_RE = /[。！？.!?…]\s*$/;
+
 // Keep the persisted continuation turn non-empty so DeepSeek retains its
 // parent/child message chain, while making the internal marker invisible even
 // if DeepSeek temporarily exposes the turn in an editor.
@@ -108,7 +121,24 @@ export function shouldNudge(
 ): boolean {
   if (extractTaskCompleteSignal(visibleText)) return false;
   if (!visibleText) return true;
-  return hasPendingActionAtTail(getNudgeDecisionText(visibleText));
+  const tail = getNudgeDecisionText(visibleText);
+  // Fenced code block at the tail = renderable deliverable, treat complete.
+  if (tail.includes('```')) return false;
+  // Explicit pending-action phrase at the tail → definitely nudge.
+  if (hasPendingActionAtTail(tail)) return true;
+  // Completion markers (past-tense, summary, deliverable-present) → complete.
+  if (COMPLETION_MARKER_RE.test(tail)) return false;
+  // If the text ends with sentence-final punctuation, treat as a complete
+  // answer — do not nudge. This avoids over-nudging on genuine final answers
+  // like "根据搜索结果，恒生指数今日下跌。"
+  if (ENDS_WITH_SENTENCE_TERMINAL_RE.test(tail)) return false;
+  // No task_complete, no deliverable, no pending-action phrase, no completion
+  // marker, AND the text does NOT end with sentence-final punctuation: the
+  // model likely stopped mid-sentence (truncated/interrupted). Nudge to
+  // continue (capped by MAX_NUDGES).
+  // Root cause of "高概率断流": mid-sentence truncations were treated as
+  // complete, killing the loop prematurely.
+  return true;
 }
 
 function getNudgeDecisionText(text: string): string {

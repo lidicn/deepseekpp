@@ -1,5 +1,29 @@
 import { createAbortScope, type AbortScope } from './abort';
 
+/**
+ * Fallback timeout when a caller omits deadlineAt AND supplies no AbortSignal.
+ * DPP-034: without this, an undefined deadlineAt on a signal-less request yields
+ * a scope with no timeout at all (timedOut() === false forever), which can
+ * permanently hang background automation links. 120s is generous for network
+ * requests while still guaranteeing eventual cleanup.
+ *
+ * Important: this fallback does NOT apply when the caller supplies an
+ * AbortSignal — in that case the caller owns cancellation and no deadline is
+ * injected (see createRequestScope). This prevents silent truncation of
+ * caller-managed long streams like web completion.
+ */
+const DEFAULT_FALLBACK_TIMEOUT_MS = 120_000;
+
+/**
+ * Audit fix S-4: absolute ceiling for caller-managed (signal-present but no
+ * deadlineAt) requests. Without this, any path that passes a signal but forgets
+ * deadlineAt (e.g. createChatSession, readHistorySnapshot) runs with zero
+ * timeout protection and can hang forever. 600s (10 min) is far beyond any
+ * normal short-request budget but still guarantees eventual cleanup.
+ * Completion streams explicitly set their own 300s deadline and are unaffected.
+ */
+const MAX_CALLER_MANAGED_TIMEOUT_MS = 600_000;
+
 export type NetworkPolicyErrorCode =
   | 'network_deadline_exceeded'
   | 'network_request_failed'
@@ -121,16 +145,27 @@ function createRequestScope(
 ): RequestScope {
   const { deadlineAt, operation } = policy;
   if (callerSignal?.aborted) throwSignalReason(callerSignal, operation);
-  if (deadlineAt === undefined) {
+
+  // When the caller supplies an AbortSignal but omits deadlineAt, the caller
+  // owns cancellation — but we still apply an absolute ceiling (S-4) so that
+  // a forgotten deadline cannot hang forever. Completion streams set their own
+  // explicit 300s deadline and are unaffected by this ceiling.
+  if (deadlineAt === undefined && callerSignal) {
+    const abortScope = createAbortScope(callerSignal, MAX_CALLER_MANAGED_TIMEOUT_MS);
     return {
-      signal: callerSignal ?? undefined,
-      callerSignal: callerSignal ?? undefined,
-      timedOut: () => false,
-      cleanup() {},
+      signal: abortScope.signal,
+      callerSignal,
+      timedOut: abortScope.timedOut,
+      cleanup: abortScope.cleanup,
     };
   }
 
-  const timeoutMs = deadlineAt - Date.now();
+  // DPP-034: when there is no callerSignal (e.g. background automation links),
+  // a missing deadlineAt would yield a scope with no timeout at all and could
+  // permanently hang. Fall back to 120s only in this no-signal case.
+  const effectiveDeadline = deadlineAt ?? Date.now() + DEFAULT_FALLBACK_TIMEOUT_MS;
+
+  const timeoutMs = effectiveDeadline - Date.now();
   if (timeoutMs <= 0) {
     throw new NetworkPolicyError(
       'network_deadline_exceeded',

@@ -25,6 +25,16 @@ export const LOCAL_FILE_SHELL_TOOL_NAMES = [
   'local_file_write',
 ] as const;
 
+/**
+ * Subset of LOCAL_FILE_SHELL_TOOL_NAMES safe to auto-grant when importing
+ * a local Skill. Import only needs read access; write access must be
+ * explicitly authorized by the user (DPP-043).
+ */
+export const LOCAL_FILE_READONLY_SHELL_TOOL_NAMES = [
+  'local_file_stat',
+  'local_file_read',
+] as const;
+
 export function createShellMcpPresetInput(
   options: ShellMcpPresetOptions = {},
 ): McpServerCreateInput {
@@ -69,7 +79,9 @@ export function buildShellAllowlistUpgrade(allowlist: McpToolAllowlist): McpTool
 
   const names = new Set(allowlist.toolNames);
   const missingLocalSkillTools = LOCAL_SKILL_SHELL_TOOL_NAMES.filter((name) => !names.has(name));
-  const missingLocalFileTools = LOCAL_FILE_SHELL_TOOL_NAMES.filter((name) => !names.has(name));
+  // DPP-043: only auto-grant read-only file tools on Skill import.
+  // local_file_write must be explicitly authorized by the user.
+  const missingLocalFileTools = LOCAL_FILE_READONLY_SHELL_TOOL_NAMES.filter((name) => !names.has(name));
   const missing = [...missingLocalSkillTools, ...missingLocalFileTools];
   if (missing.length === 0) return null;
 

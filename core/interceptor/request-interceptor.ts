@@ -56,10 +56,11 @@ function isExpectedChatPayload(body: string | Record<string, unknown>): boolean 
   return keys.some((k) => DEEPSEEK_KNOWN_PAYLOAD_FIELDS.has(k));
 }
 
-function recordStructureMismatch(route: string | undefined, body: string): void {
+function recordStructureMismatch(route: string | undefined, body: unknown): void {
+  const preview = typeof body === 'string' ? body.substring(0, 120) : String(body ?? '').substring(0, 120);
   console.warn(
     `[DeepSeek++] request structure mismatch (route=${route ?? "unknown"}), ` +
-    `passing through without augmentation. Body preview: ${body.substring(0, 120)}`,
+    `passing through without augmentation. Body preview: ${preview}`,
   );
 }
 

@@ -36,7 +36,7 @@ describe('createShellMcpPresetInput', () => {
     expect(SHELL_TOOL_NAMES).toContain('shell_session_end');
   });
 
-  it('upgrades legacy read-only Shell allowlists with local file tools too', () => {
+  it('upgrades legacy read-only Shell allowlists with read-only local file tools (DPP-043)', () => {
     expect(buildShellAllowlistUpgrade({
       mode: 'allow',
       toolNames: ['shell_status', 'python_status'],
@@ -49,12 +49,11 @@ describe('createShellMcpPresetInput', () => {
         'local_folder_pick',
         'local_file_stat',
         'local_file_read',
-        'local_file_write',
       ],
     });
   });
 
-  it('preserves existing exec tools while upgrading Shell allowlists', () => {
+  it('preserves existing exec tools while upgrading Shell allowlists, does not auto-grant write (DPP-043)', () => {
     expect(buildShellAllowlistUpgrade({
       mode: 'allow',
       toolNames: ['shell_status', 'python_status', 'shell_exec'],
@@ -68,7 +67,6 @@ describe('createShellMcpPresetInput', () => {
         'local_folder_pick',
         'local_file_stat',
         'local_file_read',
-        'local_file_write',
       ],
     });
   });

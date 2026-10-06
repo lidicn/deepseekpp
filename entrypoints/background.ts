@@ -682,6 +682,7 @@ type ActionApi = {
 };
 
 export default defineBackground(() => {
+  console.log('[DeepSeek++] background service worker starting');
   void syncLocalRecoveryBarrier.ensureReady().catch(acknowledgeReportedSyncRecoveryFailure);
   enableSidePanelActionClick();
   registerContextMenuClickListener();
@@ -738,7 +739,7 @@ export default defineBackground(() => {
       : Promise.resolve(context);
 
     contextForDispatch
-      .then((currentContext) => syncLocalRecoveryBarrier.ensureReady()
+      .then((currentContext) => ensureRecoveryReadyWithTimeout()
         .then(() => handleMessage(envelope, currentContext)))
       .then(sendResponse)
       .catch((error) => sendResponse(error instanceof RuntimeBoundaryError
@@ -963,7 +964,10 @@ async function ensureShellMcpCompatibility(server: McpServerConfig) {
   }
 
   const hasCache = Boolean(await getMcpToolCache(nextServer.id));
-  if (!hasCache && !upgradedAllowlist) return;
+  // v1→v2 storage migration deliberately clears toolCaches. A missing cache
+  // must trigger re-discovery, otherwise the shell tools stay invisible forever
+  // after the one-time migration (issue: tools=0 after upgrade).
+  if (hasCache && !upgradedAllowlist) return;
 
   try {
     await refreshMcpServerDiscovery(nextServer.id);
@@ -981,6 +985,35 @@ function acknowledgeReportedSyncRecoveryFailure(error: unknown): void {
   // The recovery barrier invokes onRecoveryFailure before rejecting. Startup
   // observers consume that already-reported rejection to prevent an unhandled promise.
   void error;
+}
+
+const RECOVERY_BARRIER_TIMEOUT_MS = 10_000;
+let recoveryBarrierSlowWarningShown = false;
+
+async function ensureRecoveryReadyWithTimeout(): Promise<void> {
+  const ready = syncLocalRecoveryBarrier.ensureReady();
+  let resolved = false;
+  const readyWithFlag = ready.then(() => { resolved = true; });
+  try {
+    await Promise.race([
+      readyWithFlag,
+      new Promise<void>((resolve) => setTimeout(resolve, RECOVERY_BARRIER_TIMEOUT_MS)),
+    ]);
+  } catch {
+    // If recovery rejects, the barrier's onRecoveryFailure already logged it.
+    // We proceed so the SW stays responsive; next call retries recovery.
+    return;
+  }
+  if (!resolved && !recoveryBarrierSlowWarningShown) {
+    recoveryBarrierSlowWarningShown = true;
+    console.warn(
+      `[DeepSeek++] sync recovery did not complete within ${RECOVERY_BARRIER_TIMEOUT_MS}ms; ` +
+      'proceeding with message handling. Recovery continues in background.',
+    );
+    void ready.then(() => {
+      console.log('[DeepSeek++] sync recovery completed after timeout window');
+    }).catch(() => { /* already logged by barrier */ });
+  }
 }
 
 async function handleMessage(

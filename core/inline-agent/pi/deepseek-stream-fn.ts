@@ -256,9 +256,22 @@ export function createDeepSeekStreamFn(deps: DeepSeekStreamFnDeps): StreamFn {
           lastVisibleText = full;
         }
 
-        partial.stopReason = partial.content.some((block) => block.type === 'toolCall')
-          ? 'toolUse'
-          : 'stop';
+        // For partial completion (stream interrupted mid-response), the
+        // stopReason must NOT be 'stop' — that tells the pi loop the turn
+        // completed normally and it will skip the nudge/continuation logic,
+        // leaving the user with a truncated reply. Use 'length' instead,
+        // which the pi loop treats as "interrupted, should nudge to continue".
+        // This is the root cause of "高概率断流": stream resets/timeouts
+        // returned partial results with stopReason='stop', killing the loop.
+        if (isPartialCompletion) {
+          partial.stopReason = partial.content.some((block) => block.type === 'toolCall')
+            ? 'toolUse'
+            : 'length';
+        } else {
+          partial.stopReason = partial.content.some((block) => block.type === 'toolCall')
+            ? 'toolUse'
+            : 'stop';
+        }
         emit({ type: 'done', reason: partial.stopReason, message: snapshot() });
       } catch (err) {
         // All recoverable interruptions (timeout mid-stream, connection reset

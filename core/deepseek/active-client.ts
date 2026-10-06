@@ -70,6 +70,14 @@ export type {
 } from './automation-client-port';
 
 const COMPLETION_PATH = DEEPSEEK_WEB_ROUTES.completion;
+
+/**
+ * Streaming budget for a single web completion turn. Matches
+ * OFFICIAL_API_STREAM_DEADLINE_MS (300s) and INLINE_AGENT_STEP_TIMEOUT_MS.
+ * Without this, request-policy falls back to 120s and long/deep-thinking
+ * answers are silently truncated at the 2-minute mark (audit issue #1).
+ */
+const WEB_COMPLETION_STREAM_DEADLINE_MS = 300_000;
 export { DEEPSEEK_FILE_FETCH_PATH, DEEPSEEK_FILE_UPLOAD_PATH } from './contracts';
 export { DEEPSEEK_IMAGE_UPLOAD_MAX_BYTES } from './upload-limits';
 const DEFAULT_APP_VERSION = '2.0.0';
@@ -81,7 +89,6 @@ const FILE_READY_TIMEOUT_MS = 15_000;
 // DeepSeek can return audit_result=unknown together with status=SUCCESS for usable image uploads.
 const ACCEPTED_FILE_AUDIT_RESULTS = new Set(['PASS', 'PASSED', 'SUCCESS', 'OK', 'UNKNOWN']);
 const REJECTED_FILE_AUDIT_RESULTS = new Set(['REJECT', 'REJECTED', 'FAIL', 'FAILED', 'ERROR', 'BLOCK', 'BLOCKED', 'DENY', 'DENIED']);
-export const BYPASS_HOOK_HEADER = DEEPSEEK_BYPASS_HOOK_HEADER;
 
 let rememberedClientHeaders: Record<string, string> | null = null;
 
@@ -302,7 +309,7 @@ export async function uploadDeepSeekFile(input: DeepSeekFileUploadInput, signal?
     encodeDeepSeekRouteRequest('uploadFile', {
       credentials: 'include',
       headers: {
-        [BYPASS_HOOK_HEADER]: '1',
+        [DEEPSEEK_BYPASS_HOOK_HEADER]: '1',
         ...input.clientHeaders,
         ...input.powHeaders,
         'x-thinking-enabled': '0',
@@ -342,7 +349,7 @@ async function fetchUploadedFileMetadata(
       credentials: 'include',
       headers: {
         accept: 'application/json',
-        [BYPASS_HOOK_HEADER]: '1',
+        [DEEPSEEK_BYPASS_HOOK_HEADER]: '1',
         ...clientHeaders,
       },
     }, { searchParams: { file_ids: fileId } }),
@@ -451,11 +458,18 @@ async function requestCompletion(
   input: SubmitPromptInput,
   context: DeepSeekRequestContext,
 ): Promise<Response> {
+  // Audit fix #1: web completion must not silently fall back to the 120s
+  // request-policy default. Pin a 300s streaming budget when the caller has
+  // not supplied an explicit deadline.
+  const completionContext: DeepSeekRequestContext = {
+    ...context,
+    deadlineAt: context.deadlineAt ?? Date.now() + WEB_COMPLETION_STREAM_DEADLINE_MS,
+  };
   return requestDeepSeek(
     encodeCompletionRequest(input),
     'DeepSeek completion',
     'completion',
-    context,
+    completionContext,
   );
 }
 
@@ -562,12 +576,16 @@ async function readCompletionStreamWithCallbacks(
         ({ done, value } = await reader.read());
       } catch (readerErr) {
         // Stream was interrupted mid-response (timeout abort, connection reset).
-        // If we already consumed some SSE events — we have partial text
-        // and/or responseMessageId — return the partial summary so the
-        // caller can continue instead of treating this as a fatal error.
-        // If we got nothing at all, the error propagates up unchanged.
-        const hasPartialContent = summary.responseMessageId !== null
-          || summary.assistantText !== ''
+        // If we already consumed some displayable content — partial text or
+        // reasoning — return the partial summary so the caller can continue
+        // instead of treating this as a fatal error.
+        // Audit fix S-2: do NOT count responseMessageId alone as partial content —
+        // it is set far earlier than any text (on the first id frame), so a
+        // "connected then immediately dropped" connection would be silently
+        // downgraded to a successful empty result. Only actual displayable
+        // content qualifies for the partial-content downgrade.
+        // If we got nothing displayable at all, the error propagates up unchanged.
+        const hasPartialContent = summary.assistantText !== ''
           || summary.assistantReasoningText !== '';
         if (hasPartialContent) {
           streamAbortedMidResponse = true;
@@ -595,6 +613,16 @@ async function readCompletionStreamWithCallbacks(
     if (finalText && callbacks.onTextChunk) {
       callbacks.onTextChunk(finalText, summary.assistantText);
     }
+    // Audit fix Q-2: the byte stream ended (done===true) but the server never
+    // sent an explicit "finished" frame — this is a suspicious truncation, not
+    // a clean completion. Log it so it is visible in diagnostics instead of
+    // being silently treated as normal.
+    if (!summary.finished && !streamAbortedMidResponse) {
+      console.warn('[DPP-stream] byte stream ended without explicit finished frame (suspicious truncation)', {
+        assistantTextLength: summary.assistantText.length,
+        responseMessageId: summary.responseMessageId,
+      });
+    }
   } finally {
     speedTracker?.finish();
     if (streamAbortedMidResponse) {
@@ -602,12 +630,15 @@ async function readCompletionStreamWithCallbacks(
     }
   }
 
-  callbacks.onFinished?.();
+  // Audit fix S-1: finalize summary.finished BEFORE calling onFinished, so
+  // downstream consumers that make decisions inside onFinished can distinguish
+  // "truncated" (finished=false) from "normal completion" (finished=true).
+  // Previously onFinished was called unconditionally and finished=false was
+  // set afterwards — invisible to any onFinished handler.
   if (streamAbortedMidResponse) {
-    // Ensure partial summary is marked incomplete so callers (StreamFn) can
-    // distinguish "stream interrupted" from "normal completion".
     summary.finished = false;
   }
+  callbacks.onFinished?.();
   return summary;
 }
 

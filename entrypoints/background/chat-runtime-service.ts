@@ -3,6 +3,7 @@ import type { ChatLoopProvider, InterruptedChatLoop } from '../../core/chat/acti
 // P0-3: 工具执行状态持久化 helper
 import { appendToolExecution, clearCurrentTool, setCurrentTool } from '../../core/chat/active-loop';
 import type { ModelTurn, SubmitPromptInput } from '../../core/deepseek/automation-client-port';
+import { DeepSeekAuthError } from '../../core/deepseek/errors';
 import type { DeepSeekUploadedFile } from '../../core/deepseek/contracts';
 import type {
   OfficialDeepSeekCallbacks,
@@ -269,13 +270,23 @@ export function createChatRuntimeService(
       chatParentMessageId = result.responseMessageId;
       const fullText = accumulated || result.assistantText;
       if (!fullText) {
-        emitChunk(turn, { text: '', done: true }, excludeTabId);
+        emitChunk(turn, {
+          text: '',
+          done: true,
+          error: result.finished ? undefined : 'stream_interrupted',
+        }, excludeTabId);
         return;
       }
 
       const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
       if (toolCalls.length === 0) {
-        emitChunk(turn, { text: fullText, done: true }, excludeTabId);
+        // Audit fix #2: when the stream was truncated mid-response (finished=false),
+        // emit an error chunk instead of silently pretending the partial answer is complete.
+        emitChunk(turn, {
+          text: fullText,
+          done: true,
+          error: result.finished ? undefined : 'stream_interrupted',
+        }, excludeTabId);
         return;
       }
 
@@ -380,7 +391,11 @@ export function createChatRuntimeService(
 
       const fullText = accumulated || result.assistantText;
       if (!fullText) {
-        emitChunk(turn, { text: '', done: true }, excludeTabId);
+        emitChunk(turn, {
+          text: '',
+          done: true,
+          error: result.finished ? undefined : 'stream_interrupted',
+        }, excludeTabId);
         return currentMessages;
       }
 
@@ -394,7 +409,12 @@ export function createChatRuntimeService(
       ];
       const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
       if (toolCalls.length === 0) {
-        emitChunk(turn, { text: '', done: true }, excludeTabId);
+        // Audit fix #2: official-API path — emit error on truncated streams.
+        emitChunk(turn, {
+          text: '',
+          done: true,
+          error: result.finished ? undefined : 'stream_interrupted',
+        }, excludeTabId);
         return currentMessages;
       }
 
@@ -450,6 +470,11 @@ export function createChatRuntimeService(
       assertTurnActive(turn);
       const provider: ChatLoopProvider = apiKey ? 'official-api' : 'web';
       await dependencies.markChatLoopStarted(provider);
+      // Audit fix #4: markerStarted MUST be set to true immediately after
+      // markChatLoopStarted succeeds and BEFORE any assertTurnActive call.
+      // If assertTurnActive throws while markerStarted is still false, the
+      // finally block skips markChatLoopFinished and the keepalive refcount
+      // + alarm leak permanently.
       markerStarted = true;
       assertTurnActive(turn);
 
@@ -462,11 +487,10 @@ export function createChatRuntimeService(
       if (!isExpectedCancellation(turn, activeTurn, generation)) {
         const message = error instanceof Error ? error.message : String(error);
         emitChunk(turn, { text: '', done: true, error: message }, excludeTabId);
-        if (
-          message.includes('auth')
-          || message.includes('token')
-          || message.includes('401')
-        ) {
+        // Audit fix #6: use error type instead of fragile string matching.
+        // DeepSeekAuthError is thrown by the active-client layer on 401/invalid-token
+        // responses; resetting the cached sessionId forces re-auth on the next turn.
+        if (error instanceof DeepSeekAuthError) {
           chatSessionId = null;
         }
       }

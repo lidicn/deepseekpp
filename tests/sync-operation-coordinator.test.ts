@@ -261,22 +261,23 @@ describe('sync operation coordinator', () => {
     expect(storage.value).toMatchObject({ remotePath: 'B', lastSyncAt: 55, revision: 3 });
   });
 
-  it('reports the committed timestamp when download notification fails', async () => {
+  it('returns ok:true when download notification fails (notify is best-effort)', async () => {
+    // 裁定 20261006-DPP-同步配置提交顺序与通知失败语义 §二（采纳 B）：
+    // notifyCommitted 是 UI 刷新回调，其失败不应改变同步结果。
+    // 下载已成功、lastSyncAt 已更新，通知失败吞掉记日志，返回 ok:true。
     const storage = new MemoryStorage();
     const coordinator = createCoordinator(storage, { now: () => 77 });
 
-    const error = await coordinator.download(
+    const result = await coordinator.download(
       createSyncCommandTarget(webdav('A'), null),
       async () => { throw new Error('Injected notification failure'); },
-    ).catch((failure) => failure);
+    );
 
-    expect(createSyncCommandErrorResponse(error)).toEqual({
-      ok: false,
-      error: 'Injected notification failure',
-      code: 'sync_operation_failed_after_config_commit',
-      revision: 2,
+    expect(result).toEqual({
+      ok: true,
       lastSyncAt: 77,
-      effectCompleted: true,
+      counts: COUNTS,
+      revision: 2,
     });
     expect(storage.value).toMatchObject({ remotePath: 'A', lastSyncAt: 77, revision: 2 });
   });

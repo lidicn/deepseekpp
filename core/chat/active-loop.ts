@@ -201,17 +201,6 @@ export async function getActiveChatLoop(): Promise<ActiveChatLoop | null> {
  *
  * 保留 STALE_THRESHOLD_MS 常量作为未来"同实例 reconcile"的防御（如果以后加了手动 reconcile 入口）。
  */
-/**
- * P0-6 fix: SW 冷启动时 reconcile — marker 存在即中断（去掉 stale 阈值）。
- *
- * 为什么可以去掉 STALE_THRESHOLD_MS：
- * - reconcileInterruptedOnWake 只在 chrome.runtime.onStartup/onInstalled 里调
- * - 冷启动意味着 SW 刚从磁盘加载 → 所有内存态（activeTurn、chat loop）全丢
- * - marker 是唯一的 SW 持久态，如果 marker 存在 → 一定是上一个 SW 实例断了
- * - stale 阈值在这个场景下有害：它让"开始 20s 但 SW 被回收了"的 loop 不触发终止 chunk → 侧面板永久挂起
- *
- * 保留 STALE_THRESHOLD_MS 常量作为未来"同实例 reconcile"的防御（如果以后加了手动 reconcile 入口）。
- */
 export async function reconcileInterruptedChatLoop(): Promise<InterruptedChatLoop | null> {
   const marker = await readMarker();
   if (!marker) return null;

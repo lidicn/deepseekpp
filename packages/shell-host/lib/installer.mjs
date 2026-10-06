@@ -96,9 +96,13 @@ Options:
   --help               Show this help
 
 Examples:
-  npx deepseek-pp-shell-host install --browser chrome --extension-id abcdefghijklmnopqrstuvwxyz123456
-  npx deepseek-pp-shell-host install --browser chrome --extension-id abcdefghijklmnopqrstuvwxyz123456 --log-file "$HOME/dpp-host.log"
-  npx deepseek-pp-shell-host install --browser firefox
+  npx deepseek-pp-shell-host@1.16.0 install --browser chrome --extension-id abcdefghijklmnopqrstuvwxyz123456
+  npx deepseek-pp-shell-host@1.16.0 install --browser chrome --extension-id abcdefghijklmnopqrstuvwxyz123456 --log-file "$HOME/dpp-host.log"
+  npx deepseek-pp-shell-host@1.16.0 install --browser firefox
+
+Note: Always pin the version (@x.y.z) to match your installed extension version.
+Using unpinned "npx deepseek-pp-shell-host" pulls latest and can cause protocol
+mismatch between the extension and the native host.
 `);
 }
 

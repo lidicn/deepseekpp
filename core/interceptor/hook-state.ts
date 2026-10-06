@@ -7,7 +7,7 @@ import type {
 import type { ToolCallPayloadChunk } from "./streaming-tool-call-parser";
 import type { ResponseTokenSpeedPayload } from "../deepseek/stream-metrics";
 
-export const INITIAL_HOOK_STATE_WAIT_MS = 1_500;
+export const INITIAL_HOOK_STATE_WAIT_MS = 5_000;
 export const TOKEN_SPEED_EMIT_INTERVAL_MS = 250;
 
 export const FETCH_HOOK_MARKER = Symbol.for("deepseek-pp.fetch-hook-installed");
@@ -77,6 +77,7 @@ export function markInitialHookStateReady() {
 }
 
 export async function waitForInitialHookState(): Promise<void> {
+  // SW 已经推送过工具目录（包括空数组=明确禁用），直接返回
   if (initialHookStateWaitComplete) return;
 
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -87,7 +88,12 @@ export async function waitForInitialHookState(): Promise<void> {
     }),
   ]);
   if (timeoutId) clearTimeout(timeoutId);
-  initialHookStateWaitComplete = true;
+  // 关键修复：只有 SW 真正推送了 toolDescriptors（initialHookStateReady 被 resolve）
+  // 才标记 complete；如果是超时且目录仍为空，不标记，让后续请求继续等待 SW 唤醒。
+  // 这避免了 MV3 SW 回收竞态：页面加载时 SW 未运行，1500ms 超时后永久空目录。
+  if (initialHookStateReadyResolved) {
+    initialHookStateWaitComplete = true;
+  }
 }
 
 export interface ResponseCompletePayload {

@@ -25,6 +25,10 @@ interface PendingRequest {
 interface NativePortState {
   port: chrome.runtime.Port;
   pendingRequests: Map<number | string, PendingRequest>;
+  // Audit fix S-3: set to false by onDisconnect. sendAndWait checks this
+  // before postMessage and after — a message sent to a dead port would
+  // otherwise silently sit in pendingRequests until the 120s total timeout.
+  alive: boolean;
 }
 
 // Chrome native messaging enforces a ~1 MB cap per message over the Port
@@ -55,6 +59,7 @@ function getPortState(nativeHost: string): NativePortState {
   const state: NativePortState = {
     port,
     pendingRequests: new Map(),
+    alive: true,
   };
   nativePortStates.set(nativeHost, state);
 
@@ -86,6 +91,10 @@ function getPortState(nativeHost: string): NativePortState {
       pending.reject(err);
     }
     state.pendingRequests.clear();
+    // Audit fix S-3: mark dead BEFORE deleting from the map. Any sendAndWait
+    // that captured this state before the delete will see alive=false and
+    // reject immediately instead of posting to a dead port and waiting 120s.
+    state.alive = false;
     nativePortStates.delete(nativeHost);
   });
 
@@ -155,6 +164,17 @@ function sendAndWait(
     let state: NativePortState;
     try {
       state = getPortState(nativeHost);
+      // Audit fix S-3: if the port was disconnected between getPortState and
+      // here (race window), reject immediately instead of posting to a dead port.
+      if (!state.alive) {
+        nativePortStates.delete(nativeHost);
+        reject(new McpTransportError(
+          'mcp_native_host_disconnected',
+          'Native host port was disconnected before the request could be sent.',
+          { retryable: true },
+        ));
+        return;
+      }
     } catch (err) {
       reject(err);
       return;
@@ -194,6 +214,19 @@ function sendAndWait(
     });
     try {
       state.port.postMessage(envelope);
+      // Audit fix S-3: postMessage to a dead port is async-silent in MV3.
+      // Check alive immediately after — if onDisconnect fired during the
+      // postMessage call, the pending entry was already rejected there.
+      if (!state.alive && state.pendingRequests.has(requestId)) {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        state.pendingRequests.delete(requestId);
+        reject(new McpTransportError(
+          'mcp_native_host_disconnected',
+          'Native host disconnected immediately after the request was posted.',
+          { retryable: true },
+        ));
+      }
     } catch (err) {
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);

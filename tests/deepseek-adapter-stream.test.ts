@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { DEEPSEEK_BYPASS_HOOK_HEADER } from '../core/deepseek/contracts';
 import {
-  BYPASS_HOOK_HEADER,
   createPowHeadersForPath,
   DEEPSEEK_FILE_UPLOAD_PATH,
   submitPromptStreaming,
@@ -233,7 +233,7 @@ describe('DeepSeek web adapter streaming', () => {
       credentials: 'include',
     });
     const headers = (options as RequestInit).headers as Record<string, string>;
-    expect(headers[BYPASS_HOOK_HEADER]).toBe('1');
+    expect(headers[DEEPSEEK_BYPASS_HOOK_HEADER]).toBe('1');
     expect(headers['x-model-type']).toBe('vision');
     expect(headers['x-file-size']).toBe('3');
     expect(headers['content-type']).toBeUndefined();

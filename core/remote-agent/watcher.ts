@@ -23,7 +23,9 @@ const POLL_INTERVAL_MS = 5000; // 5 seconds
 const MAX_BACKOFF_MS = 60_000; // 60 seconds ceiling
 const MAX_RETRIES = 3;
 /** How long to wait for the platform to store our re-sent copy before checking. */
-const RESEND_RECEIPT_WAIT_MS = 3000;
+const RESEND_RECEIPT_WAIT_MS = 5000;
+/** Minimum interval between two resend attempts for the same message (prevents spam). */
+const RESEND_RETRY_COOLDOWN_MS = 8000;
 
 interface HistoryMessage {
   message_id: number;
@@ -45,6 +47,7 @@ interface HistoryResponse {
 interface PendingResend {
   messageId: number;
   attempts: number;
+  lastAttemptAt: number;
 }
 
 interface WatcherState {
@@ -296,6 +299,17 @@ async function pollForNewMessages(): Promise<void> {
 
       try {
         if (!beginResendAttempt(latestUserMessage.message_id)) {
+          // beginResendAttempt returns false for two distinct reasons:
+          //   1. cooldown active (pendingResend still set, attempts <= MAX) → skip this poll cycle only
+          //   2. max retries exhausted (pendingResend cleared) → drop the message visibly
+          const pending = state.pendingResend;
+          if (pending?.messageId === latestUserMessage.message_id) {
+            console.log(
+              `[DPP-REMOTE] Resend cooldown active for message ${latestUserMessage.message_id} ` +
+                `(attempt ${pending.attempts}/${MAX_RETRIES}), skipping this poll cycle`,
+            );
+            return;
+          }
           // 三次都没回执：这条消息只能放弃，但放弃必须是用户看得见的，
           // 不能只留一行插件日志（"手机端发了、电脑端没收到"）。
           console.error(
@@ -358,12 +372,18 @@ async function pollForNewMessages(): Promise<void> {
  */
 function beginResendAttempt(messageId: number): boolean {
   const pending = state.pendingResend?.messageId === messageId ? state.pendingResend : null;
+  // Cooldown: don't re-send the same message too rapidly. The poll loop runs
+  // every 5s and the receipt wait is 5s, so without a cooldown a failed
+  // injection gets retried on the very next poll → visible duplicate sends.
+  if (pending && Date.now() - pending.lastAttemptAt < RESEND_RETRY_COOLDOWN_MS) {
+    return false;
+  }
   const attempts = (pending?.attempts ?? 0) + 1;
   if (attempts > MAX_RETRIES) {
     state.pendingResend = null;
     return false;
   }
-  state.pendingResend = { messageId, attempts };
+  state.pendingResend = { messageId, attempts, lastAttemptAt: Date.now() };
   return true;
 }
 
@@ -572,7 +592,16 @@ export async function resendMessageViaUI(message: string): Promise<void> {
   // Wait a bit for React to update
   await new Promise((resolve) => setTimeout(resolve, 200));
 
-  // Simulate pressing Enter to send (more reliable than finding the button)
+  // Try clicking the send button first (more reliable than synthetic Enter on
+  // React-controlled composers that ignore isTrusted=false KeyboardEvents).
+  const sendButton = findSendButton(input);
+  if (sendButton && !sendButton.hasAttribute('disabled')) {
+    sendButton.click();
+    console.log('[DPP-REMOTE] Message re-sent via UI (send button click)');
+    return;
+  }
+
+  // Fallback: simulate pressing Enter
   const enterEvent = new KeyboardEvent('keydown', {
     key: 'Enter',
     code: 'Enter',
@@ -583,5 +612,31 @@ export async function resendMessageViaUI(message: string): Promise<void> {
   });
   input.dispatchEvent(enterEvent);
 
-  console.log('[DPP-REMOTE] Message re-sent via UI (Enter key)');
+  console.log('[DPP-REMOTE] Message re-sent via UI (Enter key fallback)');
+}
+
+/**
+ * Locate the DeepSeek composer's send button relative to the input element.
+ * DeepSeek renders it as a button inside the composer container; we search
+ * the input's ancestors to avoid matching unrelated buttons on the page.
+ */
+function findSendButton(input: HTMLElement): HTMLButtonElement | null {
+  let container: HTMLElement | null = input;
+  for (let i = 0; i < 6 && container; i++) {
+    const buttons = container.querySelectorAll<HTMLButtonElement>('button');
+    for (const btn of buttons) {
+      const ariaLabel = btn.getAttribute('aria-label') || '';
+      const title = btn.getAttribute('title') || '';
+      const text = btn.textContent?.trim() || '';
+      if (
+        ariaLabel.includes('发送') || ariaLabel.toLowerCase().includes('send') ||
+        title.includes('发送') || title.toLowerCase().includes('send') ||
+        text === '发送' || text.toLowerCase() === 'send'
+      ) {
+        return btn;
+      }
+    }
+    container = container.parentElement;
+  }
+  return null;
 }

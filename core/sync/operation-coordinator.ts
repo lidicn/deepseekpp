@@ -170,12 +170,10 @@ export function createSyncOperationCoordinator(
         try {
           await notifyCommitted?.(result);
         } catch (error) {
-          throw new SyncOperationAfterConfigCommitError(
-            error,
-            updated.revision,
-            updated.config.lastSyncAt,
-            true,
-          );
+          // notifyCommitted 是 UI 刷新回调（最佳努力），其失败不应改变同步结果。
+          // 下载已成功、lastSyncAt 已更新，此处吞掉并记日志，继续返回 ok:true。
+          // 裁定：20261006-DPP-同步配置提交顺序与通知失败语义-裁定.md §二（采纳 B）
+          console.warn('[sync] download notifyCommitted failed (non-fatal):', error);
         }
         return { ok: true as const, lastSyncAt, counts: result.counts, revision: updated.revision };
       }));

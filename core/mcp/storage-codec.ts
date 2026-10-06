@@ -104,7 +104,8 @@ export function migrateMcpStorageState(raw: unknown): McpStorageMigration {
   if (state.version === MCP_STORAGE_VERSION) {
     return { state: decodeMcpStorageState(state), migrated: false };
   }
-  if (state.version !== MCP_LEGACY_STORAGE_VERSION) {
+  // Legacy v1 states may omit the version field entirely; treat undefined as v1.
+  if (state.version !== MCP_LEGACY_STORAGE_VERSION && state.version !== undefined) {
     requireStorageVersion(state.version, '$.version');
   }
 

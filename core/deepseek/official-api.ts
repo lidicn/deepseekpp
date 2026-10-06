@@ -53,15 +53,12 @@ export class DeepSeekOfficialApiError extends Error {
 }
 
 /**
- * Ceiling for one official-API streaming completion when the caller supplies
- * no AbortSignal: without it, `request-policy` leaves the request with no
- * deadline and a stalled stream hangs for the lifetime of the service worker.
- * The value matches `INLINE_AGENT_STEP_TIMEOUT_MS`
- * (core/inline-agent/types.ts), the repo's established long-lived streaming
- * budget for a single model step. When the caller does supply a signal, the
- * caller owns cancellation and the deadline is left to it (the protocol
- * contract locks strict signal pass-through), so a caller-managed longer
- * budget is never silently shortened.
+ * Ceiling for one official-API streaming completion. Applied regardless of
+ * whether the caller supplies an AbortSignal: the signal handles cancellation,
+ * while this deadline guards against a silently stalled stream. Previously the
+ * deadline was omitted when a signal was present, but request-policy then
+ * injected a 120s fallback that silently shortened caller-managed long streams
+ * (audit issue #3). 300s matches INLINE_AGENT_STEP_TIMEOUT_MS.
  */
 export const OFFICIAL_API_STREAM_DEADLINE_MS = 300_000;
 
@@ -81,7 +78,7 @@ export async function submitOfficialDeepSeekStreaming(
   }, {
     operation: 'DeepSeek official API completion',
     phase: 'completion',
-    ...(signal ? {} : { deadlineAt: Date.now() + OFFICIAL_API_STREAM_DEADLINE_MS }),
+    deadlineAt: Date.now() + OFFICIAL_API_STREAM_DEADLINE_MS,
     maxRequestBytes: DEEPSEEK_BODY_BUDGETS.officialApi,
     maxResponseBytes: DEEPSEEK_BODY_BUDGETS.officialApi,
     fetchImpl: input.fetchImpl,

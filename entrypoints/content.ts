@@ -283,6 +283,14 @@ const REASONING_HOST_META_RE =
 const REASONING_HOST_TEXT_RE =
   /^(?:已(?:深度)?思考|深度思考|思考过程|思考中|正在思考|thinking|reasoning|thought)(?:[\s（(:：]|$)/i;
 const REASONING_HOST_ANCESTOR_SCAN_DEPTH = 4;
+/**
+ * Matches user prompts that explicitly ask the model to continue an
+ * interrupted response. When detected, startInlineAgentIfNeeded will launch
+ * the agent loop even without prior tool executions — pure-text "继续完成"
+ * prompts were previously silently skipped (断流 root cause).
+ */
+const USER_CONTINUATION_RE =
+  /^(?:继续(?:完成|往下|接着|说|写|生成)|接着(?:说|写|继续|往下)|往下(?:说|写|继续)|go on|continue(?: writing| speaking| generating)?|keep going|next(?: please)?)\s*[。.!?！？]?\s*$/i;
 const INLINE_AGENT_LIVE_TARGET_WAIT_MS = 1_500;
 const TOKEN_SPEED_BADGE_ID = "dpp-token-speed-badge";
 const TOKEN_SPEED_STYLE_ID = "dpp-token-speed-css";
@@ -4816,12 +4824,20 @@ async function startInlineAgentIfNeeded(
   // Collect executions that should trigger a continuation:
   // MCP tools + local web and browser-control tools.
   const continuableExecutions = selectContinuableToolExecutions(executions);
-  if (continuableExecutions.length === 0) {
+  // User explicitly asked to continue (e.g. "继续完成", "continue") — even
+  // without tool executions, we should start the agent loop so the model can
+  // resume the interrupted task. Without this, pure-text interruptions after
+  // a user "continue" prompt were silently skipped (断流 root cause).
+  const userAskedToContinue = USER_CONTINUATION_RE.test(complete.originalPrompt);
+  if (continuableExecutions.length === 0 && !userAskedToContinue) {
     console.log('[DPP-AUTO] skip: no continuable executions', {
       total: executions.length,
       tools: executions.map(e => ({ name: e.name, providerKind: e.provider?.kind })),
     });
     return;
+  }
+  if (userAskedToContinue && continuableExecutions.length === 0) {
+    console.log('[DPP-AUTO] user continuation prompt detected, starting agent loop without prior tool executions');
   }
   if (!complete.chatSessionId || complete.assistantMessageId == null) {
     console.log('[DPP-AUTO] skip: missing session/assistant id', {
