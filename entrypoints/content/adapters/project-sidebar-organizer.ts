@@ -60,9 +60,11 @@ const EMPTY_HISTORY_STATE = createEmptyHistoryOrganizerState();
 // "Receiving end does not exist" because its listener is not registered yet.
 // That rejection means the message was never delivered, so retrying is safe.
 // Mirrors sendMessageWithReceiverRetry in entrypoints/content.ts.
-const RUNTIME_RECEIVER_RETRY_BASE_MS = 300;
-const RUNTIME_RECEIVER_RETRY_MAX_MS = 1_200;
-const RUNTIME_RECEIVER_RETRY_MAX_ATTEMPTS = 4;
+// Cold-start on some browsers (e.g. Doubao AI Browser) can take >5s, so we
+// use a longer backoff with more attempts than the core path.
+const RUNTIME_RECEIVER_RETRY_BASE_MS = 500;
+const RUNTIME_RECEIVER_RETRY_MAX_MS = 5_000;
+const RUNTIME_RECEIVER_RETRY_MAX_ATTEMPTS = 8;
 
 function isMissingRuntimeReceiverError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
