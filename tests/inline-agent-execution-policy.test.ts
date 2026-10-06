@@ -4,6 +4,7 @@ import {
   selectContinuableToolExecutions,
 } from '../core/inline-agent/execution-policy';
 import type { ToolExecutionRecord } from '../core/types';
+import { MEMORY_TOOL_NAMES, MEMORY_TOOL_PROVIDER } from '../core/tool/memory';
 
 describe('inline agent execution policy', () => {
   it('keeps incomplete calls as recovery failures but excludes pending starts', () => {
@@ -27,7 +28,7 @@ describe('inline agent execution policy', () => {
     ]);
   });
 
-  it('preserves released continuation for completed failures and supported providers', () => {
+  it('excludes local tools that carry no continuation contract', () => {
     const failed = makeExecution({
       result: {
         ok: false,
@@ -36,11 +37,20 @@ describe('inline agent execution policy', () => {
       },
     });
     const unsupported = makeExecution({
-      name: 'memory_save',
-      provider: { kind: 'local', id: 'memory', displayName: 'Memory', transport: 'in_process' },
+      name: 'clock_now',
+      provider: { kind: 'local', id: 'clock', displayName: 'Clock', transport: 'in_process' },
     });
 
     expect(selectContinuableToolExecutions([failed, unsupported])).toEqual([failed]);
+  });
+
+  it('keeps every memory tool call in the continuation set', () => {
+    // The provider object is the production identity, so renaming its id turns this red.
+    const memoryExecutions = MEMORY_TOOL_NAMES.map((name) =>
+      makeExecution({ name, provider: MEMORY_TOOL_PROVIDER }),
+    );
+
+    expect(selectContinuableToolExecutions(memoryExecutions)).toEqual(memoryExecutions);
   });
 });
 

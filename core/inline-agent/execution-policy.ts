@@ -20,6 +20,9 @@ export function selectContinuableToolExecutions(
       execution.provider?.id === MCP_CAPABILITY_TOOL_PROVIDER_ID ||
       execution.provider?.id === 'web' ||
       execution.provider?.id === 'browser_control' ||
+      // Memory tools must continue so the successful write is reported back to
+      // the model; without this the final reply is dropped (upstream #566).
+      execution.provider?.id === 'memory' ||
       // Built-in web/browser tools
       execution.name === 'web_search' ||
       execution.name === 'web_fetch' ||
