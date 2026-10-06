@@ -26,7 +26,7 @@ export async function broadcastRuntimeUpdate(
     tabs = await dependencies.queryTabsByUrl(dependencies.tabUrlPattern);
   } catch (error) {
     dependencies.reportError('broadcast_tabs_query_failed', error);
-    if (excludeTabId) {
+    if (typeof excludeTabId === 'number') {
       deliverRuntimeMessageBestEffort(
         dependencies.sendTabMessage(excludeTabId, payload),
         'broadcast_tab_delivery_failed',
@@ -47,7 +47,7 @@ export async function broadcastRuntimeUpdate(
       );
     }
   }
-  if (excludeTabId) {
+  if (typeof excludeTabId === 'number') {
     deliverRuntimeMessageBestEffort(
       dependencies.sendTabMessage(excludeTabId, payload),
       'broadcast_tab_delivery_failed',

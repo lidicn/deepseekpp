@@ -86,6 +86,23 @@ export function createDeepSeekTurnSubmitter(
 }
 
 /**
+ * R2-F3: Returns true when the abort signal was fired by an explicit user
+ * action (stop button, or a new turn superseding the current one). The
+ * content script marks these with an `AbortError` DOMException as the abort
+ * reason; system-level aborts (page unload, SW teardown, upstream timeout
+ * cascade) leave `reason` undefined or carry a different exception name.
+ *
+ * Only user-initiated aborts should suppress the partial-completion nudge —
+ * a stream truncated by a system-level abort is still recoverable and should
+ * continue through the pi loop's nudge mechanism.
+ */
+function isUserInitiatedAbort(signal: AbortSignal | undefined): boolean {
+  if (!signal?.aborted) return false;
+  const reason = signal.reason;
+  return reason instanceof DOMException && reason.name === 'AbortError';
+}
+
+/**
  * Builds the pi StreamFn over the DS-web backend. The returned function never
  * rejects; failures are encoded as protocol events.
  */
@@ -211,7 +228,10 @@ export function createDeepSeekStreamFn(deps: DeepSeekStreamFnDeps): StreamFn {
         // AGENT_LOOP_ERROR. The user had to manually say "继续" to restart.
         //
         // User-initiated aborts keep their silent 'aborted' semantics.
-        const isPartialCompletion = !result.finished && !signal?.aborted;
+        // R2-F3: only suppress partial completion when the abort was explicitly
+        // user-initiated (AbortError reason). System-level aborts (page unload,
+        // SW teardown, upstream timeout cascade) should still nudge to continue.
+        const isPartialCompletion = !result.finished && !isUserInitiatedAbort(signal);
 
         // The conversation chain authority: the page session, not this turn's
         // transcript, owns the next parent message id. For partial completion,

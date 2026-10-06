@@ -575,6 +575,11 @@ const RUNTIME_RECEIVER_RETRY_MAX_ATTEMPTS = 4;
 let toolDescriptorRetryTimer: number | null = null;
 let toolDescriptorRetryAttempts = 0;
 let currentRequestMessageCount = 0;
+// R2-F3: Distinguish user-initiated aborts (stop button, superseding new turn)
+// from system-level aborts (page unload, SW teardown) so the DS-web StreamFn
+// can decide whether a truncated stream should nudge to continue. System aborts
+// leave signal.reason undefined; user aborts carry this AbortError.
+const AGENT_USER_ABORT_REASON = new DOMException('Inline agent aborted by user or superseded by a new turn.', 'AbortError');
 let activeAgentAbort: AbortController | null = null;
 let agentRunningToolCount = 0;
 let agentConsoleStartedAt = 0;
@@ -5165,7 +5170,7 @@ function stopInlineAgent(): void {
   activeAgentModelBackend = null;
   inlineAgentContainerObserver?.disconnect();
   inlineAgentContainerObserver = null;
-  activeAgentAbort?.abort();
+  activeAgentAbort?.abort(AGENT_USER_ABORT_REASON);
   activeAgentAbort = null;
   if (container) {
     // Stop is a neutral pause, never a fake completion: the status line keeps
@@ -5196,7 +5201,7 @@ async function startInlineAgentLoop(
   // until the aborted stream settled, so two agent panels briefly raced
   // (issue #298).
   if (activeAgentAbort) {
-    activeAgentAbort.abort();
+    activeAgentAbort.abort(AGENT_USER_ABORT_REASON);
     teardownInlineAgentPanel();
   }
   const modelBackend = payload.modelBackend;

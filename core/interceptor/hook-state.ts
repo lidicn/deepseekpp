@@ -8,6 +8,10 @@ import type { ToolCallPayloadChunk } from "./streaming-tool-call-parser";
 import type { ResponseTokenSpeedPayload } from "../deepseek/stream-metrics";
 
 export const INITIAL_HOOK_STATE_WAIT_MS = 5_000;
+// R2-F4: After a wait timeout with no SW response, mark complete so subsequent
+// requests don't each block for the full 5s. Reset after this cooldown so a
+// later request can retry once the SW may have recovered.
+export const INITIAL_HOOK_STATE_WAIT_RESET_MS = 30_000;
 export const TOKEN_SPEED_EMIT_INTERVAL_MS = 250;
 
 export const FETCH_HOOK_MARKER = Symbol.for("deepseek-pp.fetch-hook-installed");
@@ -17,6 +21,7 @@ export const IDB_HOOK_MARKER = Symbol.for("deepseek-pp.idb-hook-installed");
 let initialHookStateWaitComplete = false;
 let initialHookStateReadyResolved = false;
 let resolveInitialHookState: (() => void) | null = null;
+let hookStateWaitResetTimer: ReturnType<typeof setTimeout> | null = null;
 const initialHookStateReady = new Promise<void>((resolve) => {
   resolveInitialHookState = resolve;
 });
@@ -70,6 +75,12 @@ export function updateHookState(partial: Partial<HookState>) {
 
 export function markInitialHookStateReady() {
   initialHookStateWaitComplete = true;
+  // R2-F4: SW has responded — cancel any pending cooldown reset so the
+  // resolved state stays latched.
+  if (hookStateWaitResetTimer) {
+    clearTimeout(hookStateWaitResetTimer);
+    hookStateWaitResetTimer = null;
+  }
   if (!initialHookStateReadyResolved) {
     initialHookStateReadyResolved = true;
     resolveInitialHookState?.();
@@ -93,7 +104,22 @@ export async function waitForInitialHookState(): Promise<void> {
   // 这避免了 MV3 SW 回收竞态：页面加载时 SW 未运行，1500ms 超时后永久空目录。
   if (initialHookStateReadyResolved) {
     initialHookStateWaitComplete = true;
+    return;
   }
+  // R2-F4: Timeout with no SW response. Mark complete temporarily so subsequent
+  // requests don't each block for the full 5s (degradation from the original
+  // one-time 1.5s wait). Schedule a reset after the cooldown so a later request
+  // can retry once the SW may have recovered.
+  initialHookStateWaitComplete = true;
+  if (hookStateWaitResetTimer) clearTimeout(hookStateWaitResetTimer);
+  hookStateWaitResetTimer = setTimeout(() => {
+    // Only reset if the SW still hasn't responded; if it did, markInitialHookStateReady
+    // already cleared this timer.
+    if (!initialHookStateReadyResolved) {
+      initialHookStateWaitComplete = false;
+    }
+    hookStateWaitResetTimer = null;
+  }, INITIAL_HOOK_STATE_WAIT_RESET_MS);
 }
 
 export interface ResponseCompletePayload {

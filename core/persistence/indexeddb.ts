@@ -408,7 +408,15 @@ export class IndexedDb {
     }
     const declared = new Set(schema.indexes.map((index) => index.name));
     for (const indexName of Array.from(store.indexNames)) {
-      if (!declared.has(indexName)) store.deleteIndex(indexName);
+      if (!declared.has(indexName)) {
+        // R4-F3: undeclared indexes are removed to keep the store aligned with
+        // the released schema, but log a warning so schema drift is visible
+        // instead of silently deleting user-created or legacy indexes.
+        console.warn(
+          `[IndexedDB] table "${tableName}": dropping undeclared index "${indexName}" to match schema`,
+        );
+        store.deleteIndex(indexName);
+      }
     }
     for (const index of schema.indexes) {
       if (!store.indexNames.contains(index.name)) {

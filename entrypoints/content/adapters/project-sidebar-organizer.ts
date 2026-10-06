@@ -55,6 +55,57 @@ const PROJECT_HIDDEN_ATTR = 'data-dpp-project-sidebar-hidden';
 const NATIVE_MENU_ENHANCER_ATTR = 'data-dpp-project-native-menu';
 const PROJECT_LIMIT = 5;
 const EMPTY_HISTORY_STATE = createEmptyHistoryOrganizerState();
+
+// MV3 wake race: a reclaimed service worker answers the first message with
+// "Receiving end does not exist" because its listener is not registered yet.
+// That rejection means the message was never delivered, so retrying is safe.
+// Mirrors sendMessageWithReceiverRetry in entrypoints/content.ts.
+const RUNTIME_RECEIVER_RETRY_BASE_MS = 300;
+const RUNTIME_RECEIVER_RETRY_MAX_MS = 1_200;
+const RUNTIME_RECEIVER_RETRY_MAX_ATTEMPTS = 4;
+
+function isMissingRuntimeReceiverError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes('Receiving end does not exist') ||
+    message.includes('Could not establish connection')
+  );
+}
+
+function hasLiveExtensionContext(): boolean {
+  try {
+    if (typeof chrome === 'undefined') return false;
+    const runtime = chrome.runtime;
+    return Boolean(runtime?.id) && typeof runtime?.sendMessage === 'function';
+  } catch {
+    return false;
+  }
+}
+
+async function retrySend<T>(
+  send: () => Promise<T>,
+  attempt: number,
+  lastError: unknown,
+): Promise<T> {
+  if (attempt >= RUNTIME_RECEIVER_RETRY_MAX_ATTEMPTS) throw lastError;
+  await new Promise((resolve) =>
+    setTimeout(
+      resolve,
+      Math.min(
+        RUNTIME_RECEIVER_RETRY_BASE_MS * 2 ** (attempt - 1),
+        RUNTIME_RECEIVER_RETRY_MAX_MS,
+      ),
+    ),
+  );
+  if (!hasLiveExtensionContext()) throw lastError;
+  return send().catch((error) => {
+    if (isExtensionContextInvalidatedError(error) || !isMissingRuntimeReceiverError(error)) {
+      throw error;
+    }
+    return retrySend(send, attempt + 1, error);
+  });
+}
+
 const NATIVE_MENU_TEXT = {
   delete: [0x5220, 0x9664],
   rename: [0x91cd, 0x547d, 0x540d],
@@ -105,6 +156,23 @@ export function startDeepSeekProjectSidebarOrganizer(
       const response = await chrome.runtime.sendMessage({ type: 'GET_PROJECT_CONTEXT_STATE' });
       applyState(decodeProjectContextState(response, 'projectSidebarState'));
     } catch (error) {
+      // MV3 wake race: a reclaimed service worker answers the first message
+      // with "Receiving end does not exist". Retry only on that specific
+      // error; the normal path stays a bare sendMessage to avoid adding
+      // microtasks that would defer the initial render past flushProjectSidebar.
+      if (isMissingRuntimeReceiverError(error) && !isExtensionContextInvalidatedError(error)) {
+        try {
+          const response = await retrySend(
+            () => chrome.runtime.sendMessage({ type: 'GET_PROJECT_CONTEXT_STATE' }),
+            1,
+            error,
+          );
+          applyState(decodeProjectContextState(response, 'projectSidebarState'));
+          return;
+        } catch (retryError) {
+          error = retryError;
+        }
+      }
       statusMessage = getLabels().operationFailed(getErrorMessage(error));
       console.error('DeepSeek++ failed to load project sidebar state', error);
       schedule();

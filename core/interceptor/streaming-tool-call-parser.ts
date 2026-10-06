@@ -96,6 +96,17 @@ class XmlStreamingToolCallParser implements StreamingToolCallParser {
     if (this.current && !this.current.failed) {
       event.failed.push(this.createIncompleteCall(this.current, this.pendingSuppressed));
     }
+    // R2-F5: pendingNormal is only non-empty when the stream was cut mid-way
+    // through an opening tool tag (consumeNormalText keeps the partial tail).
+    // Log a warning instead of silently discarding it, matching the
+    // streaming-tool-text accumulator which flushes pendingNormal into visible
+    // text rather than dropping it.
+    if (this.pendingNormal) {
+      console.warn(
+        '[StreamingToolCallParser] flush: discarding partial opening tool tag',
+        { pendingNormal: this.pendingNormal.slice(0, 200) },
+      );
+    }
     this.state = 'NORMAL';
     this.pendingNormal = '';
     this.pendingSuppressed = '';
