@@ -8,6 +8,9 @@ const OFFICECLI_REPO = 'iOfficeAI/OfficeCLI';
 const OFFICECLI_BINARY = platform() === 'win32' ? 'officecli.exe' : 'officecli';
 const OFFICECLI_MIRROR_BASE = 'https://d.officecli.ai';
 const OFFICECLI_GITHUB_RELEASE_BASE = `https://github.com/${OFFICECLI_REPO}/releases/latest/download`;
+// Audit fix N-3: minimum compatible OfficeCLI version. Downloads below this
+// are rejected. Bump this when the extension requires newer OfficeCLI features.
+const OFFICECLI_MIN_VERSION = '0.1.0';
 const OFFICECLI_REQUIRED_HELP_PATTERNS = [
   /\bview\s+<file>\s+<mode>/,
   /\bget\s+<file>\s+<path>/,
@@ -128,17 +131,14 @@ async function downloadWithFallback(asset, outPath) {
 async function verifyOfficeCliChecksum(asset, binaryPath) {
   const sumsPath = resolve(tmpdir(), `officecli-SHA256SUMS-${process.pid}`);
   try {
-    try {
-      await downloadWithFallback('SHA256SUMS', sumsPath);
-    } catch {
-      console.log('  checksum file unavailable, skipping verification');
-      return;
-    }
+    // Audit fix N-3: checksum file unavailability is now a hard failure, not
+    // a silent skip. Without checksum verification we cannot trust the downloaded
+    // binary, and silently proceeding is a supply-chain risk.
+    await downloadWithFallback('SHA256SUMS', sumsPath);
     const sums = readFileSync(sumsPath, 'utf8');
     const expectedLine = sums.split(/\r?\n/).find(line => line.includes(asset));
     if (!expectedLine) {
-      console.log('  checksum entry not found, skipping verification');
-      return;
+      throw new Error(`Checksum entry not found for ${asset} in SHA256SUMS`);
     }
     const expected = expectedLine.trim().split(/\s+/)[0].toLowerCase();
     const actual = createHash('sha256').update(readFileSync(binaryPath)).digest('hex');
@@ -155,14 +155,42 @@ function verifyDownloadedOfficeCli(binaryPath) {
   if (platform() !== 'win32') {
     chmodSync(binaryPath, 0o755);
   }
-  execFileSync(binaryPath, ['--version'], {
+  // Audit fix N-3: capture and log the downloaded version, and reject versions
+  // below the minimum compatible threshold.
+  const versionOut = execFileSync(binaryPath, ['--version'], {
+    encoding: 'utf8',
     timeout: 20_000,
-    stdio: ['ignore', 'ignore', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, OFFICECLI_SKIP_UPDATE: '1' },
-  });
+  }).trim();
+  console.log(`  downloaded OfficeCLI version: ${versionOut || '(unknown)'}`);
+  const versionMatch = /(\d+\.\d+\.\d+)/.exec(versionOut);
+  if (versionMatch) {
+    const downloaded = versionMatch[1];
+    if (isOlderOfficeCliVersion(downloaded, OFFICECLI_MIN_VERSION)) {
+      throw new Error(`Downloaded OfficeCLI ${downloaded} is below minimum required ${OFFICECLI_MIN_VERSION}`);
+    }
+  }
   if (!isCompatibleOfficeCli(binaryPath)) {
     throw new Error('Downloaded OfficeCLI does not expose the required command-based interface.');
   }
+}
+
+/**
+ * Returns true when `actual` is strictly older than `expected` (numeric
+ * segment comparison). Audit fix N-3: used for minimum version enforcement.
+ */
+function isOlderOfficeCliVersion(actual, expected) {
+  const parse = (v) => v.split('.').map(n => Number.parseInt(n, 10));
+  const left = parse(actual);
+  const right = parse(expected);
+  const width = Math.max(left.length, right.length);
+  for (let i = 0; i < width; i += 1) {
+    const l = left[i] ?? 0;
+    const r = right[i] ?? 0;
+    if (l !== r) return l < r;
+  }
+  return false;
 }
 
 function addOfficeCliToUserPath(installDir) {
