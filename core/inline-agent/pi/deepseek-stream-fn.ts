@@ -372,20 +372,24 @@ async function submitWithRetry(
       // Previously only `timeoutFired && receivedAnyChunk` was checked, so a
       // connection reset after content was streamed would still be retried.
       //
-      // Issue 3: for timeout with content, return a partial result (finished=false)
+      // Issue 3 + B1 regression fix: for ANY error with content (timeout OR
+      // connection reset OR reader throw), return a partial result (finished=false)
       // instead of throwing a fatal error. The upper layer's isPartialCompletion
       // detection routes through nudge continuation (stopReason='length'), which
       // is the intended recovery path — not stopReason='error'.
+      //
+      // B1 (20261007) found that the previous fix only applied this to timeoutFired,
+      // leaving `throw err` for non-timeout interruptions. Connection reset (the
+      // most common real-world truncation) after content was streamed still produced
+      // stopReason='error' → AGENT_LOOP_ERROR, contradicting issues 1+3's recovery
+      // intent. Fix: unify both branches to partial completion.
       if (receivedAnyChunk) {
-        if (timeoutFired) {
-          return {
-            assistantText: '',
-            responseMessageId: null,
-            requestMessageId: null,
-            finished: false,
-          };
-        }
-        throw err;
+        return {
+          assistantText: '',
+          responseMessageId: null,
+          requestMessageId: null,
+          finished: false,
+        };
       }
       // No content received yet: safe to retry with the same parent.
       if (attempt >= INLINE_AGENT_MAX_STEP_ATTEMPTS) {
