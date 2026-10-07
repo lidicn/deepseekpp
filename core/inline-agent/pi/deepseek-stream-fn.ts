@@ -237,7 +237,14 @@ export function createDeepSeekStreamFn(deps: DeepSeekStreamFnDeps): StreamFn {
         // transcript, owns the next parent message id. For partial completion,
         // we MUST preserve whatever responseMessageId we captured from the
         // partial stream — it's the only chain link we have.
-        session.setParentMessageId(result.responseMessageId);
+        //
+        // However, if the stream was truncated before emitting a message id
+        // (responseMessageId === null), overwriting the existing parentMessageId
+        // with null would break the chain and cause "empty agent continuation"
+        // errors on the next turn. Only update when we actually captured an id.
+        if (result.responseMessageId !== null) {
+          session.setParentMessageId(result.responseMessageId);
+        }
 
         onParsed(toolCallParser.flush());
         emitText(textAccumulator.flush());
