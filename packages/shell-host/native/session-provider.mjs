@@ -38,16 +38,22 @@ export function createSessionProvider({ logLine }) {
     return ['-s'];
   }
 
-  // S2-4 fix: use shellKind instead of platform() for marker format
+  // S2-4/S2-8 fix: use shellKind instead of platform() for marker format
   function buildSessionEndMarkerLine(token, shellKind) {
-    // Print the marker + exit code. POSIX uses $?; PowerShell uses $LASTEXITCODE
-    // (falls back to 0 when no native command ran, which matches shell semantics
-    // for pure-shell commands). The random token makes accidental marker collisions
-    // in command output effectively impossible.
+    // Print the marker + exit code. Each shell kind uses its own syntax:
+    // - PowerShell: $LASTEXITCODE (falls back to 0 for pure-shell commands)
+    // - cmd.exe: %ERRORLEVEL% (expanded at parse time per line in /k mode)
+    // - POSIX (bash/zsh/sh/WSL): $?
+    // The random token makes accidental marker collisions in command output
+    // effectively impossible.
     if (shellKind === 'powershell') {
       return `Write-Output '${SESSION_MARKER_PREFIX}${token}__:'$LASTEXITCODE`;
     }
-    // POSIX (including WSL bash), cmd.exe also understands this via its echo
+    if (shellKind === 'cmd') {
+      // S2-8 fix: cmd.exe does NOT understand printf or $?; use echo + %ERRORLEVEL%
+      return `echo ${SESSION_MARKER_PREFIX}${token}__:%ERRORLEVEL%`;
+    }
+    // POSIX (bash, zsh, sh, WSL bash, etc.)
     return `printf '__DPP_SESSION_END__%s__:%s\\n' "${token}" "$?"`;
   }
 
