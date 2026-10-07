@@ -9,6 +9,7 @@ import {
   createMcpDescriptorId,
   createMcpInvocationName,
 } from '../../../core/mcp/descriptor-identity';
+import { SHELL_MCP_NATIVE_HOST } from '../../../core/shell';
 
 const CREATED_AT = 1_750_000_000_000;
 
@@ -22,7 +23,7 @@ export const MCP_SERVER_IDS = {
 
 const shellServer = createServer(MCP_SERVER_IDS.shell, {
   kind: 'native_messaging',
-  nativeHost: 'com.deepseek.pp.shell',
+  nativeHost: SHELL_MCP_NATIVE_HOST,
 }, {
   headers: [{ name: 'X-Contract', value: 'preserve' }],
   secrets: [{

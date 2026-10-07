@@ -8,33 +8,46 @@ import {
   SESSION_MARKER_PREFIX,
   SESSION_MAX_OUTPUT_BYTES,
 } from './contracts.mjs';
-import { createChildEnv } from './os-adapter.mjs';
+import { createChildEnv, detectShellKind } from './os-adapter.mjs';
 import { formatExecSummary } from './process-provider.mjs';
 
 export function createSessionProvider({ logLine }) {
   const shellSessions = new Map();
 
+  // S2-4 fix: use shell kind instead of platform() to determine args
   function createPersistentShellArgs(shell) {
+    const shellKind = detectShellKind(shell);
     // Keep the shell reading commands from stdin so subsequent commands reuse the
     // same process. `-NonInteractive` on Windows keeps PowerShell from printing
     // prompts; `-Command -` makes it read a script from stdin. POSIX shells with
     // no script argument and `-s` read commands from stdin — crucially the arg
     // array must be empty so argv[0] (the binary path, supplied by spawn) is the
     // only positional and the shell doesn't try to execute a stray arg as a script.
-    if (platform() === 'win32') {
+    if (shellKind === 'powershell') {
       return ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '-'];
     }
+    if (shellKind === 'wsl') {
+      // WSL: launch bash inside WSL; bash reads from stdin by default
+      return ['-e', 'bash'];
+    }
+    if (shellKind === 'cmd') {
+      // cmd.exe /q turns echo off, /k keeps window open (reads from stdin)
+      return ['/q', '/k'];
+    }
+    // POSIX shell: -s reads commands from stdin
     return ['-s'];
   }
 
-  function buildSessionEndMarkerLine(token) {
+  // S2-4 fix: use shellKind instead of platform() for marker format
+  function buildSessionEndMarkerLine(token, shellKind) {
     // Print the marker + exit code. POSIX uses $?; PowerShell uses $LASTEXITCODE
     // (falls back to 0 when no native command ran, which matches shell semantics
     // for pure-shell commands). The random token makes accidental marker collisions
     // in command output effectively impossible.
-    if (platform() === 'win32') {
+    if (shellKind === 'powershell') {
       return `Write-Output '${SESSION_MARKER_PREFIX}${token}__:'$LASTEXITCODE`;
     }
+    // POSIX (including WSL bash), cmd.exe also understands this via its echo
     return `printf '__DPP_SESSION_END__%s__:%s\\n' "${token}" "$?"`;
   }
 
@@ -43,7 +56,8 @@ export function createSessionProvider({ logLine }) {
     const cwd = typeof args?.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : homedir();
     const env = createChildEnv(args?.env);
     const shellBin = requestedShell || DEFAULT_SHELL;
-    const shellArgs = createPersistentShellArgs(requestedShell);
+    const shellKind = detectShellKind(shellBin);
+    const shellArgs = createPersistentShellArgs(shellBin);
 
     let child;
     try {
@@ -81,6 +95,7 @@ export function createSessionProvider({ logLine }) {
       id: sessionId,
       child,
       shell: shellBin,
+      shellKind,
       cwd,
       env,
       createdAt: Date.now(),
@@ -212,15 +227,13 @@ export function createSessionProvider({ logLine }) {
     return new Promise((resolve, reject) => {
       const { child } = session;
       const token = randomUUID();
-      const markerLine = buildSessionEndMarkerLine(token);
+      const markerLine = buildSessionEndMarkerLine(token, session.shellKind);
       const markerText = `${SESSION_MARKER_PREFIX}${token}__:`;
 
       // One write: the user's command, then the exit-code marker. POSIX shells
       // execute line by line; PowerShell in `-Command -` mode reads the whole
       // stdin script but still runs statements in order.
-      const script = platform() === 'win32'
-        ? `${command}\n${markerLine}\n`
-        : `${command}\n${markerLine}\n`;
+      const script = `${command}\n${markerLine}\n`;
       try {
         child.stdin.write(script);
       } catch (err) {

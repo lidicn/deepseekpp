@@ -104,10 +104,23 @@ export function createPythonChildEnv() {
   return env;
 }
 
-export function createShellInvocation(command) {
-  if (platform() === 'win32') {
+// S2-4/S2-5 fix: detect shell kind from binary name, not platform
+export function detectShellKind(shell) {
+  if (!shell) return platform() === 'win32' ? 'powershell' : 'posix';
+  const lower = shell.toLowerCase();
+  if (lower.includes('powershell') || lower.includes('pwsh')) return 'powershell';
+  if (lower.includes('wsl')) return 'wsl';
+  if (lower.includes('cmd.exe') || lower === 'cmd') return 'cmd';
+  return 'posix';
+}
+
+export function createShellInvocation(command, shell) {
+  const shellKind = detectShellKind(shell);
+  const shellBin = shell || DEFAULT_SHELL;
+
+  if (shellKind === 'powershell') {
     return {
-      shellBin: DEFAULT_SHELL,
+      shellBin,
       shellArgs: [
         '-NoLogo',
         '-NoProfile',
@@ -117,7 +130,15 @@ export function createShellInvocation(command) {
       ],
     };
   }
-  return { shellBin: DEFAULT_SHELL, shellArgs: ['-c', command] };
+  if (shellKind === 'wsl') {
+    // WSL: launch bash inside WSL to run the command
+    return { shellBin, shellArgs: ['-e', 'bash', '-c', command] };
+  }
+  if (shellKind === 'cmd') {
+    return { shellBin, shellArgs: ['/c', command] };
+  }
+  // POSIX shell (bash, zsh, sh, etc.)
+  return { shellBin, shellArgs: ['-c', command] };
 }
 
 export function splitPath(value) {

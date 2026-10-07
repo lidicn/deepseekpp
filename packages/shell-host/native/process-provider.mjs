@@ -71,13 +71,15 @@ async function executeShellTool(args) {
   if (typeof command !== 'string' || command.trim().length === 0) {
     return { isError: true, content: [{ type: 'text', text: 'command is required and must be a non-empty string.' }] };
   }
+  // S2-5 fix: accept optional shell parameter for one-shot commands
+  const shell = typeof args?.shell === 'string' && args.shell.trim() ? args.shell.trim() : null;
   const cwd = typeof args?.cwd === 'string' && args.cwd.trim() ? args.cwd.trim() : homedir();
   const env = createChildEnv(args?.env);
   const timeoutMs = typeof args?.timeout_ms === 'number' && args.timeout_ms >= 1000
     ? Math.min(args.timeout_ms, 600_000)
     : DEFAULT_TIMEOUT_MS;
   try {
-    const result = await execCommand(command, { cwd, env, timeoutMs });
+    const result = await execCommand(command, { cwd, env, timeoutMs, shell });
     return {
       content: [{ type: 'text', text: formatExecSummary(result) }],
       structuredContent: { ok: result.exitCode === 0, data: result },
@@ -87,9 +89,10 @@ async function executeShellTool(args) {
     return { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] };
   }
 }
-function execCommand(command, { cwd, env, timeoutMs }) {
+function execCommand(command, { cwd, env, timeoutMs, shell }) {
   return new Promise((resolve, reject) => {
-    const { shellBin, shellArgs } = createShellInvocation(command);
+    // S2-5 fix: pass shell to createShellInvocation
+    const { shellBin, shellArgs } = createShellInvocation(command, shell);
 
     const child = spawn(shellBin, shellArgs, {
       cwd,
