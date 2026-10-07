@@ -364,9 +364,30 @@ async function submitWithRetry(
     } catch (err) {
       if (signal.aborted) throw err;
       const timeoutFired = stepTimeout.timedOut();
-      if (timeoutFired && receivedAnyChunk) {
-        throw new Error('DeepSeek agent step timed out while streaming; the response was interrupted.');
+      // Audit fix (20261007, issues 2 + 3): once any chunk has been received,
+      // the server may have already committed the response. Replaying the same
+      // parent_message_id would fork the conversation chain.
+      //
+      // Issue 2: this gate must apply to ALL error types, not just timeouts.
+      // Previously only `timeoutFired && receivedAnyChunk` was checked, so a
+      // connection reset after content was streamed would still be retried.
+      //
+      // Issue 3: for timeout with content, return a partial result (finished=false)
+      // instead of throwing a fatal error. The upper layer's isPartialCompletion
+      // detection routes through nudge continuation (stopReason='length'), which
+      // is the intended recovery path — not stopReason='error'.
+      if (receivedAnyChunk) {
+        if (timeoutFired) {
+          return {
+            assistantText: '',
+            responseMessageId: null,
+            requestMessageId: null,
+            finished: false,
+          };
+        }
+        throw err;
       }
+      // No content received yet: safe to retry with the same parent.
       if (attempt >= INLINE_AGENT_MAX_STEP_ATTEMPTS) {
         if (timeoutFired) throw new Error('DeepSeek agent step timed out after retry.');
         throw err;

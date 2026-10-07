@@ -99,9 +99,20 @@ export async function waitForInitialHookState(): Promise<void> {
     }),
   ]);
   if (timeoutId) clearTimeout(timeoutId);
-  // 关键修复：只有 SW 真正推送了 toolDescriptors（initialHookStateReady 被 resolve）
-  // 才标记 complete；如果是超时且目录仍为空，不标记，让后续请求继续等待 SW 唤醒。
-  // 这避免了 MV3 SW 回收竞态：页面加载时 SW 未运行，1500ms 超时后永久空目录。
+  // R2-F4 (revised 20261007): Two completion semantics:
+  // 1. SW actually pushed toolDescriptors (initialHookStateReady resolved) →
+  //    permanently mark complete. This is the ideal path.
+  // 2. Timeout with no SW response → temporarily mark complete for a 30s
+  //    cooldown, then reset so a later request can retry. This avoids every
+  //    subsequent request blocking for the full 5s when the SW is slow to
+  //    cold-start (MV3 teardown race).
+  //
+  // Known tradeoff during the cooldown window: toolDescriptors is empty, so
+  // createStreamingToolCallParser([]) returns early on append() — tool calls
+  // are not parsed and raw XML may leak into visible text. This is preferable
+  // to blocking every request for 5s when the SW is unreachable. If the SW
+  // recovers during the cooldown, markInitialHookStateReady() cancels the
+  // reset timer and latches the real state immediately.
   if (initialHookStateReadyResolved) {
     initialHookStateWaitComplete = true;
     return;

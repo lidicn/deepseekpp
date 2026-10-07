@@ -568,6 +568,13 @@ async function readCompletionStreamWithCallbacks(
     : undefined;
 
   let streamAbortedMidResponse = false;
+  // Audit fix (20261007, issue 1): track whether any visible text delta was
+  // produced independently of summary.assistantText. The streaming agent path
+  // passes retainAssistantText:false, which deliberately never accumulates
+  // summary.assistantText — so the old `summary.assistantText !== ''` check
+  // was always false there, causing every mid-response interruption to be
+  // upgraded to a fatal error instead of a recoverable partial completion.
+  let receivedAnyVisibleChunk = false;
   try {
     while (true) {
       let done = false;
@@ -585,7 +592,10 @@ async function readCompletionStreamWithCallbacks(
         // downgraded to a successful empty result. Only actual displayable
         // content qualifies for the partial-content downgrade.
         // If we got nothing displayable at all, the error propagates up unchanged.
-        const hasPartialContent = summary.assistantText !== ''
+        // 20261007 fix: use receivedAnyVisibleChunk (tracked from onTextChunk
+        // deltas) instead of summary.assistantText, which is never accumulated
+        // when retainAssistantText:false.
+        const hasPartialContent = receivedAnyVisibleChunk
           || summary.assistantReasoningText !== '';
         if (hasPartialContent) {
           streamAbortedMidResponse = true;
@@ -600,8 +610,9 @@ async function readCompletionStreamWithCallbacks(
         onParsed,
         onReasoningChunk: callbacks.onReasoningChunk,
       });
-      if (newText && callbacks.onTextChunk) {
-        callbacks.onTextChunk(newText, summary.assistantText);
+      if (newText) {
+        receivedAnyVisibleChunk = true;
+        callbacks.onTextChunk?.(newText, summary.assistantText);
       }
     }
 
@@ -610,8 +621,9 @@ async function readCompletionStreamWithCallbacks(
       onParsed,
       onReasoningChunk: callbacks.onReasoningChunk,
     });
-    if (finalText && callbacks.onTextChunk) {
-      callbacks.onTextChunk(finalText, summary.assistantText);
+    if (finalText) {
+      receivedAnyVisibleChunk = true;
+      callbacks.onTextChunk?.(finalText, summary.assistantText);
     }
     // Audit fix Q-2: the byte stream ended (done===true) but the server never
     // sent an explicit "finished" frame — this is a suspicious truncation, not
