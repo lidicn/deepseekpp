@@ -11,51 +11,60 @@ import {
 import { createChildEnv, detectShellKind } from './os-adapter.mjs';
 import { formatExecSummary } from './process-provider.mjs';
 
+// E-1 fix: extracted pure functions to module level for unit testability.
+// These were previously closures inside createSessionProvider, making the
+// 4 shellKind branches (powershell/wsl/cmd/posix) untestable — which is
+// exactly how S2-8 (cmd shellKind marker mismatch) slipped through.
+
+/**
+ * S2-4 fix: use shell kind instead of platform() to determine args.
+ * Keep the shell reading commands from stdin so subsequent commands reuse the
+ * same process. `-NonInteractive` on Windows keeps PowerShell from printing
+ * prompts; `-Command -` makes it read a script from stdin. POSIX shells with
+ * no script argument and `-s` read commands from stdin — crucially the arg
+ * array must be empty so argv[0] (the binary path, supplied by spawn) is the
+ * only positional and the shell doesn't try to execute a stray arg as a script.
+ */
+export function createPersistentShellArgs(shell) {
+  const shellKind = detectShellKind(shell);
+  if (shellKind === 'powershell') {
+    return ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '-'];
+  }
+  if (shellKind === 'wsl') {
+    // WSL: launch bash inside WSL; bash reads from stdin by default
+    return ['-e', 'bash'];
+  }
+  if (shellKind === 'cmd') {
+    // cmd.exe /q turns echo off, /k keeps window open (reads from stdin)
+    return ['/q', '/k'];
+  }
+  // POSIX shell: -s reads commands from stdin
+  return ['-s'];
+}
+
+/**
+ * S2-4/S2-8 fix: use shellKind instead of platform() for marker format.
+ * Print the marker + exit code. Each shell kind uses its own syntax:
+ * - PowerShell: $LASTEXITCODE (falls back to 0 for pure-shell commands)
+ * - cmd.exe: %ERRORLEVEL% (expanded at parse time per line in /k mode)
+ * - POSIX (bash/zsh/sh/WSL): $?
+ * The random token makes accidental marker collisions in command output
+ * effectively impossible.
+ */
+export function buildSessionEndMarkerLine(token, shellKind) {
+  if (shellKind === 'powershell') {
+    return `Write-Output '${SESSION_MARKER_PREFIX}${token}__:'$LASTEXITCODE`;
+  }
+  if (shellKind === 'cmd') {
+    // S2-8 fix: cmd.exe does NOT understand printf or $?; use echo + %ERRORLEVEL%
+    return `echo ${SESSION_MARKER_PREFIX}${token}__:%ERRORLEVEL%`;
+  }
+  // POSIX (bash, zsh, sh, WSL bash, etc.)
+  return `printf '__DPP_SESSION_END__%s__:%s\\n' "${token}" "$?"`;
+}
+
 export function createSessionProvider({ logLine }) {
   const shellSessions = new Map();
-
-  // S2-4 fix: use shell kind instead of platform() to determine args
-  function createPersistentShellArgs(shell) {
-    const shellKind = detectShellKind(shell);
-    // Keep the shell reading commands from stdin so subsequent commands reuse the
-    // same process. `-NonInteractive` on Windows keeps PowerShell from printing
-    // prompts; `-Command -` makes it read a script from stdin. POSIX shells with
-    // no script argument and `-s` read commands from stdin — crucially the arg
-    // array must be empty so argv[0] (the binary path, supplied by spawn) is the
-    // only positional and the shell doesn't try to execute a stray arg as a script.
-    if (shellKind === 'powershell') {
-      return ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', '-'];
-    }
-    if (shellKind === 'wsl') {
-      // WSL: launch bash inside WSL; bash reads from stdin by default
-      return ['-e', 'bash'];
-    }
-    if (shellKind === 'cmd') {
-      // cmd.exe /q turns echo off, /k keeps window open (reads from stdin)
-      return ['/q', '/k'];
-    }
-    // POSIX shell: -s reads commands from stdin
-    return ['-s'];
-  }
-
-  // S2-4/S2-8 fix: use shellKind instead of platform() for marker format
-  function buildSessionEndMarkerLine(token, shellKind) {
-    // Print the marker + exit code. Each shell kind uses its own syntax:
-    // - PowerShell: $LASTEXITCODE (falls back to 0 for pure-shell commands)
-    // - cmd.exe: %ERRORLEVEL% (expanded at parse time per line in /k mode)
-    // - POSIX (bash/zsh/sh/WSL): $?
-    // The random token makes accidental marker collisions in command output
-    // effectively impossible.
-    if (shellKind === 'powershell') {
-      return `Write-Output '${SESSION_MARKER_PREFIX}${token}__:'$LASTEXITCODE`;
-    }
-    if (shellKind === 'cmd') {
-      // S2-8 fix: cmd.exe does NOT understand printf or $?; use echo + %ERRORLEVEL%
-      return `echo ${SESSION_MARKER_PREFIX}${token}__:%ERRORLEVEL%`;
-    }
-    // POSIX (bash, zsh, sh, WSL bash, etc.)
-    return `printf '__DPP_SESSION_END__%s__:%s\\n' "${token}" "$?"`;
-  }
 
   async function beginShellSession(args) {
     const requestedShell = typeof args?.shell === 'string' && args.shell.trim() ? args.shell.trim() : null;
