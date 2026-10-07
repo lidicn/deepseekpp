@@ -12,17 +12,72 @@ import { repairToolJsonBody } from './repair-tool-json';
 export const LEGACY_TOOL_CALLS_OPEN_TAG = '<｜DSML｜tool_calls>';
 export const LEGACY_TOOL_CALLS_CLOSE_TAG = '</｜DSML｜tool_calls>';
 
+// S2-leak fix: double-bar DSML variant emitted by some model versions
+// (｜｜DSML｜｜ instead of ｜DSML｜). Normalize to single-bar before parsing.
+const DOUBLE_BAR_DSML_OPEN = /<｜｜DSML｜｜\s*tool_calls\s*>/g;
+const DOUBLE_BAR_DSML_CLOSE = /<\/｜｜DSML｜｜\s*tool_calls\s*>/g;
+const DOUBLE_BAR_DSML_INVOKE_OPEN = /<｜｜DSML｜｜\s*invoke\s+name="/g;
+const DOUBLE_BAR_DSML_INVOKE_CLOSE = /<\/｜｜DSML｜｜\s*invoke\s*>/g;
+const DOUBLE_BAR_DSML_PARAM_OPEN = /<｜｜DSML｜｜\s*parameter\s+name="/g;
+const DOUBLE_BAR_DSML_PARAM_CLOSE = /<\/｜｜DSML｜｜\s*parameter\s*>/g;
+// Generic double-bar DSML tag (for orphan close tags that don't match known names)
+const DOUBLE_BAR_DSML_ANY_CLOSE = /<\/｜｜DSML｜｜[^>]*>/g;
+
 const LEGACY_INVOKE_OPEN_PREFIX = '<｜DSML｜invoke name="';
 const LEGACY_INVOKE_CLOSE_TAG = '</｜DSML｜invoke>';
 const LEGACY_PARAMETER_OPEN_PREFIX = '<｜DSML｜parameter name="';
 const LEGACY_PARAMETER_TYPE_PREFIX = '" string="';
 const LEGACY_PARAMETER_CLOSE_TAG = '</｜DSML｜parameter>';
 
+// S2-leak fix: orphan close tags left behind by truncated streams (open tag
+// was in an earlier frame that got cut, close tag arrives alone). These must
+// be stripped from display text or they surface as raw protocol bytes.
+// NOTE: patterns match only the tag itself, not surrounding whitespace.
+// Matching [ \t]* around the tag causes O(n^2) backtracking on long
+// whitespace runs (ReDoS regression). A double-space gap after removal is
+// acceptable — it is far less disruptive than raw protocol bytes.
+const ORPHAN_CLOSE_TAG_PATTERNS = [
+  /<\/invoke\s*>/gi,
+  /<\/parameter\s*>/gi,
+  /<\/｜DSML｜[^>]*>/g,
+  /<\/｜｜DSML｜｜[^>]*>/g,
+];
+
+/**
+ * S2-leak fix: normalize double-bar DSML tags to single-bar so the existing
+ * legacy parser can handle them. Also normalizes "calls" to "tool_calls"
+ * when used as the container tag name.
+ */
+function normalizeDsmlVariant(text: string): string {
+  return text
+    .replace(DOUBLE_BAR_DSML_OPEN, LEGACY_TOOL_CALLS_OPEN_TAG)
+    .replace(DOUBLE_BAR_DSML_CLOSE, LEGACY_TOOL_CALLS_CLOSE_TAG)
+    .replace(DOUBLE_BAR_DSML_INVOKE_OPEN, LEGACY_INVOKE_OPEN_PREFIX)
+    .replace(DOUBLE_BAR_DSML_INVOKE_CLOSE, LEGACY_INVOKE_CLOSE_TAG)
+    .replace(DOUBLE_BAR_DSML_PARAM_OPEN, LEGACY_PARAMETER_OPEN_PREFIX)
+    .replace(DOUBLE_BAR_DSML_PARAM_CLOSE, LEGACY_PARAMETER_CLOSE_TAG);
+}
+
+/**
+ * S2-leak fix: strip orphan close tags that survive after tool-call block
+ * removal. These are closing tags without matching opening tags, caused by
+ * stream truncation where the opening tag was in a cut-off frame.
+ */
+function stripOrphanCloseTags(text: string): string {
+  let result = text;
+  for (const pattern of ORPHAN_CLOSE_TAG_PATTERNS) {
+    result = result.replace(pattern, '');
+  }
+  return result;
+}
+
 export function extractToolCalls(text: string, input?: ToolParsingInput): ToolCall[] {
   const catalog = createToolInvocationCatalog(input?.descriptors);
+  // S2-leak fix: normalize double-bar DSML before parsing
+  const normalized = normalizeDsmlVariant(text);
   return [
-    ...extractXmlToolCalls(text, catalog),
-    ...extractLegacyToolCalls(text, catalog),
+    ...extractXmlToolCalls(normalized, catalog),
+    ...extractLegacyToolCalls(normalized, catalog),
   ];
 }
 
@@ -326,22 +381,30 @@ function removeBlocks(text: string, blocks: readonly ToolCallBlockRange[]): stri
 
 export function stripToolCalls(text: string, input?: ToolParsingInput): string {
   const catalog = createToolInvocationCatalog(input?.descriptors);
-  const withoutXml = removeBlocks(text, collectXmlToolCallBlocks(text, catalog));
-  return removeBlocks(withoutXml, collectLegacyToolCallBlocks(withoutXml)).trim();
+  // S2-leak fix: normalize double-bar DSML to single-bar first
+  const normalized = normalizeDsmlVariant(text);
+  const withoutXml = removeBlocks(normalized, collectXmlToolCallBlocks(normalized, catalog));
+  const withoutLegacy = removeBlocks(withoutXml, collectLegacyToolCallBlocks(withoutXml));
+  // S2-leak fix: strip orphan close tags left by truncated streams
+  return stripOrphanCloseTags(withoutLegacy).trim();
 }
 
 export function replaceToolCallsWithSummary(text: string, input?: ToolParsingInput): string {
   const catalog = createToolInvocationCatalog(input?.descriptors);
+  // S2-leak fix: normalize double-bar DSML first
+  const normalized = normalizeDsmlVariant(text);
   const withXmlSummary = replaceBlocksWithSummaries(
-    text,
-    collectXmlToolCallBlocks(text, catalog),
+    normalized,
+    collectXmlToolCallBlocks(normalized, catalog),
     catalog,
   );
-  return replaceBlocksWithSummaries(
+  const withLegacySummary = replaceBlocksWithSummaries(
     withXmlSummary,
     collectLegacyToolCallBlocks(withXmlSummary),
     catalog,
   );
+  // S2-leak fix: strip orphan close tags
+  return stripOrphanCloseTags(withLegacySummary);
 }
 
 function replaceMatchWithSummary(match: string, catalog: ToolInvocationCatalog): string {
