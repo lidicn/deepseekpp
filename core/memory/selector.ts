@@ -97,14 +97,34 @@ export function selectMemories(
 
   const promptWords = segmentText(prompt);
 
-  const scored = candidates.map((m) => ({
-    memory: m,
-    score:
-      (m.pinned ? 1000 : 0) +
-      keywordScore(promptWords, m) +
-      decayScore(m) +
-      (Date.now() - m.lastAccessedAt < 3600_000 ? 5 : 0),
-  }));
+  // Relevance threshold (fix: prevent unrelated global memories from being
+  // injected into unrelated conversations). Non-pinned memories must have
+  // at least some keyword overlap with the prompt. Global-scope memories
+  // require a higher threshold because they are visible across all
+  // conversations and are more likely to be irrelevant noise.
+  const MIN_KEYWORD_SCORE_PROJECT = 1;
+  const MIN_KEYWORD_SCORE_GLOBAL = 5;
+
+  const scored = candidates
+    .map((m) => {
+      const kwScore = keywordScore(promptWords, m);
+      const isGlobal = m.scope === undefined || m.scope === 'global';
+      const minScore = isGlobal ? MIN_KEYWORD_SCORE_GLOBAL : MIN_KEYWORD_SCORE_PROJECT;
+      // Pinned memories bypass the relevance threshold (user explicitly pinned them)
+      const passesThreshold = m.pinned || kwScore >= minScore;
+      return {
+        memory: m,
+        passesThreshold,
+        score:
+          (m.pinned ? 1000 : 0) +
+          kwScore +
+          decayScore(m) +
+          (Date.now() - m.lastAccessedAt < 3600_000 ? 5 : 0),
+      };
+    })
+    .filter((item) => item.passesThreshold);
+
+  if (scored.length === 0) return [];
 
   scored.sort((a, b) => b.score - a.score);
 
