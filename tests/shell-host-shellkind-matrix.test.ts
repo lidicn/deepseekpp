@@ -1,9 +1,8 @@
 import { describe, it, expect } from 'vitest';
+// @ts-ignore - 宿主 .mjs 为纯 JS 实现，无类型声明文件
 import { detectShellKind } from '../packages/shell-host/native/os-adapter.mjs';
-import {
-  buildSessionEndMarkerLine,
-  createPersistentShellArgs,
-} from '../packages/shell-host/native/session-provider.mjs';
+// @ts-ignore - 宿主 .mjs 为纯 JS 实现，无类型声明文件
+import { buildSessionEndMarkerLine, createPersistentShellArgs } from '../packages/shell-host/native/session-provider.mjs';
 
 /**
  * E-1 fix: parameterized tests covering all 4 shellKind branches.
