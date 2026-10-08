@@ -39,12 +39,31 @@ chrome.runtime.onConnect.addListener((port) => {
     return;
   }
 
+  // M2-1 fix: track port liveness so we don't postMessage into a dead port.
+  // Without this, if the background side disconnects while sandbox is running,
+  // the .then() postMessage throws "disconnected port object", which is caught
+  // by .catch(), which then postMessages again → second throw → unhandled rejection.
+  let disconnected = false;
+  port.onDisconnect.addListener(() => {
+    disconnected = true;
+  });
+
+  const safePost = (message: unknown) => {
+    if (disconnected) return;
+    try {
+      port.postMessage(message);
+    } catch {
+      // Port may have disconnected between the check and the call.
+      // Frame results are cleaned up by pendingRuns timeout, so just swallow.
+    }
+  };
+
   port.onMessage.addListener((message: unknown) => {
     const envelope = parseSandboxEnvelope(message, SANDBOX_MESSAGE_TYPES.offscreenRun);
     if (!envelope) {
       const requestId = readSandboxRequestId(message, SANDBOX_MESSAGE_TYPES.offscreenRun);
       if (requestId) {
-        port.postMessage({
+        safePost({
           type: SANDBOX_MESSAGE_TYPES.offscreenResult,
           requestId,
           result: createFailure('Invalid sandbox request.', 'sandbox_request_invalid'),
@@ -54,13 +73,13 @@ chrome.runtime.onConnect.addListener((port) => {
     }
 
     runSandboxInFrame(envelope.payload)
-      .then((result) => port.postMessage({
+      .then((result) => safePost({
         type: SANDBOX_MESSAGE_TYPES.offscreenResult,
         requestId: envelope.requestId,
         result,
       }))
       .catch((error) => {
-        port.postMessage({
+        safePost({
           type: SANDBOX_MESSAGE_TYPES.offscreenResult,
           requestId: envelope.requestId,
           result: createFailure(error instanceof Error ? error.message : String(error)),
