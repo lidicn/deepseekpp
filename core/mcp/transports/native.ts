@@ -74,6 +74,17 @@ function getPortState(nativeHost: string): NativePortState {
         pending.signal.removeEventListener('abort', pending.onAbort);
       }
       pending.resolve(response);
+    } else {
+      // M-1 fix: warn on unknown/malformed responses instead of silently
+      // dropping them. Without this, a malformed response is invisible until
+      // the 120s timeout fires, making native messaging issues hard to diagnose.
+      console.warn('[MCP native] unexpected response from host:', {
+        nativeHost,
+        hasId: rpcId != null,
+        rpcId,
+        hasPending: rpcId != null ? state.pendingRequests.has(rpcId) : false,
+        responseKeys: response && typeof response === 'object' ? Object.keys(response) : [],
+      });
     }
   });
 

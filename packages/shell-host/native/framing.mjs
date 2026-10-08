@@ -48,7 +48,15 @@ export function createNativeMessageChannel({
       try {
         deliver(JSON.parse(json));
       } catch (error) {
+        // M-1 fix: JSON parse failure must fail-fast, not just log.
+        // Otherwise readMessage()'s Promise hangs forever (no resolve/reject),
+        // and if the host is single-request serial, all subsequent requests
+        // queue behind the hung one → entire native session dead.
         logLine(`JSON parse error: ${error instanceof Error ? error.message : String(error)}`);
+        buffer = Buffer.alloc(0);
+        inputEnded = true;
+        onInvalidFrame(length);
+        return;
       }
     }
   }
