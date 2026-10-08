@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import {
   MULTIMODAL_MCP_PACKAGE_NAME,
+  MULTIMODAL_MCP_PACKAGE_VERSION,
 } from '../../../core/multimodal';
 import type { LocaleMessageKey, MessageParams, SupportedLocale } from '../../../core/i18n';
 import { parseNativeHostOutdatedNote } from '../../../core/mcp/native-host-version';
@@ -1513,7 +1514,7 @@ function shellInstallCommand(): {
   const extensionArg = usesExtensionId ? ` --extension-id ${chrome.runtime.id || '<extension-id>'}` : '';
   const installArgs = `install --browser ${browser}${extensionArg} --skip-officecli`;
   const localCommand = `npm run shell:install -- ${installArgs}`;
-  const publishedCommand = `npx deepseek-pp-shell-host ${installArgs}`;
+  const publishedCommand = `npx deepseek-pp-shell-host@${chrome.runtime.getManifest().version} ${installArgs}`;
 
   if (isUnpackedExtension()) {
     return { browser, command: localCommand, fallbackCommand: publishedCommand, usesExtensionId, mode: 'local' };
@@ -1534,7 +1535,7 @@ function multimodalInstallCommand(): {
   const extensionArg = usesExtensionId ? ` --extension-id ${chrome.runtime.id || '<extension-id>'}` : '';
   const installArgs = `install --browser ${browser}${extensionArg}`;
   const localCommand = `npm run multimodal:install -- ${installArgs}`;
-  const publishedCommand = `npx ${MULTIMODAL_MCP_PACKAGE_NAME} ${installArgs}`;
+  const publishedCommand = `npx ${MULTIMODAL_MCP_PACKAGE_NAME}@${MULTIMODAL_MCP_PACKAGE_VERSION} ${installArgs}`;
 
   if (isUnpackedExtension()) {
     return { browser, command: localCommand, fallbackCommand: publishedCommand, usesExtensionId, mode: 'local' };
