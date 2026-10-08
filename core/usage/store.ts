@@ -124,7 +124,13 @@ async function readUsageRecordsAlreadyOwned(): Promise<UsageTurnRecord[]> {
 }
 
 async function saveUsageRecordsAlreadyOwned(records: readonly UsageTurnRecord[]): Promise<void> {
-  await chrome.storage.local.set({ [USAGE_STORAGE_KEY]: encodeUsageRecords(records) });
+  try {
+    await chrome.storage.local.set({ [USAGE_STORAGE_KEY]: encodeUsageRecords(records) });
+  } catch (error) {
+    // Graceful degradation: usage stats are best-effort telemetry. A quota
+    // exceeded error must not bubble up and break the agent loop.
+    console.warn('[DeepSeek++] usage turn persistence failed (degraded):', error);
+  }
 }
 
 export type { UsageRangeDays };
