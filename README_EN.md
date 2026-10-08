@@ -220,7 +220,7 @@ Language can follow the browser or be set to English or Simplified Chinese. Deep
 Install the Multimodal Native Host:
 
 ```bash
-npx deepseek-pp-multimodal-mcp install --browser chrome --extension-id <extension-id>
+npx deepseek-pp-multimodal-mcp@0.1.0 install --browser chrome --extension-id <extension-id>
 ```
 
 The side-panel MCP page automatically fills in the current extension ID. After installation, configure OpenAI / Gemini keys, models, and request URLs under `Settings` → `Multimodal API`, then enable the `Multimodal` preset, test it, and refresh tools.
@@ -245,7 +245,7 @@ npm run multimodal:install -- --browser chrome --extension-id <extension-id>
 Install the Shell Native Host:
 
 ```bash
-npx deepseek-pp-shell-host install --browser chrome --extension-id <extension-id>
+npx deepseek-pp-shell-host@1.16.0 install --browser chrome --extension-id <extension-id>
 ```
 
 The side-panel MCP page automatically fills in the current extension ID. This command installs both the Shell Native Host and command-based OfficeCLI. The Shell MCP enables local command execution. After installation, restart the browser, open the MCP page in the side panel, create the Shell preset, then test and refresh tools. Command-based OfficeCLI can continue using scriptable commands such as `create`, `get`, `set`, `view`, `batch`, and `validate` without using hosted `new --prompt` quota.

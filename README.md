@@ -222,7 +222,7 @@ DeepSeek++ 是面向 [DeepSeek](https://chat.deepseek.com) 网页版的开源浏
 安装多模态 Native Host：
 
 ```bash
-npx deepseek-pp-multimodal-mcp install --browser chrome --extension-id <扩展ID>
+npx deepseek-pp-multimodal-mcp@0.1.0 install --browser chrome --extension-id <扩展ID>
 ```
 
 侧边栏 `MCP` 页会自动填入当前扩展 ID。安装后在设置页的「多模态 API」配置 OpenAI / Gemini Key、模型和请求地址，然后启用 `多模态` 预设、点击测试和刷新工具。
@@ -247,7 +247,7 @@ npm run multimodal:install -- --browser chrome --extension-id <扩展ID>
 安装 Shell Native Host：
 
 ```bash
-npx deepseek-pp-shell-host install --browser chrome --extension-id <扩展ID>
+npx deepseek-pp-shell-host@1.16.0 install --browser chrome --extension-id <扩展ID>
 ```
 
 侧边栏 `MCP` 页会自动填入当前扩展 ID。这个命令会同时安装 Shell Native Host 和命令版 OfficeCLI；Shell MCP 会启用本机命令执行能力。安装后重启浏览器，然后在侧边栏 `MCP` 页点击 `Shell` 创建预设，点击测试和刷新工具。命令版 OfficeCLI 可继续使用 `create/get/set/view/batch/validate` 等脚本化命令，不走 `new --prompt` 的 hosted 生成额度。
