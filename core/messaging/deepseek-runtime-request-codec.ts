@@ -16,6 +16,7 @@ type DeepSeekRuntimeCommandType = keyof DeepSeekRuntimeCommandContracts;
 export interface EncodedDeepSeekImageUploadRequest {
   isPlainObject: boolean;
   dataUrl: unknown;
+  url: unknown;
   name: unknown;
   mimeType: unknown;
   alternateMimeType: unknown;
@@ -223,6 +224,7 @@ export function stageDeepSeekImageUpload(value: unknown): EncodedDeepSeekImageUp
     return {
       isPlainObject: false,
       dataUrl: undefined,
+      url: undefined,
       name: undefined,
       mimeType: undefined,
       alternateMimeType: undefined,
@@ -233,6 +235,7 @@ export function stageDeepSeekImageUpload(value: unknown): EncodedDeepSeekImageUp
   return {
     isPlainObject: true,
     dataUrl: value.dataUrl,
+    url: value.url,
     name: value.name,
     mimeType: value.mimeType,
     alternateMimeType: value.type,

@@ -5287,15 +5287,14 @@ async function startInlineAgentLoop(
   let shouldReloadNativeHistory = false;
   try {
     // M-URL 修复：上传图片到 DeepSeek 服务器，返回 file_id
+    // 注意：传入 URL，由 background SW 下载（避免 content script 的 Mixed Content 限制）
     const uploadImage: NonNullable<import('../core/inline-agent/loop').InlineAgentLoopDeps['uploadImage']> = async (input) => {
       try {
         const response = await sendRuntimeMessageStrict<{ ok: boolean; file?: { id: string }; error?: string }>({
           type: "UPLOAD_DEEPSEEK_IMAGE",
           payload: {
-            dataUrl: input.dataUrl,
+            url: input.url,
             name: input.name,
-            mimeType: input.mimeType,
-            sizeBytes: input.sizeBytes,
           },
         });
         if (response.ok && response.file?.id) {

@@ -73,13 +73,8 @@ export interface PiLoopAdapterDeps {
   post: PostFn;
   executeTool: ExecuteToolFn;
   signal: AbortSignal;
-  /** M-URL 修复：上传图片到 DeepSeek 服务器，返回 file_id */
-  uploadImage?: (input: {
-    dataUrl: string;
-    name: string;
-    mimeType: string;
-    sizeBytes: number;
-  }) => Promise<string | null>;
+  /** M-URL 修复：传入图片 URL，由 background SW 下载并上传到 DeepSeek，返回 file_id */
+  uploadImage?: (input: { url: string; name: string }) => Promise<string | null>;
 }
 
 /** Runs the pi engine with the released inline-agent semantics. */
@@ -252,7 +247,11 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
         modelType: promptOptions.modelType,
         // M-URL 修复：动态合并待处理的图片 file_id
         get refFileIds() {
-          return [...promptOptions.refFileIds, ...pendingImageFileIds];
+          const merged = [...promptOptions.refFileIds, ...pendingImageFileIds];
+          if (pendingImageFileIds.length > 0) {
+            console.log('[M-URL] 注入 refFileIds:', { original: promptOptions.refFileIds.length, pending: pendingImageFileIds.length, total: merged.length });
+          }
+          return merged;
         },
         thinkingEnabled: promptOptions.thinkingEnabled,
         searchEnabled: promptOptions.searchEnabled,
@@ -641,9 +640,9 @@ function buildInlineAgentBudgetNotice(locale: SupportedLocale, completedSteps: n
 }
 
 /**
- * M-URL 修复：扫描工具执行结果中的图片 URL，下载并上传到 DeepSeek 得到 file_id。
+ * M-URL 修复：扫描工具执行结果中的图片 URL，传给 background SW 下载并上传得到 file_id。
  * file_id 会被加入 pendingImageFileIds，在下一次请求时通过 refFileIds 传递给模型。
- * 下载或上传失败的 URL 会被跳过，不阻断主流程。
+ * 下载和上传都在 background SW 中执行（避免 content script 的 Mixed Content 限制）。
  */
 async function materializeAndUploadToolResultImages(
   executions: readonly ToolExecutionRecord[],
@@ -675,24 +674,25 @@ async function materializeAndUploadToolResultImages(
     if (!resultText) continue;
 
     // 扫描图片 URL
-    const { scanImageUrlsFromText, downloadImageAsDataUrl } = await import('../../multimodal/media');
+    const { scanImageUrlsFromText } = await import('../../multimodal/media');
     const scanned = scanImageUrlsFromText(resultText);
 
     for (const item of scanned) {
       try {
-        // 下载图片
-        const downloaded = await downloadImageAsDataUrl(item.url);
-        // 上传到 DeepSeek 得到 file_id
+        console.log('[M-URL] 检测到工具结果图片URL，开始上传:', item.url.substring(0, 80));
+        // 直接传 URL 给 background SW 下载并上传
         const fileId = await uploadImage({
-          dataUrl: downloaded.dataUrl,
+          url: item.url,
           name: `tool-result-image-${Date.now()}.png`,
-          mimeType: downloaded.mimeType,
-          sizeBytes: downloaded.sizeBytes,
         });
         if (fileId) {
+          console.log('[M-URL] 图片上传成功，file_id:', fileId);
           pendingImageFileIds.push(fileId);
+        } else {
+          console.warn('[M-URL] 图片上传失败，返回空 file_id');
         }
-      } catch {
+      } catch (error) {
+        console.warn('[M-URL] 图片上传异常:', error);
         // 下载或上传失败的 URL 跳过，不阻断主流程
       }
     }

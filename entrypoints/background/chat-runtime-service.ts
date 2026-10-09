@@ -566,7 +566,40 @@ export function createChatRuntimeService(
     const enabled = await dependencies.getChatEnabled();
     assertSignalActive(controller.signal);
     if (!enabled) return { ok: false, error: 'chat_disabled' };
-    const materialized = materializeDeepSeekImageUpload(request);
+
+    // M-URL 修复：如果传入的是 URL，先在 background SW 中下载（不受页面 Mixed Content 限制）
+    let uploadRequest = request;
+    const url = typeof request.url === 'string' ? request.url : '';
+    if (url && /^https?:\/\//i.test(url)) {
+      try {
+        const response = await fetch(url, { signal: controller.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const contentType = response.headers.get('content-type') ?? 'image/png';
+        const mimeType = contentType.split(';')[0]?.trim() ?? 'image/png';
+        const arrayBuffer = await response.arrayBuffer();
+        const sizeBytes = arrayBuffer.byteLength;
+        // 转 base64
+        const bytes = new Uint8Array(arrayBuffer);
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        const base64 = btoa(binary);
+        const dataUrl = `data:${mimeType};base64,${base64}`;
+        const name = typeof request.name === 'string' && request.name.trim()
+          ? request.name.trim()
+          : url.split('/').pop()?.split('?')[0] || 'image.png';
+        uploadRequest = {
+          ...request,
+          dataUrl,
+          name,
+          mimeType,
+          sizeBytes,
+        };
+      } catch (error) {
+        return { ok: false, error: `Failed to download image from URL: ${error instanceof Error ? error.message : String(error)}` };
+      }
+    }
+
+    const materialized = materializeDeepSeekImageUpload(uploadRequest);
     assertSignalActive(controller.signal);
     const headers = await dependencies.loadClientHeaders(excludeTabId);
     assertSignalActive(controller.signal);
