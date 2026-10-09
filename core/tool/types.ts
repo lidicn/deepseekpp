@@ -136,6 +136,13 @@ export interface ToolResult {
   completedAt?: number;
   durationMs?: number;
   truncated?: boolean;
+  /** M-URL 修复：工具结果中 URL 图片被自动下载物化后的 base64 data URL 列表 */
+  materializedImages?: Array<{
+    url: string;
+    dataUrl: string;
+    mimeType: string;
+    sizeBytes: number;
+  }>;
 }
 
 export interface ToolExecutionContext {

@@ -499,7 +499,15 @@ export interface ToolCall extends GenericToolCall {}
 export interface ToolCardResult extends Pick<
   GenericToolResult,
   'ok' | 'summary' | 'detail' | 'output' | 'truncated' | 'error' | 'descriptorId' | 'provider' | 'name'
-> {}
+> {
+  /** M-URL 修复：工具结果中 URL 图片被自动下载物化后的 base64 data URL 列表 */
+  materializedImages?: Array<{
+    url: string;
+    dataUrl: string;
+    mimeType: string;
+    sizeBytes: number;
+  }>;
+}
 
 export interface ToolExecutionRecord {
   callId?: string;

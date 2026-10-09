@@ -32,6 +32,7 @@ import type { StreamFn, AgentEvent, AgentLoopConfig } from '@earendil-works/pi-a
 import { runAgentLoop } from '@earendil-works/pi-agent-core';
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../../i18n';
 import type { ToolCall, ToolDescriptor, ToolExecutionRecord, ToolProviderIdentity } from '../../types';
+import { materializeImageUrlsFromToolResult } from '../../multimodal/media';
 import { createClientHeaders } from '../../deepseek/adapter';
 import { getDeepSeekApiKey } from '../../chat/api-key';
 import { getOfficialApiChatConfig } from '../../chat/official-api-config';
@@ -487,6 +488,8 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
             throw new Error(chainErrorText(nudge.currentTurnIsNudge));
           }
           collectedExecutions.push(...executedInStep);
+          // M-URL 修复：扫描工具结果中的图片 URL 并自动下载物化
+          await materializeToolResultImages(executedInStep);
           postStepComplete();
           stepIndex += 1;
           lastStepCompleted = true;
@@ -623,4 +626,43 @@ function contextHasAssistantMessage(context: { messages: ReadonlyArray<{ role: s
 
 function buildInlineAgentBudgetNotice(locale: SupportedLocale, completedSteps: number): string {
   return translate(locale, 'content.agent.budgetReached', { count: completedSteps });
+}
+
+/**
+ * M-URL 修复：扫描工具执行结果中的图片 URL，自动下载并物化为 base64 data URL。
+ * 下载失败的 URL 会被跳过，不阻断主流程。
+ */
+async function materializeToolResultImages(executions: readonly ToolExecutionRecord[]): Promise<void> {
+  for (const execution of executions) {
+    const result = execution.result;
+    if (!result || !result.ok) continue;
+
+    // 收集工具结果中的文本：output JSON + detail
+    const textParts: string[] = [];
+    if (result.output !== undefined) {
+      try {
+        textParts.push(JSON.stringify(result.output));
+      } catch {
+        // ignore
+      }
+    }
+    if (result.detail) {
+      textParts.push(result.detail);
+    }
+    const resultText = textParts.join('\n');
+    if (!resultText) continue;
+
+    // 扫描并下载图片 URL
+    const imageMap = await materializeImageUrlsFromToolResult(resultText);
+    if (imageMap.size === 0) continue;
+
+    // 存储到 result.materializedImages
+    const materializedImages = Array.from(imageMap.entries()).map(([url, info]) => ({
+      url,
+      dataUrl: info.dataUrl,
+      mimeType: info.mimeType,
+      sizeBytes: info.sizeBytes,
+    }));
+    result.materializedImages = materializedImages;
+  }
 }

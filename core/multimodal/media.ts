@@ -393,3 +393,82 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   }
   return btoa(binary);
 }
+
+/**
+ * M-URL 修复：从工具结果文本中扫描图片 URL。
+ * 支持检测：
+ * - JSON 字段："url": "http://..." / "image_url": "http://..."
+ * - Markdown 图片：![](http://...)
+ * - 纯文本中的图片 URL（带 .png/.jpg/.jpeg/.gif/.webp/.bmp/.svg 扩展名）
+ */
+export interface ScannedImageUrl {
+  url: string;
+  source: 'json-field' | 'markdown' | 'text-extension';
+  context?: string;
+}
+
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg'];
+
+export function scanImageUrlsFromText(text: string): ScannedImageUrl[] {
+  if (!text || typeof text !== 'string') return [];
+
+  const results: ScannedImageUrl[] = [];
+  const seen = new Set<string>();
+
+  // 1. JSON 字段："url" 或 "image_url"
+  const jsonFieldRegex = /["'](?:url|image_url)["']\s*:\s*["'](https?:\/\/[^"']+)["']/gi;
+  let match: RegExpExecArray | null;
+  while ((match = jsonFieldRegex.exec(text)) !== null) {
+    const url = match[1];
+    if (!seen.has(url)) {
+      seen.add(url);
+      results.push({ url, source: 'json-field' });
+    }
+  }
+
+  // 2. Markdown 图片：![](url)
+  const markdownRegex = /!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/gi;
+  while ((match = markdownRegex.exec(text)) !== null) {
+    const url = match[1];
+    if (!seen.has(url)) {
+      seen.add(url);
+      results.push({ url, source: 'markdown' });
+    }
+  }
+
+  // 3. 纯文本中的图片 URL（带图片扩展名）
+  const textUrlRegex = /(https?:\/\/[^\s"'<>]+\.(?:png|jpg|jpeg|gif|webp|bmp|svg))(?:\?[^\s"'<>]*)?/gi;
+  while ((match = textUrlRegex.exec(text)) !== null) {
+    const url = match[0];
+    if (!seen.has(url)) {
+      seen.add(url);
+      results.push({ url, source: 'text-extension' });
+    }
+  }
+
+  return results;
+}
+
+/**
+ * M-URL 修复：从工具执行记录中扫描并下载所有图片 URL，
+ * 返回 URL -> base64 data URL 的映射。
+ * 失败的 URL 会被跳过，不阻断主流程。
+ */
+export async function materializeImageUrlsFromToolResult(
+  resultText: string,
+): Promise<Map<string, { dataUrl: string; mimeType: string; sizeBytes: number }>> {
+  const scanned = scanImageUrlsFromText(resultText);
+  const mapping = new Map<string, { dataUrl: string; mimeType: string; sizeBytes: number }>();
+
+  for (const item of scanned) {
+    try {
+      const downloaded = await downloadImageAsDataUrl(item.url);
+      mapping.set(item.url, downloaded);
+    } catch {
+      // 下载失败的 URL 跳过，不阻断主流程
+      // 模型仍会看到原 URL 文本
+    }
+  }
+
+  return mapping;
+}

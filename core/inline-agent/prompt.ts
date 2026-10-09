@@ -254,6 +254,13 @@ function renderToolResult(e: ToolExecutionRecord) {
       8000,
     ),
     truncated: e.result.truncated === true,
+    // M-URL 修复：工具结果中 URL 图片被自动下载物化后的 base64 data URL
+    materializedImages: e.result.materializedImages?.map((img) => ({
+      url: img.url,
+      dataUrl: img.dataUrl,
+      mimeType: img.mimeType,
+      sizeBytes: img.sizeBytes,
+    })),
   };
 }
 
