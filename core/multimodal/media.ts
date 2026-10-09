@@ -8,6 +8,11 @@ export const MULTIMODAL_MEDIA_MAX_ITEMS_PER_TURN = 8;
 export const MULTIMODAL_MEDIA_PREFLIGHT_PROMPT_START = '[DeepSeek++ automatic multimodal MCP analysis]';
 export const MULTIMODAL_MEDIA_PREFLIGHT_PROMPT_END = '[/DeepSeek++ automatic multimodal MCP analysis]';
 
+/** URL 图片下载限制 */
+export const URL_IMAGE_DOWNLOAD_TIMEOUT_MS = 10_000;
+export const URL_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+export const URL_IMAGE_ALLOWED_MIME_PREFIXES = ['image/'];
+
 export interface MultimodalMediaInput {
   id: string;
   kind: MultimodalMediaKind;
@@ -16,6 +21,7 @@ export interface MultimodalMediaInput {
   sizeBytes: number;
   dataUrl?: string;
   base64Data?: string;
+  url?: string;
 }
 
 export interface MultimodalMediaAnalysisSubject {
@@ -56,14 +62,14 @@ export interface MultimodalMediaRouteRequest {
   parentMessageId?: number | string | null;
 }
 
-export function normalizeMultimodalMediaAnalyzeRequest(
+export async function normalizeMultimodalMediaAnalyzeRequest(
   value: unknown,
-): MultimodalMediaAnalyzeRequest {
+): Promise<MultimodalMediaAnalyzeRequest> {
   const request = recordValue(value, 'ANALYZE_MULTIMODAL_MEDIA.payload');
   const prompt = typeof request.prompt === 'string' && request.prompt.trim()
     ? request.prompt.trim()
     : 'Analyze the attached media.';
-  const media = normalizeMultimodalMediaInputs(request.media);
+  const media = await normalizeMultimodalMediaInputs(request.media);
 
   const chatSessionId = optionalNullableString(
     request.chatSessionId,
@@ -107,7 +113,7 @@ export function assertSupportedMultimodalMedia(
   }
 }
 
-function normalizeMultimodalMediaInputs(value: unknown): MultimodalMediaInput[] {
+async function normalizeMultimodalMediaInputs(value: unknown): Promise<MultimodalMediaInput[]> {
   if (!Array.isArray(value) || value.length === 0) {
     throw new Error('No multimodal media was provided.');
   }
@@ -136,7 +142,22 @@ function normalizeMultimodalMediaInputs(value: unknown): MultimodalMediaInput[] 
       base64Data: typeof input.base64Data === 'string' && input.base64Data
         ? input.base64Data
         : undefined,
+      url: typeof input.url === 'string' && input.url ? input.url : undefined,
     };
+
+    // M-URL 修复：如果只有 URL 没有 dataUrl，自动下载并转成 base64
+    if (kind === 'image' && !normalizedItem.dataUrl && normalizedItem.url) {
+      try {
+        const downloaded = await downloadImageAsDataUrl(normalizedItem.url);
+        normalizedItem.dataUrl = downloaded.dataUrl;
+        normalizedItem.mimeType = downloaded.mimeType;
+        normalizedItem.sizeBytes = downloaded.sizeBytes;
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to download image from URL (${normalizedItem.url.substring(0, 60)}): ${reason}`);
+      }
+    }
+
     assertSupportedMultimodalMedia(normalizedItem);
     assertMultimodalMediaBody(normalizedItem);
     normalized.push(normalizedItem);
@@ -293,4 +314,82 @@ function extractOutputText(output: unknown): string {
 
 function formatLimit(bytes: number): string {
   return `${Math.floor(bytes / 1024 / 1024)} MB`;
+}
+
+/**
+ * M-URL 修复：从 http/https URL 下载图片并转成 base64 data URL。
+ * 用于工具返回 URL 图片时，自动物化为模型可识别的 image block。
+ *
+ * 安全限制：
+ * - 超时 10 秒
+ * - 大小上限 2MB
+ * - 仅允许 image/* MIME 类型
+ * - 仅支持 http/https 协议
+ */
+export async function downloadImageAsDataUrl(
+  url: string,
+): Promise<{ dataUrl: string; mimeType: string; sizeBytes: number }> {
+  // 协议白名单
+  if (!/^https?:\/\//i.test(url)) {
+    throw new Error(`Only http/https URLs are supported, got: ${url.substring(0, 50)}`);
+  }
+
+  // 带超时的 fetch
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), URL_IMAGE_DOWNLOAD_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      redirect: 'follow',
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status} ${response.statusText} for ${url.substring(0, 80)}`);
+    }
+
+    // 检查 MIME 类型
+    const contentType = response.headers.get('content-type') ?? '';
+    const mimeType = contentType.split(';')[0]?.trim() ?? '';
+    const allowed = URL_IMAGE_ALLOWED_MIME_PREFIXES.some((prefix) => mimeType.startsWith(prefix));
+    if (!allowed) {
+      throw new Error(`Unsupported image MIME type: ${mimeType} (only image/* allowed)`);
+    }
+
+    // 读取字节并检查大小
+    const arrayBuffer = await response.arrayBuffer();
+    const sizeBytes = arrayBuffer.byteLength;
+    if (sizeBytes > URL_IMAGE_MAX_BYTES) {
+      throw new Error(
+        `Image is ${formatLimit(sizeBytes)}, exceeds URL image limit of ${formatLimit(URL_IMAGE_MAX_BYTES)}`,
+      );
+    }
+    if (sizeBytes === 0) {
+      throw new Error(`Image download returned 0 bytes`);
+    }
+
+    // 转成 base64 data URL
+    const base64 = arrayBufferToBase64(arrayBuffer);
+    const dataUrl = `data:${mimeType};base64,${base64}`;
+
+    return { dataUrl, mimeType, sizeBytes };
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Image download timed out after ${URL_IMAGE_DOWNLOAD_TIMEOUT_MS}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+  }
+  return btoa(binary);
 }

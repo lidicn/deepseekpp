@@ -37,7 +37,7 @@ export type DecodedMultimodalAnalyzeRequest =
 interface DecodedDeepSeekRuntimePayloads {
   SAVE_DEEPSEEK_API_KEY: { apiKey: string };
   SAVE_MULTIMODAL_SETTINGS: MultimodalSettingsPatch;
-  ANALYZE_MULTIMODAL_MEDIA: DecodedMultimodalAnalyzeRequest;
+  ANALYZE_MULTIMODAL_MEDIA: Promise<DecodedMultimodalAnalyzeRequest>;
   CHAT_SUBMIT_PROMPT: {
     text: string;
     config?: OfficialApiChatConfig;
@@ -82,9 +82,9 @@ export const DEEPSEEK_RUNTIME_PAYLOAD_DECODERS: DeepSeekRuntimePayloadDecoderMap
     }
     return patch;
   },
-  ANALYZE_MULTIMODAL_MEDIA(value) {
+  async ANALYZE_MULTIMODAL_MEDIA(value) {
     try {
-      return { ok: true, request: normalizeMultimodalMediaAnalyzeRequest(value) };
+      return { ok: true, request: await normalizeMultimodalMediaAnalyzeRequest(value) };
     } catch (error) {
       return {
         ok: false,

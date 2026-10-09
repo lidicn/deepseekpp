@@ -51,7 +51,8 @@ export function createMultimodalRuntimeHandlers(
       ok: true as const,
       ...(await dependencies.clearSettings()),
     })),
-    defineDeepSeekPayloadRuntimeCommandHandler('ANALYZE_MULTIMODAL_MEDIA', async (decoded, context) => {
+    defineDeepSeekPayloadRuntimeCommandHandler('ANALYZE_MULTIMODAL_MEDIA', async (decodedPromise, context) => {
+      const decoded = await decodedPromise;
       const response = decoded.ok
         ? await analyzeMultimodalMedia(decoded.request, dependencies)
         : { ok: false as const, analyses: [], error: decoded.error };
