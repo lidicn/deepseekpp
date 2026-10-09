@@ -563,10 +563,7 @@ export function createChatRuntimeService(
     controller: AbortController,
     excludeTabId?: number,
   ): Promise<{ ok: true; file: DeepSeekUploadedFile } | { ok: false; error: string }> => {
-    // M-URL 修复：移除 getChatEnabled() 检查
-    // 图片上传只需要用户登录（有 client headers），不需要 chat 功能启用
-    // 网页版用户（chat.deepseek.com）即使未配置 API Key 也应该能上传图片
-    console.log('[M-URL-SW] 开始处理图片上传请求, hasUrl:', !!request.url, 'hasDataUrl:', !!request.dataUrl);
+    // M-URL 修复：图片上传不需要 chat 功能启用，只需用户登录（有 client headers）
     assertSignalActive(controller.signal);
 
     // M-URL 修复：如果传入的是 URL，先在 background SW 中下载（不受页面 Mixed Content 限制）
@@ -574,20 +571,46 @@ export function createChatRuntimeService(
     const url = typeof request.url === 'string' ? request.url : '';
     if (url && /^https?:\/\//i.test(url)) {
       try {
-        console.log('[M-URL-SW] 开始下载图片:', url.substring(0, 80));
         const response = await fetch(url, { signal: controller.signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const contentType = response.headers.get('content-type') ?? 'image/png';
         const mimeType = contentType.split(';')[0]?.trim() ?? 'image/png';
-        const arrayBuffer = await response.arrayBuffer();
-        const sizeBytes = arrayBuffer.byteLength;
-        console.log('[M-URL-SW] 图片下载成功:', { mimeType, sizeBytes });
+        let arrayBuffer = await response.arrayBuffer();
+        let sizeBytes = arrayBuffer.byteLength;
+        let finalMimeType = mimeType;
+
+        // M-URL 优化：图片降采样，避免大图占用过多上下文
+        // 用户实测 width=256 时最稳妥，这里限制最大宽度 512px
+        const MAX_IMAGE_WIDTH = 512;
+        try {
+          const imageBitmap = await createImageBitmap(new Blob([arrayBuffer], { type: mimeType }));
+          if (imageBitmap.width > MAX_IMAGE_WIDTH) {
+            const scale = MAX_IMAGE_WIDTH / imageBitmap.width;
+            const newWidth = MAX_IMAGE_WIDTH;
+            const newHeight = Math.round(imageBitmap.height * scale);
+            const canvas = new OffscreenCanvas(newWidth, newHeight);
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+              ctx.drawImage(imageBitmap, 0, 0, newWidth, newHeight);
+              const resizedBlob = await canvas.convertToBlob({ type: 'image/png' });
+              arrayBuffer = await resizedBlob.arrayBuffer();
+              sizeBytes = arrayBuffer.byteLength;
+              finalMimeType = 'image/png';
+              console.log('[M-URL-SW] 图片降采样:', { originalWidth: imageBitmap.width, originalHeight: imageBitmap.height, newWidth, newHeight, originalSize: sizeBytes, newSize: arrayBuffer.byteLength });
+            }
+          }
+          imageBitmap.close();
+        } catch (resizeError) {
+          // 降采样失败时使用原图，不阻断上传
+          console.warn('[M-URL-SW] 图片降采样失败，使用原图:', resizeError);
+        }
+
         // 转 base64
         const bytes = new Uint8Array(arrayBuffer);
         let binary = '';
         for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
         const base64 = btoa(binary);
-        const dataUrl = `data:${mimeType};base64,${base64}`;
+        const dataUrl = `data:${finalMimeType};base64,${base64}`;
         const name = typeof request.name === 'string' && request.name.trim()
           ? request.name.trim()
           : url.split('/').pop()?.split('?')[0] || 'image.png';
@@ -595,7 +618,7 @@ export function createChatRuntimeService(
           ...request,
           dataUrl,
           name,
-          mimeType,
+          mimeType: finalMimeType,
           sizeBytes,
         };
       } catch (error) {
@@ -620,7 +643,6 @@ export function createChatRuntimeService(
       powHeaders,
     }, controller.signal);
     assertSignalActive(controller.signal);
-    console.log('[M-URL-SW] 图片上传成功, file_id:', file.id);
     return { ok: true, file };
   };
 
