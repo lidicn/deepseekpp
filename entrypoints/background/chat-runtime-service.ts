@@ -563,9 +563,11 @@ export function createChatRuntimeService(
     controller: AbortController,
     excludeTabId?: number,
   ): Promise<{ ok: true; file: DeepSeekUploadedFile } | { ok: false; error: string }> => {
-    const enabled = await dependencies.getChatEnabled();
+    // M-URL 修复：移除 getChatEnabled() 检查
+    // 图片上传只需要用户登录（有 client headers），不需要 chat 功能启用
+    // 网页版用户（chat.deepseek.com）即使未配置 API Key 也应该能上传图片
+    console.log('[M-URL-SW] 开始处理图片上传请求, hasUrl:', !!request.url, 'hasDataUrl:', !!request.dataUrl);
     assertSignalActive(controller.signal);
-    if (!enabled) return { ok: false, error: 'chat_disabled' };
 
     // M-URL 修复：如果传入的是 URL，先在 background SW 中下载（不受页面 Mixed Content 限制）
     let uploadRequest = request;

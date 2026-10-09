@@ -681,11 +681,13 @@ async function materializeAndUploadToolResultImages(
       textParts.push(result.summary);
     }
     const resultText = textParts.join('\n');
+    console.log('[M-URL] resultText 前500字符:', resultText.substring(0, 500));
     if (!resultText) continue;
 
     // 扫描图片 URL
     const { scanImageUrlsFromText } = await import('../../multimodal/media');
     const scanned = scanImageUrlsFromText(resultText);
+    console.log('[M-URL] 扫描到图片URL数量:', scanned.length, scanned.map(s => s.url.substring(0, 80)));
 
     for (const item of scanned) {
       try {
