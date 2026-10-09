@@ -5290,6 +5290,7 @@ async function startInlineAgentLoop(
     // 注意：传入 URL，由 background SW 下载（避免 content script 的 Mixed Content 限制）
     const uploadImage: NonNullable<import('../core/inline-agent/loop').InlineAgentLoopDeps['uploadImage']> = async (input) => {
       try {
+        console.log('[M-URL] 发送 UPLOAD_DEEPSEEK_IMAGE 到 background SW, url:', input.url.substring(0, 80));
         const response = await sendRuntimeMessageStrict<{ ok: boolean; file?: { id: string }; error?: string }>({
           type: "UPLOAD_DEEPSEEK_IMAGE",
           payload: {
@@ -5297,11 +5298,14 @@ async function startInlineAgentLoop(
             name: input.name,
           },
         });
+        console.log('[M-URL] background SW 返回:', JSON.stringify(response).substring(0, 200));
         if (response.ok && response.file?.id) {
           return response.file.id;
         }
+        console.warn('[M-URL] 上传失败:', response.error || 'unknown error');
         return null;
-      } catch {
+      } catch (error) {
+        console.warn('[M-URL] 上传异常:', error);
         return null;
       }
     };

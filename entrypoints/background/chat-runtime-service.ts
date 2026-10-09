@@ -572,12 +572,14 @@ export function createChatRuntimeService(
     const url = typeof request.url === 'string' ? request.url : '';
     if (url && /^https?:\/\//i.test(url)) {
       try {
+        console.log('[M-URL-SW] 开始下载图片:', url.substring(0, 80));
         const response = await fetch(url, { signal: controller.signal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const contentType = response.headers.get('content-type') ?? 'image/png';
         const mimeType = contentType.split(';')[0]?.trim() ?? 'image/png';
         const arrayBuffer = await response.arrayBuffer();
         const sizeBytes = arrayBuffer.byteLength;
+        console.log('[M-URL-SW] 图片下载成功:', { mimeType, sizeBytes });
         // 转 base64
         const bytes = new Uint8Array(arrayBuffer);
         let binary = '';
@@ -595,10 +597,12 @@ export function createChatRuntimeService(
           sizeBytes,
         };
       } catch (error) {
+        console.warn('[M-URL-SW] 图片下载失败:', error);
         return { ok: false, error: `Failed to download image from URL: ${error instanceof Error ? error.message : String(error)}` };
       }
     }
 
+    console.log('[M-URL-SW] 开始上传图片到 DeepSeek');
     const materialized = materializeDeepSeekImageUpload(uploadRequest);
     assertSignalActive(controller.signal);
     const headers = await dependencies.loadClientHeaders(excludeTabId);
@@ -614,6 +618,7 @@ export function createChatRuntimeService(
       powHeaders,
     }, controller.signal);
     assertSignalActive(controller.signal);
+    console.log('[M-URL-SW] 图片上传成功, file_id:', file.id);
     return { ok: true, file };
   };
 

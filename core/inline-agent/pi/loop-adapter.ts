@@ -32,7 +32,6 @@ import type { StreamFn, AgentEvent, AgentLoopConfig } from '@earendil-works/pi-a
 import { runAgentLoop } from '@earendil-works/pi-agent-core';
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../../i18n';
 import type { ToolCall, ToolDescriptor, ToolExecutionRecord, ToolProviderIdentity } from '../../types';
-import { materializeImageUrlsFromToolResult } from '../../multimodal/media';
 import { createClientHeaders } from '../../deepseek/adapter';
 import { getDeepSeekApiKey } from '../../chat/api-key';
 import { getOfficialApiChatConfig } from '../../chat/official-api-config';

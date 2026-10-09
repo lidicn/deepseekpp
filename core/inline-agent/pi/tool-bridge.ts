@@ -137,53 +137,11 @@ function createPiAgentTool(
         },
       });
 
-      // M-URL 修复：扫描工具结果中的图片 URL，自动下载并物化为 image content block
-      const contentBlocks: Array<{ type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string }> = [
-        { type: 'text', text: record.result.summary ?? '' },
-      ];
-
-      try {
-        // 收集工具结果中的文本：output JSON + detail + summary
-        const textParts: string[] = [];
-        if (record.result.output !== undefined) {
-          try {
-            textParts.push(JSON.stringify(record.result.output));
-          } catch {
-            // ignore
-          }
-        }
-        if (record.result.detail) {
-          textParts.push(record.result.detail);
-        }
-        if (record.result.summary) {
-          textParts.push(record.result.summary);
-        }
-        const resultText = textParts.join('\n');
-
-        if (resultText) {
-          const { scanImageUrlsFromText, downloadImageAsDataUrl } = await import('../../multimodal/media');
-          const scanned = scanImageUrlsFromText(resultText);
-          for (const item of scanned) {
-            try {
-              const downloaded = await downloadImageAsDataUrl(item.url);
-              // pi-agent ImageContent 格式：{ type: 'image', data: base64, mimeType }
-              const base64Data = downloaded.dataUrl.split(',')[1] ?? '';
-              contentBlocks.push({
-                type: 'image',
-                data: base64Data,
-                mimeType: downloaded.mimeType,
-              });
-            } catch {
-              // 下载失败的 URL 跳过，不阻断主流程
-            }
-          }
-        }
-      } catch {
-        // URL 物化失败时静默降级，仍返回原 text block
-      }
-
+      // M-URL 修复：图片 URL 的下载和上传已移到 loop-adapter.ts 中处理
+      // （通过 background SW 执行，避免 content script 的 Mixed Content 限制）
+      // 这里只返回纯文本结果
       return {
-        content: contentBlocks,
+        content: [{ type: 'text', text: record.result.summary ?? '' }],
         details: record.result,
       };
     },
