@@ -141,8 +141,17 @@ function execCommand(command, { cwd, env, timeoutMs, shell }) {
       reject(new Error(`Failed to spawn command: $ ${command} (${err.message})`));
     });
 
-    child.on('close', (exitCode, signal) => {
+    // DPP-087 fix: listen on 'exit' instead of 'close'.
+    // 'close' fires only after all stdio streams are closed; when /bin/sh is
+    // SIGTERM'd, its child (e.g. sleep) still holds the stdout/stderr pipe
+    // write-end, so 'close' is delayed until the grandchild exits — making
+    // timeout protection completely ineffective for hung commands.
+    child.on('exit', (exitCode, signal) => {
       clearTimers();
+      // Destroy stdio streams so 'close' can fire and pipes are released.
+      if (child.stdout) child.stdout.destroy();
+      if (child.stderr) child.stderr.destroy();
+      if (child.stdin) child.stdin.destroy();
       resolve({
         command,
         shell: shellBin,
@@ -525,8 +534,12 @@ function execProcess(command, args, { cwd, env, input, timeoutMs, maxOutputBytes
       reject(new Error(`Failed to spawn ${command}: ${err.message}`));
     });
 
-    child.on('close', (exitCode, signal) => {
+    // DPP-087 fix: same as execCommand — listen on 'exit' and destroy stdio.
+    child.on('exit', (exitCode, signal) => {
       clearTimers();
+      if (child.stdout) child.stdout.destroy();
+      if (child.stderr) child.stderr.destroy();
+      if (child.stdin) child.stdin.destroy();
       resolve({
         command: [command, ...args].join(' '),
         exitCode: timedOut ? -1 : (exitCode ?? -1),

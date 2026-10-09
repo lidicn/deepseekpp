@@ -485,7 +485,10 @@ export function createChatRuntimeService(
       }
     } catch (error) {
       if (!isExpectedCancellation(turn, activeTurn, generation)) {
-        const message = error instanceof Error ? error.message : String(error);
+        // DPP-082 fix: preserve error name (e.g. DOMException "AbortError")
+        const message = error instanceof Error
+          ? (error.name ? `${error.name}: ${error.message}` : error.message)
+          : String(error);
         emitChunk(turn, { text: '', done: true, error: message }, excludeTabId);
         // Audit fix #6: use error type instead of fragile string matching.
         // DeepSeekAuthError is thrown by the active-client layer on 401/invalid-token

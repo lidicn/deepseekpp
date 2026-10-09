@@ -20,6 +20,7 @@ import { DEEPSEEK_WEB_ROUTES } from '../deepseek/contracts';
 import { createClientHeaders } from '../deepseek/active-client';
 
 const POLL_INTERVAL_MS = 5000; // 5 seconds
+const FETCH_TIMEOUT_MS = 15000; // 15 seconds — history fetch must not hang forever
 const MAX_BACKOFF_MS = 60_000; // 60 seconds ceiling
 const MAX_RETRIES = 3;
 /** How long to wait for the platform to store our re-sent copy before checking. */
@@ -429,24 +430,28 @@ async function fetchHistoryMessages(chatSessionId: string): Promise<HistoryMessa
   console.log('[DPP-REMOTE] Fetching history:', url);
 
   const clientHeaders = createClientHeaders();
-  const response = await fetch(url, {
-    method: 'GET',
-    credentials: 'include',
-    headers: {
-      'Accept': 'application/json',
-      ...clientHeaders,
-    },
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        'Accept': 'application/json',
+        ...clientHeaders,
+      },
+      signal: controller.signal,
+    });
 
-  console.log('[DPP-REMOTE] Response status:', response.status);
+    console.log('[DPP-REMOTE] Response status:', response.status);
 
-  if (!response.ok) {
-    const text = await response.text();
-    console.error('[DPP-REMOTE] Response error:', text.slice(0, 500));
-    throw new Error(`HTTP ${response.status}`);
-  }
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('[DPP-REMOTE] Response error:', text.slice(0, 500));
+      throw new Error(`HTTP ${response.status}`);
+    }
 
-  const data = await response.json();
+    const data = await response.json();
   console.log('[DPP-REMOTE] Response keys:', Object.keys(data));
   
 
@@ -460,6 +465,9 @@ async function fetchHistoryMessages(chatSessionId: string): Promise<HistoryMessa
   console.log('[DPP-REMOTE] Messages count:', messages?.length);
 
   return messages;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function findNewMessages(messages: HistoryMessage[], lastSeenId: number | null): HistoryMessage[] {

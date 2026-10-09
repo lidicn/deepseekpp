@@ -174,6 +174,9 @@ export async function callMcpTool(
     const normalized = normalizeMcpToolResult(server, options.call, result, startedAt, options.maxResultBytes);
     return normalized;
   } catch (err) {
+    if (options.signal?.aborted) {
+      throw err instanceof Error ? err : new DOMException(String(err), 'AbortError');
+    }
     return {
       ok: false,
       summary: 'MCP 工具调用失败',
@@ -187,7 +190,7 @@ export async function callMcpTool(
       error: {
         code: err instanceof McpProtocolError ? err.code : 'mcp_tool_call_failed',
         message: err instanceof Error ? err.message : String(err),
-        retryable: err instanceof McpProtocolError ? err.retryable : true,
+        retryable: err instanceof McpProtocolError ? err.retryable : false,
         details: err instanceof McpProtocolError && err.details?.externalOutcome === 'confirmed'
           ? err.details
           : {

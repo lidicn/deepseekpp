@@ -233,7 +233,7 @@ async function instantiateDeepSeekPowWasm(
   return instance.exports as unknown as DeepSeekPowWasmExports;
 }
 
-function throwIfPowAborted(signal?: AbortSignal): void {
+export function throwIfPowAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
   throw getPowAbortReason(signal);
 }

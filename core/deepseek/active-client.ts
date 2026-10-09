@@ -19,6 +19,7 @@ import {
 } from '../network/request-policy';
 import {
   solvePowChallengeLocally,
+  throwIfPowAborted,
   type PowAnswer,
   type PowChallenge,
 } from './pow';
@@ -803,6 +804,7 @@ async function solvePowChallenge(
   try {
     return await solvePowChallengeLocally(challenge, wasmUrl, signal);
   } catch (err) {
+    throwIfPowAborted(signal);
     const localMessage = err instanceof Error ? err.message : String(err);
     throw new DeepSeekPowError(`DeepSeek PoW challenge failed: ${localMessage}`);
   }

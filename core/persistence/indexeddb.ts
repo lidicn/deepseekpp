@@ -529,7 +529,10 @@ class IndexedDbTableImpl implements IndexedDbTable {
       request.onsuccess = () => {
         const existing = request.result;
         if (existing === undefined) {
-          resolve(0);
+          // DPP-086 fix: reject instead of silently resolving 0.
+          // Callers that don't check the return value would otherwise believe
+          // the update succeeded when the record doesn't exist.
+          reject(new Error(`IndexedDB update failed: record with key ${String(key)} does not exist`));
           return;
         }
         const merged = { ...(existing as Record<string, unknown>), ...changes };
