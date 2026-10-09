@@ -499,7 +499,9 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
           }
           collectedExecutions.push(...executedInStep);
           // M-URL 修复：扫描工具结果中的图片 URL，下载并上传得到 file_id
+          console.log('[M-URL] 工具执行完成，开始物化图片, executedInStep长度:', executedInStep.length);
           await materializeAndUploadToolResultImages(executedInStep, deps.uploadImage, pendingImageFileIds);
+          console.log('[M-URL] 图片物化完成, pendingImageFileIds:', pendingImageFileIds.length);
           postStepComplete();
           stepIndex += 1;
           lastStepCompleted = true;
@@ -648,10 +650,19 @@ async function materializeAndUploadToolResultImages(
   uploadImage: PiLoopAdapterDeps['uploadImage'],
   pendingImageFileIds: string[],
 ): Promise<void> {
-  if (!uploadImage) return;
+  console.log('[M-URL] materializeAndUploadToolResultImages 入口', {
+    executionsCount: executions.length,
+    hasUploadImage: !!uploadImage,
+    pendingCount: pendingImageFileIds.length,
+  });
+  if (!uploadImage) {
+    console.warn('[M-URL] uploadImage 未传入，跳过图片物化');
+    return;
+  }
 
   for (const execution of executions) {
     const result = execution.result;
+    console.log('[M-URL] 处理 execution:', { name: execution.name, ok: result?.ok, hasOutput: result?.output !== undefined });
     if (!result || !result.ok) continue;
 
     // 收集工具结果中的文本：output JSON + detail + summary
