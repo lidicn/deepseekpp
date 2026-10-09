@@ -5298,14 +5298,21 @@ async function startInlineAgentLoop(
             name: input.name,
           },
         });
-        console.log('[M-URL] background SW 返回:', JSON.stringify(response).substring(0, 200));
+        console.log('[M-URL] background SW 返回:', JSON.stringify(response).substring(0, 300));
         if (response.ok && response.file?.id) {
           return response.file.id;
         }
-        console.warn('[M-URL] 上传失败:', response.error || 'unknown error');
+        console.warn('[M-URL] 上传失败:', response.error || 'unknown error, response:', JSON.stringify(response));
         return null;
       } catch (error) {
-        console.warn('[M-URL] 上传异常:', error);
+        console.warn('[M-URL] 上传异常:', {
+          type: typeof error,
+          isError: error instanceof Error,
+          message: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+          keys: error ? Object.keys(error) : [],
+          full: error,
+        });
         return null;
       }
     };
