@@ -9,7 +9,7 @@
  * engine to the pi loop driven by the DS-web StreamFn and tool bridge.
  */
 import { runPiInlineAgentLoop } from './pi/loop-adapter';
-import type { PostFn, ExecuteToolFn } from './pi/loop-adapter';
+import type { PostFn, ExecuteToolFn, PiLoopAdapterDeps } from './pi/loop-adapter';
 import type { InlineAgentStartPayload } from './types';
 
 export type { PostFn, ExecuteToolFn };
@@ -18,12 +18,14 @@ export interface InlineAgentLoopDeps {
   post: PostFn;
   executeTool: ExecuteToolFn;
   signal: AbortSignal;
+  /** M-URL 修复：上传图片到 DeepSeek 服务器，返回 file_id */
+  uploadImage?: PiLoopAdapterDeps['uploadImage'];
 }
 
 export async function runInlineAgentLoop(
   payload: InlineAgentStartPayload,
   deps: InlineAgentLoopDeps,
 ): Promise<void> {
-  const { post, executeTool, signal } = deps;
-  return runPiInlineAgentLoop({ payload, post, executeTool, signal });
+  const { post, executeTool, signal, uploadImage } = deps;
+  return runPiInlineAgentLoop({ payload, post, executeTool, signal, uploadImage });
 }

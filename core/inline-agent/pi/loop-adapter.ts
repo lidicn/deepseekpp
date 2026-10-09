@@ -73,6 +73,13 @@ export interface PiLoopAdapterDeps {
   post: PostFn;
   executeTool: ExecuteToolFn;
   signal: AbortSignal;
+  /** M-URL 修复：上传图片到 DeepSeek 服务器，返回 file_id */
+  uploadImage?: (input: {
+    dataUrl: string;
+    name: string;
+    mimeType: string;
+    sizeBytes: number;
+  }) => Promise<string | null>;
 }
 
 /** Runs the pi engine with the released inline-agent semantics. */
@@ -105,6 +112,8 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
     backend === 'official-api' ? null : session.parentMessageId;
   const collectedExecutions: ToolExecutionRecord[] = [...payload.toolExecutions];
   const executedInStep: ToolExecutionRecord[] = [];
+  // M-URL 修复：待加入下一次请求 refFileIds 的图片 file_id 列表
+  const pendingImageFileIds: string[] = [];
   const descriptorByName = new Map<string, ToolDescriptor>(toolDescriptors.map((d) => [d.invocationName, d]));
   const nudge = {
     active: false, // serializer should build a nudge prompt for the current turn
@@ -241,7 +250,10 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
       toolDescriptors,
       turnDefaults: {
         modelType: promptOptions.modelType,
-        refFileIds: promptOptions.refFileIds,
+        // M-URL 修复：动态合并待处理的图片 file_id
+        get refFileIds() {
+          return [...promptOptions.refFileIds, ...pendingImageFileIds];
+        },
         thinkingEnabled: promptOptions.thinkingEnabled,
         searchEnabled: promptOptions.searchEnabled,
       },
@@ -488,8 +500,8 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
             throw new Error(chainErrorText(nudge.currentTurnIsNudge));
           }
           collectedExecutions.push(...executedInStep);
-          // M-URL 修复：扫描工具结果中的图片 URL 并自动下载物化
-          await materializeToolResultImages(executedInStep);
+          // M-URL 修复：扫描工具结果中的图片 URL，下载并上传得到 file_id
+          await materializeAndUploadToolResultImages(executedInStep, deps.uploadImage, pendingImageFileIds);
           postStepComplete();
           stepIndex += 1;
           lastStepCompleted = true;
@@ -629,15 +641,22 @@ function buildInlineAgentBudgetNotice(locale: SupportedLocale, completedSteps: n
 }
 
 /**
- * M-URL 修复：扫描工具执行结果中的图片 URL，自动下载并物化为 base64 data URL。
- * 下载失败的 URL 会被跳过，不阻断主流程。
+ * M-URL 修复：扫描工具执行结果中的图片 URL，下载并上传到 DeepSeek 得到 file_id。
+ * file_id 会被加入 pendingImageFileIds，在下一次请求时通过 refFileIds 传递给模型。
+ * 下载或上传失败的 URL 会被跳过，不阻断主流程。
  */
-async function materializeToolResultImages(executions: readonly ToolExecutionRecord[]): Promise<void> {
+async function materializeAndUploadToolResultImages(
+  executions: readonly ToolExecutionRecord[],
+  uploadImage: PiLoopAdapterDeps['uploadImage'],
+  pendingImageFileIds: string[],
+): Promise<void> {
+  if (!uploadImage) return;
+
   for (const execution of executions) {
     const result = execution.result;
     if (!result || !result.ok) continue;
 
-    // 收集工具结果中的文本：output JSON + detail
+    // 收集工具结果中的文本：output JSON + detail + summary
     const textParts: string[] = [];
     if (result.output !== undefined) {
       try {
@@ -649,20 +668,33 @@ async function materializeToolResultImages(executions: readonly ToolExecutionRec
     if (result.detail) {
       textParts.push(result.detail);
     }
+    if (result.summary) {
+      textParts.push(result.summary);
+    }
     const resultText = textParts.join('\n');
     if (!resultText) continue;
 
-    // 扫描并下载图片 URL
-    const imageMap = await materializeImageUrlsFromToolResult(resultText);
-    if (imageMap.size === 0) continue;
+    // 扫描图片 URL
+    const { scanImageUrlsFromText, downloadImageAsDataUrl } = await import('../../multimodal/media');
+    const scanned = scanImageUrlsFromText(resultText);
 
-    // 存储到 result.materializedImages
-    const materializedImages = Array.from(imageMap.entries()).map(([url, info]) => ({
-      url,
-      dataUrl: info.dataUrl,
-      mimeType: info.mimeType,
-      sizeBytes: info.sizeBytes,
-    }));
-    result.materializedImages = materializedImages;
+    for (const item of scanned) {
+      try {
+        // 下载图片
+        const downloaded = await downloadImageAsDataUrl(item.url);
+        // 上传到 DeepSeek 得到 file_id
+        const fileId = await uploadImage({
+          dataUrl: downloaded.dataUrl,
+          name: `tool-result-image-${Date.now()}.png`,
+          mimeType: downloaded.mimeType,
+          sizeBytes: downloaded.sizeBytes,
+        });
+        if (fileId) {
+          pendingImageFileIds.push(fileId);
+        }
+      } catch {
+        // 下载或上传失败的 URL 跳过，不阻断主流程
+      }
+    }
   }
 }

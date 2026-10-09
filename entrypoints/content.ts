@@ -5286,6 +5286,27 @@ async function startInlineAgentLoop(
 
   let shouldReloadNativeHistory = false;
   try {
+    // M-URL 修复：上传图片到 DeepSeek 服务器，返回 file_id
+    const uploadImage: NonNullable<import('../core/inline-agent/loop').InlineAgentLoopDeps['uploadImage']> = async (input) => {
+      try {
+        const response = await sendRuntimeMessageStrict<{ ok: boolean; file?: { id: string }; error?: string }>({
+          type: "UPLOAD_DEEPSEEK_IMAGE",
+          payload: {
+            dataUrl: input.dataUrl,
+            name: input.name,
+            mimeType: input.mimeType,
+            sizeBytes: input.sizeBytes,
+          },
+        });
+        if (response.ok && response.file?.id) {
+          return response.file.id;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    };
+
     await runInlineAgentLoop(
       {
         ...payload,
@@ -5296,7 +5317,7 @@ async function startInlineAgentLoop(
           ),
         ],
       },
-      { post, executeTool, signal: abort.signal },
+      { post, executeTool, signal: abort.signal, uploadImage },
     );
     if (terminalTasks.length > 0) {
       const terminalResults = await Promise.all(terminalTasks);
