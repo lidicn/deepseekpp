@@ -8,6 +8,8 @@ import {
   MEMORY_DATABASE_NAME,
   MEMORY_DATABASE_VERSION,
   MEMORY_TABLE_NAME,
+  ANCHOR_TABLE_NAME,
+  ANCHOR_TABLE_SCHEMA,
   MEMORY_TABLE_SCHEMAS,
   migrateMemoryV1RecordToV2,
   migrateMemoryV2RecordToV3,
@@ -18,8 +20,8 @@ import {
 } from './codec';
 
 // The IndexedDB version is the logical schema version x10 (the convention
-// dexie established internally): released databases live at 10/20/30 and
-// `assertCurrentMemoryDatabaseVersion` checks `backendDB().version === 30`.
+// dexie established internally): released databases live at 10/20/30/40 and
+// `assertCurrentMemoryDatabaseVersion` checks `backendDB().version === 40`.
 const db = new IndexedDb(MEMORY_DATABASE_NAME, [
   {
     version: 10,
@@ -44,8 +46,16 @@ const db = new IndexedDb(MEMORY_DATABASE_NAME, [
       });
     },
   },
+  {
+    version: 40,
+    stores: {
+      [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[3],
+      [ANCHOR_TABLE_NAME]: ANCHOR_TABLE_SCHEMA,
+    },
+  },
 ]);
 
+export const memoryDb = db;
 const memories = db.table(MEMORY_TABLE_NAME);
 
 export async function getAllMemories(): Promise<Memory[]> {

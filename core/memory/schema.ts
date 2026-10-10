@@ -1,12 +1,15 @@
 export const MEMORY_DATABASE_NAME = 'DeepSeekPP';
-export const MEMORY_DATABASE_VERSION = 3 as const;
+export const MEMORY_DATABASE_VERSION = 4 as const;
 export const MEMORY_TABLE_NAME = 'memories';
+export const ANCHOR_TABLE_NAME = 'chain_anchors';
 
 export const MEMORY_TABLE_SCHEMAS = {
   1: '++id, type, name, pinned, createdAt, updatedAt, lastAccessedAt',
   2: '++id, type, name, pinned, createdAt, updatedAt, lastAccessedAt, syncId',
   3: '++id, type, name, pinned, createdAt, updatedAt, lastAccessedAt, syncId, scope, projectId',
 } as const;
+
+export const ANCHOR_TABLE_SCHEMA = 'sessionId, mode, updatedAt';
 
 export type PersistedMemoryRecord = Record<string, unknown>;
 
