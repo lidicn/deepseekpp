@@ -10,6 +10,8 @@ import {
   MEMORY_TABLE_NAME,
   ANCHOR_TABLE_NAME,
   ANCHOR_TABLE_SCHEMA,
+  INDEX_TABLE_NAME,
+  INDEX_TABLE_SCHEMA,
   MEMORY_TABLE_SCHEMAS,
   migrateMemoryV1RecordToV2,
   migrateMemoryV2RecordToV3,
@@ -20,8 +22,8 @@ import {
 } from './codec';
 
 // The IndexedDB version is the logical schema version x10 (the convention
-// dexie established internally): released databases live at 10/20/30/40 and
-// `assertCurrentMemoryDatabaseVersion` checks `backendDB().version === 40`.
+// dexie established internally): released databases live at 10/20/30/40/50 and
+// `assertCurrentMemoryDatabaseVersion` checks `backendDB().version === 50`.
 const db = new IndexedDb(MEMORY_DATABASE_NAME, [
   {
     version: 10,
@@ -51,6 +53,14 @@ const db = new IndexedDb(MEMORY_DATABASE_NAME, [
     stores: {
       [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[3],
       [ANCHOR_TABLE_NAME]: ANCHOR_TABLE_SCHEMA,
+    },
+  },
+  {
+    version: 50,
+    stores: {
+      [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[3],
+      [ANCHOR_TABLE_NAME]: ANCHOR_TABLE_SCHEMA,
+      [INDEX_TABLE_NAME]: INDEX_TABLE_SCHEMA,
     },
   },
 ]);

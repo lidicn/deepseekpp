@@ -109,7 +109,7 @@ describe('Memory historical IndexedDB compatibility', () => {
       ...MEMORY_V3_RECORD,
       futureDatabaseField: { preserve: true },
     };
-    await createIndexedDbAtVersion(MEMORY_DATABASE_NAME, 50, (db) => {
+    await createIndexedDbAtVersion(MEMORY_DATABASE_NAME, 60, (db) => {
       createStore(db, MEMORY_TABLE_NAME, memorySeedSpec(3));
     });
     await addIndexedDbRecords(MEMORY_DATABASE_NAME, MEMORY_TABLE_NAME, [futureRecord]);
