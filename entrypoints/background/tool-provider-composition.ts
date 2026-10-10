@@ -1,5 +1,6 @@
 import {
   deleteMemory,
+  getAllMemories,
   getMemoryById,
   saveMemory,
   updateMemory,
@@ -72,6 +73,9 @@ const memoryRuntime: MemoryToolRuntime = {
   },
   async deleteMemory(id: number) {
     await deleteMemory(id);
+  },
+  async getAllMemories() {
+    return await getAllMemories();
   },
 };
 

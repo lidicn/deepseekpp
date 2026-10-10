@@ -61,6 +61,9 @@ describe('memory tool validation', () => {
       },
       async updateMemory() {},
       async deleteMemory() {},
+      async getAllMemories() {
+        return [];
+      },
     };
 
     const result = await executeMemoryToolCall(runtime, memorySaveCall({
@@ -87,6 +90,9 @@ describe('memory tool validation', () => {
       },
       async updateMemory() {},
       async deleteMemory() {},
+      async getAllMemories() {
+        return [];
+      },
     };
 
     const english = await executeMemoryToolCall(runtime, memorySaveCall({
@@ -120,6 +126,9 @@ describe('memory tool validation', () => {
       },
       async updateMemory() {},
       async deleteMemory() {},
+      async getAllMemories() {
+        return [];
+      },
     };
 
     const result = await executeMemoryToolCall(runtime, memorySaveCall({

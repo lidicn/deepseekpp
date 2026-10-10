@@ -30,6 +30,7 @@ export interface MemoryToolRuntime {
   getMemoryById(id: number): Promise<Memory | null>;
   updateMemory(memory: Memory): Promise<void>;
   deleteMemory(id: number): Promise<void>;
+  getAllMemories(): Promise<Memory[]>;
 }
 
 export function createMemoryToolProviderIdentity(
@@ -347,15 +348,41 @@ async function searchMemory(
     return failure(call, 'memory_invalid_query', '检索关键词不能为空', undefined, false);
   }
 
-  // 从运行时获取所有记忆，然后用 selector 检索
-  // 注意：runtime 接口里没有 getAllMemories，这里简化为返回提示
-  // 完整实现需要扩展 MemoryToolRuntime 接口
+  const topK = Number(call.payload.topK ?? 5);
+
+  // 1. 拉取所有记忆
+  const allMemories = await runtime.getAllMemories();
+  if (allMemories.length === 0) {
+    return success(call, locale, '当前没有任何记忆。', undefined, { count: 0 });
+  }
+
+  // 2. 用 selector 检索（复用现有逻辑）
+  const { selectMemories, formatMemoriesBlock } = await import('../memory/selector');
+  const selected = selectMemories(query, allMemories, {
+    budget: topK * 200, // 每条记忆约 200 token
+  });
+
+  if (selected.length === 0) {
+    return success(
+      call,
+      locale,
+      `没有找到与"${query}"相关的记忆。`,
+      undefined,
+      { query, count: 0 },
+    );
+  }
+
+  // 3. 截取 top-K 并格式化
+  const topResults = selected.slice(0, topK);
+  const header = `找到 ${topResults.length} 条与"${query}"相关的记忆：\n`;
+  const body = formatMemoriesBlock(topResults);
+
   return success(
     call,
     locale,
-    `检索完成："${query}"`,
-    `（完整检索结果需要扩展 MemoryToolRuntime 接口）`,
-    { query, topK: Number(call.payload.topK ?? 5) },
+    header + body,
+    undefined,
+    { query, count: topResults.length },
   );
 }
 
