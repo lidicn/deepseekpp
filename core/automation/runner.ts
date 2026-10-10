@@ -140,6 +140,22 @@ export async function runDeepSeekAutomation(
     );
     options.execution?.assertActive();
     const nextParentMessageId = history?.parentMessageId ?? finalAssistantMessageId;
+
+    // Phase 3: Extractor Hook — 自动提取记忆候选
+    try {
+      const { runExtractionHook, updateChainAfterTurn } = await import('../memory/extractor-hook');
+      await runExtractionHook(
+        chatSessionId,
+        request.prompt,
+        stream.assistantText,
+        1, // turnCount（简化版，后续从 chain anchor 取）
+        null, // lastExtractionTurn（简化版）
+      );
+      await updateChainAfterTurn(chatSessionId, String(finalAssistantMessageId));
+    } catch {
+      // 记忆提取失败不影响主流程
+    }
+
     const result: AutomationRunnerSuccess = {
       ok: true,
       chatSessionId,
@@ -235,11 +251,16 @@ async function submitAutomationPrompt(
   execution?.assertActive();
   const powHeaders = await deepSeekClient.createPowHeaders(clientHeaders, requestContext);
   execution?.assertActive();
+
+  // Phase 3: L2 记忆注入 — 新会话根消息时自动注入记忆摘要
+  const { injectL2Digest } = await import('../memory/l2-injector');
+  const { prompt: injectedPrompt } = await injectL2Digest(chatSessionId, prompt, parentMessageId);
+
   return deepSeekClient.submitPrompt({
     chatSessionId,
     parentMessageId,
     modelType: request.promptOptions.modelType,
-    prompt,
+    prompt: injectedPrompt,
     refFileIds: request.promptOptions.refFileIds,
     thinkingEnabled: request.promptOptions.thinkingEnabled,
     searchEnabled: request.promptOptions.searchEnabled,
