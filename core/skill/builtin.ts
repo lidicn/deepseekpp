@@ -6,7 +6,7 @@ import type { Skill } from '../types';
 type BuiltinSkillText = Pick<Skill, 'description' | 'instructions'>;
 
 function renderMemoryToolSchemas(locale: SupportedLocale): string {
-  return ['memory_update', 'memory_delete']
+  return ['memory_update', 'memory_delete', 'memory_search']
     .map((name) => {
       const descriptor = createMemoryToolDescriptors(locale).find((tool) => tool.name === name);
       if (!descriptor) throw new Error(`Missing memory tool descriptor: ${name}`);
@@ -80,6 +80,9 @@ You MUST strictly follow the above defined tool name and parameter schemas to in
 
 ### 列出
 列出"已有记忆"中的所有条目（含 ID），无需调用工具。
+
+### 检索（用户想查历史记忆）
+当用户想回忆之前说过的内容、查找特定主题的记忆时，调用 memory_search 工具检索。
 
 ## 规则
 - 先正常回复用户，工具调用块附在回复最末尾
