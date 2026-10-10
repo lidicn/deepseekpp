@@ -41,6 +41,8 @@ export const tool = {
     notFoundDetail: 'ID {id} does not exist',
     updated: 'Updated',
     deleted: 'Deleted',
+    searchTitle: 'Search memories',
+    searchDescription: 'Search long-term memories. Call when you need to recall user preferences, project constraints, historical decisions, etc.',
   },
   web: {
     providerName: 'DeepSeek++ Web Search',

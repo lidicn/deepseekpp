@@ -133,8 +133,8 @@ export function createMemoryToolDescriptors(
     provider,
     name: 'memory_search',
     invocationName: 'memory_search',
-    title: '检索记忆',
-    description: '检索长期记忆。当你需要回忆用户偏好、项目约束、历史决策等信息时调用。',
+    title: translate(locale, 'tool.memory.searchTitle'),
+    description: translate(locale, 'tool.memory.searchDescription'),
     inputSchema: {
       type: 'object',
       properties: {

@@ -41,6 +41,8 @@ export const tool = {
     notFoundDetail: 'ID {id} 不存在',
     updated: '已更新',
     deleted: '已删除',
+    searchTitle: '检索记忆',
+    searchDescription: '检索长期记忆。当你需要回忆用户偏好、项目约束、历史决策等信息时调用。',
   },
   web: {
     providerName: 'DeepSeek++ Web Search',
