@@ -280,8 +280,17 @@ export function createChatRuntimeService(
 
       const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
       if (toolCalls.length === 0) {
-        // Audit fix #2: when the stream was truncated mid-response (finished=false),
-        // emit an error chunk instead of silently pretending the partial answer is complete.
+        // 报告 R3 修复：流被截断且无工具调用时自动续轮，而非静默 done:true。
+        // 只有在 parentMessageId 有效时才能续轮（首次请求即截断时 responseMessageId 可能为 null）。
+        if (!result.finished && chatParentMessageId != null) {
+          console.log('[chat-runtime] truncated stream without tool calls, auto-continuing', { step });
+          currentInput = {
+            ...currentInput,
+            prompt: dependencies.continueWithToolResults('(stream interrupted, no new tool results — please continue completing your answer)'),
+            parentMessageId: chatParentMessageId,
+          };
+          continue;
+        }
         emitChunk(turn, {
           text: fullText,
           done: true,
@@ -409,7 +418,18 @@ export function createChatRuntimeService(
       ];
       const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
       if (toolCalls.length === 0) {
-        // Audit fix #2: official-API path — emit error on truncated streams.
+        // 报告 R3 修复：official-API 路径 —— 截断且无工具时自动续轮。
+        if (!result.finished) {
+          console.log('[chat-runtime] official-api truncated stream without tool calls, auto-continuing', { step });
+          currentMessages = [
+            ...currentMessages,
+            {
+              role: 'user',
+              content: dependencies.continueWithToolResults('(stream interrupted, no new tool results — please continue completing your answer)'),
+            },
+          ];
+          continue;
+        }
         emitChunk(turn, {
           text: '',
           done: true,
@@ -735,10 +755,38 @@ export function createChatRuntimeService(
   });
 }
 
+// 报告 R4 修复：侧面板工具结果序列化加截断，与 inline-agent renderToolResult 语义一致
+// (detail 4000 / output 8000 / error.message 400)，避免累积到 4MB 请求体硬上限。
+const SIDEBAR_TOOL_RESULT_DETAIL_MAX = 4000;
+const SIDEBAR_TOOL_RESULT_OUTPUT_MAX = 8000;
+const SIDEBAR_TOOL_RESULT_ERROR_MAX = 400;
+
+function clampSidebarText(value: string | undefined, maxLength: number): string | undefined {
+  if (!value) return value;
+  return value.length > maxLength ? `${value.slice(0, maxLength)}\n...[truncated]` : value;
+}
+
 function serializeToolExecutions(executions: readonly ToolExecutionRecord[]): string {
-  return executions.map((execution) => (
-    `<${execution.name}_result>\n${JSON.stringify(execution.result)}\n</${execution.name}_result>`
-  )).join('\n');
+  return executions.map((execution) => {
+    const result = execution.result;
+    const serialized = {
+      ok: result.ok,
+      summary: result.summary,
+      detail: clampSidebarText(result.detail, SIDEBAR_TOOL_RESULT_DETAIL_MAX),
+      error: result.error
+        ? {
+            code: result.error.code,
+            message: clampSidebarText(result.error.message, SIDEBAR_TOOL_RESULT_ERROR_MAX) ?? '',
+            retryable: result.error.retryable,
+          }
+        : undefined,
+      output: result.output === undefined
+        ? undefined
+        : clampSidebarText(JSON.stringify(result.output), SIDEBAR_TOOL_RESULT_OUTPUT_MAX),
+      truncated: result.truncated === true,
+    };
+    return `<${execution.name}_result>\n${JSON.stringify(serialized)}\n</${execution.name}_result>`;
+  }).join('\n');
 }
 
 function isExpectedCancellation(

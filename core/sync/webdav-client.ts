@@ -1,5 +1,13 @@
 import type { WebdavSyncConfig } from '../types';
 
+// WebDAV 请求超时：服务器无响应时避免同步永久挂起（ADM 审计 X4）。
+// 大文件上传下载走 streaming，30s 对建连 + 首字节足够。
+const WEBDAV_FETCH_TIMEOUT_MS = 30_000;
+
+function webdavFetch(url: string, init: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(WEBDAV_FETCH_TIMEOUT_MS) });
+}
+
 function buildUrl(config: WebdavSyncConfig, file?: string): string {
   const base = config.url.replace(/\/+$/, '');
   const path = config.remotePath.replace(/^\/+|\/+$/g, '');
@@ -27,7 +35,7 @@ function toBase64Utf8(value: string): string {
 
 export async function webdavTest(config: WebdavSyncConfig): Promise<void> {
   const url = config.url.replace(/\/+$/, '') + '/';
-  const res = await fetch(url, {
+  const res = await webdavFetch(url, {
     method: 'PROPFIND',
     headers: headers(config, { Depth: '0' }),
   });
@@ -39,7 +47,7 @@ export async function webdavTest(config: WebdavSyncConfig): Promise<void> {
 
 export async function webdavMkcol(config: WebdavSyncConfig): Promise<void> {
   const url = buildUrl(config) + '/';
-  const res = await fetch(url, {
+  const res = await webdavFetch(url, {
     method: 'MKCOL',
     headers: headers(config),
   });
@@ -50,7 +58,7 @@ export async function webdavMkcol(config: WebdavSyncConfig): Promise<void> {
 
 export async function webdavGet(config: WebdavSyncConfig, file: string): Promise<string | null> {
   const url = buildUrl(config, file);
-  const res = await fetch(url, {
+  const res = await webdavFetch(url, {
     method: 'GET',
     headers: headers(config),
   });
@@ -61,7 +69,7 @@ export async function webdavGet(config: WebdavSyncConfig, file: string): Promise
 
 export async function webdavPut(config: WebdavSyncConfig, file: string, content: string): Promise<void> {
   const url = buildUrl(config, file);
-  const res = await fetch(url, {
+  const res = await webdavFetch(url, {
     method: 'PUT',
     headers: headers(config, { 'Content-Type': 'application/json; charset=utf-8' }),
     body: content,

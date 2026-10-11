@@ -1,7 +1,20 @@
-import type { ToolExecutionRecord } from '../types';
-import { MCP_CAPABILITY_TOOL_PROVIDER_ID } from '../mcp/capability-contract';
+import type { ToolDescriptor, ToolExecutionRecord } from '../types';
 
 export { INCOMPLETE_TOOL_CALL_ERROR_CODE } from '../tool/execution-error';
+
+/**
+ * Tools that do NOT need a continuation turn after execution.
+ *
+ * These are pure local side-effects whose result is already rendered in the
+ * UI and does not need to be fed back to the model. Everything else defaults
+ * to continuable — this avoids the "add a new local tool and forget to update
+ * the whitelist" class of bug (artifact_create / sandbox_run were dropped
+ * this way, causing the tool-result断流 root cause).
+ */
+const NO_CONTINUATION_TOOL_NAMES = new Set<string>([
+  // Add tool names here when a tool genuinely should not trigger a continuation
+  // loop. Keep this list small and well-documented.
+]);
 
 /**
  * An incomplete streamed call is a recovery-only execution record. It must be
@@ -11,25 +24,28 @@ export { INCOMPLETE_TOOL_CALL_ERROR_CODE } from '../tool/execution-error';
 export function selectContinuableToolExecutions(
   executions: readonly ToolExecutionRecord[],
 ): ToolExecutionRecord[] {
-  return executions.filter((execution) =>
-    !execution.pending &&
-    (
-      // All MCP tools (streamable_http, native_messaging, etc.)
-      execution.provider?.kind === 'mcp' ||
-      // Legacy / special provider IDs
-      execution.provider?.id === MCP_CAPABILITY_TOOL_PROVIDER_ID ||
-      execution.provider?.id === 'web' ||
-      execution.provider?.id === 'browser_control' ||
-      // Memory tools must continue so the successful write is reported back to
-      // the model; without this the final reply is dropped (upstream #566).
-      execution.provider?.id === 'memory' ||
-      // Built-in web/browser tools
-      execution.name === 'web_search' ||
-      execution.name === 'web_fetch' ||
-      execution.name.startsWith('browser_') ||
-      // Native messaging tools (shell, python, local_file_*, etc.)
-      execution.name.startsWith('shell_') ||
-      execution.name.startsWith('python_') ||
-      execution.name.startsWith('local_')
-    ));
+  return executions.filter(
+    (execution) =>
+      !execution.pending &&
+      !NO_CONTINUATION_TOOL_NAMES.has(execution.name),
+  );
+}
+
+/**
+ * Single authority for the tool descriptor catalog passed into the inline
+ * agent continuation loop. Must produce the same membership as
+ * selectContinuableToolExecutions so the model can re-emit every tool whose
+ * execution record is reported back.
+ *
+ * Previously content.ts maintained a duplicate whitelist here with a different
+ * (stricter) membership — memory_* / shell_* / python_* / local_* triggered
+ * continuation but were absent from the loop's Available Tools, so the model
+ * could see a tool had run but could not re-invoke it.
+ */
+export function filterContinuableToolDescriptors(
+  descriptors: readonly ToolDescriptor[],
+): ToolDescriptor[] {
+  return descriptors.filter(
+    (d) => !NO_CONTINUATION_TOOL_NAMES.has(d.name),
+  );
 }

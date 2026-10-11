@@ -108,6 +108,8 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
   const executedInStep: ToolExecutionRecord[] = [];
   // M-URL 修复：待加入下一次请求 refFileIds 的图片 file_id 列表
   const pendingImageFileIds: string[] = [];
+  // R2 修复：图片物化在后台跑，不阻塞 turn_end；下一次请求前 await 汇合
+  let pendingImageMaterialization: Promise<void> | null = null;
   const descriptorByName = new Map<string, ToolDescriptor>(toolDescriptors.map((d) => [d.invocationName, d]));
   const nudge = {
     active: false, // serializer should build a nudge prompt for the current turn
@@ -289,6 +291,11 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
   // One 2.5–6.5s throttle delay before every DS request except the first
   // (released request pacing).
   const pacedStreamFn: StreamFn = async (model, context, options) => {
+    // R2 修复：等待上一步的后台图片物化完成，确保 pendingImageFileIds 已填充
+    if (pendingImageMaterialization) {
+      await pendingImageMaterialization;
+      pendingImageMaterialization = null;
+    }
     if (requestCount > 0) {
       await waitBetweenDeepSeekRequests(signal);
     }
@@ -389,6 +396,11 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
           collectedExecutions,
           stripRetiredArtifactProtocolBlocks(lastTurnText),
         )) {
+        // R4 修复：nudge 受 maxNudges 封顶（之前是死字段，只增不减）
+        if (nudge.count >= budget.maxNudges) {
+          console.warn(`[inline-agent] nudge budget exhausted (${nudge.count}/${budget.maxNudges}), stopping nudges`);
+          return [];
+        }
         nudge.count += 1;
         nudge.nudgedInStep = true;
         nudge.pendingTurn = true;
@@ -498,10 +510,17 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
             throw new Error(chainErrorText(nudge.currentTurnIsNudge));
           }
           collectedExecutions.push(...executedInStep);
-          // M-URL 修复：扫描工具结果中的图片 URL，下载并上传得到 file_id
-          await materializeAndUploadToolResultImages(executedInStep, deps.uploadImage, pendingImageFileIds);
+          // R2 修复：图片物化移出阻塞路径。先推进 UI 与预算，物化在后台跑；
+          // 下一次 LLM 请求前在 pacedStreamFn 里 await 汇合，确保 refFileIds 已填充。
           postStepComplete();
           stepIndex += 1;
+          pendingImageMaterialization = materializeAndUploadToolResultImages(
+            executedInStep,
+            deps.uploadImage,
+            pendingImageFileIds,
+          ).catch((error) => {
+            console.warn('[M-URL] 后台图片物化异常:', error);
+          });
           lastStepCompleted = true;
           stepText = '';
           lastPostedText = '';

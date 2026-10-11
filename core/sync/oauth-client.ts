@@ -4,6 +4,11 @@ import {
   type SyncIdentityPort,
 } from './identity-port';
 
+// OAuth token 请求超时：token endpoint 应快速响应，15s 足够（ADM 审计 X4）。
+const OAUTH_TOKEN_FETCH_TIMEOUT_MS = 15_000;
+// 带认证的业务请求（上传/下载）可能更慢，30s。
+const OAUTH_AUTHED_FETCH_TIMEOUT_MS = 30_000;
+
 /**
  * Shared OAuth helpers for cloud-sync providers (Google Drive, OneDrive).
  *
@@ -134,6 +139,7 @@ export async function getAccessToken(
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
+    signal: AbortSignal.timeout(OAUTH_TOKEN_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
@@ -180,6 +186,7 @@ export async function authedFetch(
   const res = await fetch(input, {
     ...init,
     headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${token}` },
+    signal: init.signal ?? AbortSignal.timeout(OAUTH_AUTHED_FETCH_TIMEOUT_MS),
   });
   if (res.status === 401) {
     invalidateToken(cacheKey);
@@ -187,6 +194,7 @@ export async function authedFetch(
     return fetch(input, {
       ...init,
       headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${fresh}` },
+      signal: init.signal ?? AbortSignal.timeout(OAUTH_AUTHED_FETCH_TIMEOUT_MS),
     });
   }
   return res;
@@ -205,6 +213,7 @@ export async function exchangeCodeForTokens(
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body,
+    signal: AbortSignal.timeout(OAUTH_TOKEN_FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');

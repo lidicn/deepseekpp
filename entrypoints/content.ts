@@ -94,6 +94,7 @@ import {
 import {
   INCOMPLETE_TOOL_CALL_ERROR_CODE,
   selectContinuableToolExecutions,
+  filterContinuableToolDescriptors,
 } from "../core/inline-agent/execution-policy";
 import {
   INLINE_AGENT_CONTINUATION_PLACEHOLDER,
@@ -289,8 +290,10 @@ const REASONING_HOST_ANCESTOR_SCAN_DEPTH = 4;
  * the agent loop even without prior tool executions — pure-text "继续完成"
  * prompts were previously silently skipped (断流 root cause).
  */
+// R5 修复：前缀匹配，允许尾部内容（如"继续完成这个报告"）。
+// 原正则 ^...$ 严格全匹配，用户换个说法就命中不了，R1 的静默跳过直接暴露。
 const USER_CONTINUATION_RE =
-  /^(?:继续(?:完成|往下|接着|说|写|生成)|接着(?:说|写|继续|往下)|往下(?:说|写|继续)|go on|continue(?: writing| speaking| generating)?|keep going|next(?: please)?)\s*[。.!?！？]?\s*$/i;
+  /^(?:继续(?:完成|往下|接着|说|写|生成)?|接着(?:说|写|继续|往下)|往下(?:说|写|继续)|go on|continue(?: writing| speaking| generating)?|keep going|next(?: please)?)/i;
 const INLINE_AGENT_LIVE_TARGET_WAIT_MS = 1_500;
 const TOKEN_SPEED_BADGE_ID = "dpp-token-speed-badge";
 const TOKEN_SPEED_STYLE_ID = "dpp-token-speed-css";
@@ -4826,8 +4829,8 @@ async function startInlineAgentIfNeeded(
     return;
   }
 
-  // Collect executions that should trigger a continuation:
-  // MCP tools + local web and browser-control tools.
+  // Collect executions that should trigger a continuation.
+  // Single authority in execution-policy.ts: default-continue, explicit exclude.
   const continuableExecutions = selectContinuableToolExecutions(executions);
   // User explicitly asked to continue (e.g. "继续完成", "continue") — even
   // without tool executions, we should start the agent loop so the model can
@@ -4887,16 +4890,7 @@ async function startInlineAgentIfNeeded(
       thinkingEnabled: complete.promptOptions.thinkingEnabled,
       refFileIds: complete.promptOptions.refFileIds,
     },
-    toolDescriptors: authorization.descriptors.filter(
-      (d) =>
-        d.provider?.kind === "mcp" ||
-        d.provider?.id === MCP_CAPABILITY_TOOL_PROVIDER_ID ||
-        d.provider?.id === "web" ||
-        d.provider?.id === "browser_control" ||
-        d.name === "web_search" ||
-        d.name === "web_fetch" ||
-        d.name.startsWith("browser_"),
-    ),
+    toolDescriptors: filterContinuableToolDescriptors(authorization.descriptors),
     locale: currentContentLocale,
     powWasmUrl: chrome.runtime.getURL(DEEPSEEK_POW_WASM_PATH),
   };
