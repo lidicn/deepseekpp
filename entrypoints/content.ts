@@ -588,6 +588,11 @@ let agentRunningToolCount = 0;
 let agentConsoleStartedAt = 0;
 let agentConsoleElapsedSeconds = 0;
 let agentConsoleTimer: ReturnType<typeof setInterval> | null = null;
+/** 输入框常驻状态条（loop 运行时显示，始终在用户视口内） */
+let agentStatusBarEl: HTMLElement | null = null;
+let agentStatusBarRemoveTimer: ReturnType<typeof setTimeout> | null = null;
+let agentStatusBarCurrentTool: string | null = null;
+let agentStatusBarCurrentStep = 0;
 const pendingInlineAgentLoopTasks = new Set<Promise<void>>();
 let toolOpenTagRe = buildToolOpenTagRegex(currentToolDescriptors);
 let toolMarkerRe = buildToolMarkerRegex(currentToolDescriptors);
@@ -4824,9 +4829,14 @@ async function startInlineAgentIfNeeded(
   // Continuation turns are produced by the agent loop itself and are already
   // handled by isInlineAgentResponseComplete above.
   if (isInlineAgentRunning()) {
-    console.log('[DPP-AUTO] skip: inline agent already running');
-    showContentToast(contentT("content.agent.concurrencyGuard"), "warning");
-    return;
+    console.log('[DPP-AUTO] concurrency: inline agent already running, showing confirm dialog');
+    const shouldInterrupt = await showAgentConcurrencyConfirm();
+    if (!shouldInterrupt) {
+      console.log('[DPP-AUTO] concurrency: user cancelled, skipping new loop');
+      return;
+    }
+    console.log('[DPP-AUTO] concurrency: user confirmed, stopping old loop and starting new one');
+    stopInlineAgent();
   }
 
   // Collect executions that should trigger a continuation.
@@ -5140,9 +5150,423 @@ function teardownInlineAgentPanel(): void {
   inlineAgentContainerObserver = null;
 }
 
+/* ------------------------------------------------------------------ */
+/* 输入框常驻状态条：loop 运行时始终在用户视口内显示执行状态       */
+/* ------------------------------------------------------------------ */
+
+const AGENT_STATUS_BAR_STYLE_ID = "dpp-agent-status-bar-css";
+const AGENT_STATUS_BAR_ID = "dpp-agent-status-bar";
+
+function injectAgentStatusBarStyles(): void {
+  if (document.getElementById(AGENT_STATUS_BAR_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = AGENT_STATUS_BAR_STYLE_ID;
+  style.textContent = `
+    #${AGENT_STATUS_BAR_ID} {
+      position: sticky;
+      bottom: 0;
+      z-index: 9998;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      margin-bottom: 8px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #1a1a2e;
+      background: linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%);
+      border: 1px solid #c7d2fe;
+      box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15);
+      animation: dpp-status-bar-in 0.25s ease-out;
+    }
+    #${AGENT_STATUS_BAR_ID}[data-phase="error"] {
+      background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+      border-color: #fecaca;
+    }
+    #${AGENT_STATUS_BAR_ID}[data-phase="complete"] {
+      background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
+      border-color: #bbf7d0;
+    }
+    #${AGENT_STATUS_BAR_ID}[data-phase="stopped"] {
+      background: linear-gradient(135deg, #fafafa 0%, #f4f4f5 100%);
+      border-color: #e4e4e7;
+      color: #71717a;
+    }
+    .dpp-status-bar-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #6366f1;
+      flex-shrink: 0;
+    }
+    #${AGENT_STATUS_BAR_ID}[data-phase="running"] .dpp-status-bar-dot,
+    #${AGENT_STATUS_BAR_ID}[data-phase="starting"] .dpp-status-bar-dot {
+      animation: dpp-status-pulse 1.2s ease-in-out infinite;
+    }
+    #${AGENT_STATUS_BAR_ID}[data-phase="error"] .dpp-status-bar-dot { background: #ef4444; }
+    #${AGENT_STATUS_BAR_ID}[data-phase="complete"] .dpp-status-bar-dot { background: #22c55e; }
+    #${AGENT_STATUS_BAR_ID}[data-phase="stopped"] .dpp-status-bar-dot { background: #a1a1aa; }
+    .dpp-status-bar-text {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .dpp-status-bar-text strong {
+      font-weight: 600;
+    }
+    .dpp-status-bar-tool {
+      color: #6366f1;
+      font-family: "SF Mono", Consolas, monospace;
+      font-size: 12px;
+      background: rgba(99, 102, 241, 0.1);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+    .dpp-status-bar-btn {
+      padding: 3px 10px;
+      border-radius: 6px;
+      border: 1px solid #c7d2fe;
+      background: #fff;
+      color: #4f46e5;
+      font-size: 12px;
+      cursor: pointer;
+      transition: all 0.15s;
+      flex-shrink: 0;
+    }
+    .dpp-status-bar-btn:hover {
+      background: #eef2ff;
+      border-color: #a5b4fc;
+    }
+    .dpp-status-bar-btn.stop {
+      color: #dc2626;
+      border-color: #fecaca;
+    }
+    .dpp-status-bar-btn.stop:hover {
+      background: #fef2f2;
+      border-color: #fca5a5;
+    }
+    @keyframes dpp-status-bar-in {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes dpp-status-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function findAgentStatusBarAnchor(): HTMLElement | null {
+  const textarea = getPromptTextarea();
+  if (!textarea) return null;
+  // 向上找到输入框的容器（通常是 textarea 的父级或祖父级）
+  let el: Element | null = textarea.parentElement;
+  const root = document.getElementById("root") ?? document.body;
+  while (el && el !== root) {
+    if (el instanceof HTMLElement) {
+      const rect = el.getBoundingClientRect();
+      // 输入框容器通常有明确的 padding/border，且宽度接近 textarea
+      if (rect.width >= textarea.getBoundingClientRect().width * 0.9 &&
+          rect.height >= textarea.getBoundingClientRect().height) {
+        return el;
+      }
+    }
+    el = el.parentElement;
+  }
+  return textarea.parentElement;
+}
+
+function ensureAgentStatusBar(): HTMLElement | null {
+  injectAgentStatusBarStyles();
+  if (agentStatusBarEl && agentStatusBarEl.isConnected) return agentStatusBarEl;
+
+  const anchor = findAgentStatusBarAnchor();
+  if (!anchor) return null;
+
+  // 如果已有旧的状态条但不在 DOM 中，重建
+  agentStatusBarEl?.remove();
+
+  const bar = document.createElement("div");
+  bar.id = AGENT_STATUS_BAR_ID;
+  bar.setAttribute("data-phase", "starting");
+
+  const dot = document.createElement("span");
+  dot.className = "dpp-status-bar-dot";
+
+  const text = document.createElement("span");
+  text.className = "dpp-status-bar-text";
+
+  const detailBtn = document.createElement("button");
+  detailBtn.type = "button";
+  detailBtn.className = "dpp-status-bar-btn";
+  detailBtn.textContent = "详情";
+  detailBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (inlineAgentContainer) {
+      inlineAgentContainer.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  });
+
+  const stopBtn = document.createElement("button");
+  stopBtn.type = "button";
+  stopBtn.className = "dpp-status-bar-btn stop";
+  stopBtn.textContent = "停止";
+  stopBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    stopInlineAgent();
+  });
+
+  bar.appendChild(dot);
+  bar.appendChild(text);
+  bar.appendChild(detailBtn);
+  bar.appendChild(stopBtn);
+
+  // 插入到输入框容器的最前面（输入框上方）
+  anchor.insertBefore(bar, anchor.firstChild);
+  agentStatusBarEl = bar;
+  return bar;
+}
+
+function updateAgentStatusBar(
+  phase: "starting" | "running" | "complete" | "error" | "stopped",
+  options?: { step?: number; tool?: string; elapsedSeconds?: number; message?: string },
+): void {
+  const bar = ensureAgentStatusBar();
+  if (!bar) return;
+
+  bar.setAttribute("data-phase", phase);
+  const textEl = bar.querySelector<HTMLElement>(".dpp-status-bar-text");
+  if (!textEl) return;
+
+  const step = options?.step ?? agentStatusBarCurrentStep;
+  const tool = options?.tool ?? agentStatusBarCurrentTool;
+  const elapsed = options?.elapsedSeconds ?? agentConsoleElapsedSeconds;
+
+  let html = "";
+  switch (phase) {
+    case "starting":
+      html = `<strong>deepseek++</strong> 正在启动自动续轮…`;
+      break;
+    case "running": {
+      const parts = [`<strong>deepseek++</strong> 执行中`, `第 ${step + 1} 步`];
+      if (tool) parts.push(`<span class="dpp-status-bar-tool">${tool}</span>`);
+      if (elapsed > 0) parts.push(`${formatElapsedSeconds(elapsed)}`);
+      html = parts.join(" · ");
+      break;
+    }
+    case "complete":
+      html = `<strong>deepseek++</strong> 任务完成 ${options?.message ?? ""}`;
+      break;
+    case "error":
+      html = `<strong>deepseek++</strong> 执行出错 ${options?.message ?? ""}`;
+      break;
+    case "stopped":
+      html = `<strong>deepseek++</strong> 已停止`;
+      break;
+  }
+  textEl.innerHTML = html;
+
+  // 停止按钮只在 running/starting 时显示
+  const stopBtn = bar.querySelector<HTMLButtonElement>(".dpp-status-bar-btn.stop");
+  if (stopBtn) stopBtn.style.display = (phase === "running" || phase === "starting") ? "" : "none";
+}
+
+function scheduleRemoveAgentStatusBar(delayMs = 3000): void {
+  if (agentStatusBarRemoveTimer) clearTimeout(agentStatusBarRemoveTimer);
+  agentStatusBarRemoveTimer = setTimeout(() => {
+    agentStatusBarEl?.remove();
+    agentStatusBarEl = null;
+    agentStatusBarRemoveTimer = null;
+  }, delayMs);
+}
+
+function formatElapsedSeconds(seconds: number): string {
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  return m > 0 ? `${m}:${s.toString().padStart(2, "0")}` : `${s}s`;
+}
+
+/* ------------------------------------------------------------------ */
+/* 并发保护确认对话框：loop 运行时用户发新消息，询问是否中断       */
+/* ------------------------------------------------------------------ */
+
+const AGENT_CONCURRENCY_DIALOG_ID = "dpp-agent-concurrency-dialog";
+const AGENT_CONCURRENCY_STYLE_ID = "dpp-agent-concurrency-css";
+
+function injectAgentConcurrencyStyles(): void {
+  if (document.getElementById(AGENT_CONCURRENCY_STYLE_ID)) return;
+  const style = document.createElement("style");
+  style.id = AGENT_CONCURRENCY_STYLE_ID;
+  style.textContent = `
+    #${AGENT_CONCURRENCY_DIALOG_ID}-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.45);
+      backdrop-filter: blur(2px);
+      animation: dpp-concurrency-fade-in 0.15s ease-out;
+    }
+    #${AGENT_CONCURRENCY_DIALOG_ID} {
+      width: min(420px, calc(100vw - 32px));
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+      overflow: hidden;
+      animation: dpp-concurrency-scale-in 0.2s ease-out;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .dpp-concurrency-header {
+      padding: 20px 24px 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .dpp-concurrency-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #fef3c7, #fde68a);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+    .dpp-concurrency-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #1a1a2e;
+      margin: 0;
+    }
+    .dpp-concurrency-body {
+      padding: 12px 24px 20px;
+      font-size: 14px;
+      line-height: 1.6;
+      color: #4b5563;
+    }
+    .dpp-concurrency-body strong {
+      color: #6366f1;
+    }
+    .dpp-concurrency-footer {
+      padding: 0 24px 20px;
+      display: flex;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .dpp-concurrency-btn {
+      padding: 8px 18px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s;
+      border: 1px solid transparent;
+    }
+    .dpp-concurrency-btn.cancel {
+      background: #f3f4f6;
+      color: #4b5563;
+      border-color: #e5e7eb;
+    }
+    .dpp-concurrency-btn.cancel:hover {
+      background: #e5e7eb;
+    }
+    .dpp-concurrency-btn.confirm {
+      background: #dc2626;
+      color: #fff;
+    }
+    .dpp-concurrency-btn.confirm:hover {
+      background: #b91c1c;
+    }
+    @keyframes dpp-concurrency-fade-in {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes dpp-concurrency-scale-in {
+      from { opacity: 0; transform: scale(0.95) translateY(8px); }
+      to { opacity: 1; transform: scale(1) translateY(0); }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+function showAgentConcurrencyConfirm(): Promise<boolean> {
+  return new Promise((resolve) => {
+    injectAgentConcurrencyStyles();
+
+    // 移除已存在的对话框
+    document.getElementById(`${AGENT_CONCURRENCY_DIALOG_ID}-overlay`)?.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = `${AGENT_CONCURRENCY_DIALOG_ID}-overlay`;
+
+    const dialog = document.createElement("div");
+    dialog.id = AGENT_CONCURRENCY_DIALOG_ID;
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+
+    const header = document.createElement("div");
+    header.className = "dpp-concurrency-header";
+    const icon = document.createElement("div");
+    icon.className = "dpp-concurrency-icon";
+    icon.textContent = "⚠️";
+    const title = document.createElement("h3");
+    title.className = "dpp-concurrency-title";
+    title.textContent = "任务正在执行中";
+    header.appendChild(icon);
+    header.appendChild(title);
+
+    const body = document.createElement("div");
+    body.className = "dpp-concurrency-body";
+    body.innerHTML = `deepseek++ 当前有任务正在<strong>后台执行</strong>。发送新消息将中断当前任务，可能导致已完成的工作丢失。<br><br>确定要中断当前任务并发送新消息吗？`;
+
+    const footer = document.createElement("div");
+    footer.className = "dpp-concurrency-footer";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "dpp-concurrency-btn cancel";
+    cancelBtn.textContent = "取消";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "dpp-concurrency-btn confirm";
+    confirmBtn.textContent = "中断并发送";
+
+    const cleanup = (result: boolean) => {
+      overlay.remove();
+      resolve(result);
+    };
+
+    cancelBtn.addEventListener("click", () => cleanup(false));
+    confirmBtn.addEventListener("click", () => cleanup(true));
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) cleanup(false);
+    });
+
+    footer.appendChild(cancelBtn);
+    footer.appendChild(confirmBtn);
+    dialog.appendChild(header);
+    dialog.appendChild(body);
+    dialog.appendChild(footer);
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    // 自动聚焦确认按钮
+    setTimeout(() => confirmBtn.focus(), 50);
+  });
+}
+
 function stopInlineAgent(): void {
   stopAgentConsoleTimer();
   removeAgentStartingElement();
+  updateAgentStatusBar("stopped");
+  scheduleRemoveAgentStatusBar(2000);
   const container = inlineAgentContainer;
   updateActiveInlineAgentTrace(
     (trace) => ({
@@ -5207,6 +5631,12 @@ async function startInlineAgentLoop(
   agentRunningToolCount = payload.toolExecutions.length;
   activeAgentModelBackend = modelBackend;
   activeAgentAbort = abort;
+
+  // 输入框常驻状态条 + 宠物立即 working（不等 AGENT_STEP_STARTED）
+  agentStatusBarCurrentStep = 0;
+  agentStatusBarCurrentTool = null;
+  updateAgentStatusBar("starting");
+  setPetState("working");
 
   const authorizationRequestKey = `agent:${payload.loopId}`;
   const capabilityScopeRequestId =
@@ -5338,10 +5768,15 @@ function handleInlineAgentLoopEvent(
   modelBackend: InlineAgentModelBackend,
 ): Promise<boolean> | null {
   switch (type) {
-    case "AGENT_STEP_STARTED":
+    case "AGENT_STEP_STARTED": {
+      const msg = data as { loopId: string; stepIndex: number };
       setPetState("working");
-      handleAgentStepStarted(data as { loopId: string; stepIndex: number });
+      agentStatusBarCurrentStep = msg.stepIndex;
+      agentStatusBarCurrentTool = null;
+      updateAgentStatusBar("running", { step: msg.stepIndex });
+      handleAgentStepStarted(msg);
       break;
+    }
     case "AGENT_STREAM_CHUNK":
       setPetState("speaking");
       handleAgentStreamChunk(data as InlineAgentStreamChunkMsg);
@@ -5357,27 +5792,38 @@ function handleInlineAgentLoopEvent(
       }
       break;
     }
-    case "AGENT_TOOL_DETECTED":
-      handleAgentToolDetected(data as InlineAgentToolDetectedMsg);
+    case "AGENT_TOOL_DETECTED": {
+      const msg = data as InlineAgentToolDetectedMsg;
+      agentStatusBarCurrentTool = msg.call.name;
+      updateAgentStatusBar("running", { step: msg.stepIndex, tool: msg.call.name });
+      handleAgentToolDetected(msg);
       break;
+    }
     case "AGENT_STEP_COMPLETE":
+      // 不再 schedulePetIdle：loop 可能还在跑下一轮，宠物保持 working
       handleAgentStepComplete(data as InlineAgentStepCompleteMsg);
-      schedulePetIdle();
       break;
     case "AGENT_LOOP_COMPLETE": {
-      const terminalTask = handleAgentLoopComplete(
-        data as InlineAgentLoopCompleteMsg,
-        modelBackend,
-      );
+      const msg = data as InlineAgentLoopCompleteMsg;
+      const terminalTask = handleAgentLoopComplete(msg, modelBackend);
       setPetState("success");
       schedulePetIdle(PET_FEEDBACK_DELAY_MS);
+      updateAgentStatusBar("complete", {
+        step: msg.totalSteps - 1,
+        message: `（${msg.totalSteps} 步 · ${msg.totalTools} 工具）`,
+      });
+      scheduleRemoveAgentStatusBar(4000);
       return terminalTask;
     }
-    case "AGENT_LOOP_ERROR":
+    case "AGENT_LOOP_ERROR": {
+      const msg = data as InlineAgentLoopErrorMsg;
       setPetState("error");
-      handleAgentLoopError(data as InlineAgentLoopErrorMsg);
+      handleAgentLoopError(msg);
       schedulePetIdle(PET_FEEDBACK_DELAY_MS);
+      updateAgentStatusBar("error", { message: msg.error ? `：${msg.error}` : "" });
+      scheduleRemoveAgentStatusBar(5000);
       break;
+    }
   }
   return null;
 }
