@@ -5689,7 +5689,38 @@ async function startInlineAgentLoop(
         runId: payload.loopId,
       },
     });
-    const result = await executeToolCall(enrichedCall, authorization.id);
+    let result = await executeToolCall(enrichedCall, authorization.id);
+
+    // 授权丢失自动重试：background state 可能因扩展重载/页面刷新而清空，
+    // 此时自动重新创建 grant 并重试一次，不让 loop 直接失败。
+    const authErrorCode = result.error?.code;
+    if (
+      !result.ok &&
+      (authErrorCode === "tool_authorization_missing" ||
+        authErrorCode === "tool_authorization_stale")
+    ) {
+      console.warn("[DPP-AUTO] 授权丢失，自动重新授权并重试", authErrorCode);
+      try {
+        // 关闭旧授权（如果还在）
+        await closeContentToolAuthorization(authorizationRequestKey);
+        // 用相同参数创建新授权
+        const newAuth = await createContentToolAuthorization({
+          requestId: capabilityScopeRequestId,
+          trigger: "agent_run",
+          chatSessionId: payload.chatSessionId,
+          runId: payload.loopId,
+          descriptorIds: authorization.descriptors.map((d) => d.id),
+        });
+        activeToolAuthorizations.set(authorizationRequestKey, newAuth);
+        // 更新外层 authorization 引用，供后续工具调用使用
+        authorization = newAuth;
+        // 重试
+        result = await executeToolCall(enrichedCall, newAuth.id);
+      } catch (reauthError) {
+        console.error("[DPP-AUTO] 自动重新授权失败", reauthError);
+      }
+    }
+
     return {
       name: result.name ?? call.name,
       result: {
