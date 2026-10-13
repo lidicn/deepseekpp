@@ -861,6 +861,8 @@ export default defineContentScript({
   runAt: "document_start",
   async main() {
     extensionContextValid = true;
+    // 恢复 native-history reload 前保存的用户状态（滚动位置、输入草稿）
+    restoreAfterNativeHistoryReload();
     const controllers = createContentCapabilityControllers();
     const lifecycle = await replaceContentDocumentLifecycle({
       capabilities: controllers,
@@ -1521,8 +1523,68 @@ function initConsoleLogPersistence(): void {
     });
 }
 
+const RELOAD_STATE_KEY = "dpp:native-history-reload-state";
+
 function reloadInlineAgentNativeHistory(): void {
-  window.location.reload();
+  // 无感刷新：保存用户状态（滚动位置、输入草稿），然后智能延迟刷新
+  try {
+    const textarea = getPromptTextarea();
+    const state = {
+      scrollTop: document.scrollingElement?.scrollTop ?? 0,
+      composer: textarea?.value ?? "",
+      savedAt: Date.now(),
+    };
+    sessionStorage.setItem(RELOAD_STATE_KEY, JSON.stringify(state));
+  } catch { /* sessionStorage 不可用时忽略 */ }
+
+  // 页面已在后台 → 立即刷新（用户看不到）
+  if (document.hidden) {
+    window.location.reload();
+    return;
+  }
+
+  // 页面可见 → 等用户切走时刷新；30s 兜底
+  let refreshed = false;
+  const doReload = () => {
+    if (refreshed) return;
+    refreshed = true;
+    document.removeEventListener("visibilitychange", onVisibility);
+    window.location.reload();
+  };
+  const onVisibility = () => {
+    if (document.hidden) doReload();
+  };
+  document.addEventListener("visibilitychange", onVisibility);
+  setTimeout(doReload, 30_000);
+}
+
+/**
+ * reload 后恢复用户状态（滚动位置、输入草稿）。
+ * 在 content script 初始化时调用。
+ */
+function restoreAfterNativeHistoryReload(): void {
+  try {
+    const raw = sessionStorage.getItem(RELOAD_STATE_KEY);
+    if (!raw) return;
+    sessionStorage.removeItem(RELOAD_STATE_KEY);
+    const state = JSON.parse(raw) as { scrollTop?: number; composer?: string };
+    // 恢复滚动位置（延迟到页面渲染后）
+    if (state.scrollTop && state.scrollTop > 0) {
+      setTimeout(() => {
+        document.scrollingElement?.scrollTo({ top: state.scrollTop, behavior: "instant" as ScrollBehavior });
+      }, 200);
+    }
+    // 恢复输入草稿
+    if (state.composer) {
+      setTimeout(() => {
+        const textarea = getPromptTextarea();
+        if (textarea && !textarea.value) {
+          textarea.value = state.composer ?? "";
+          textarea.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      }, 500);
+    }
+  } catch { /* 忽略恢复失败 */ }
 }
 
 initConsoleLogPersistence();
@@ -6167,15 +6229,22 @@ async function handleAgentLoopComplete(
       ? { answer: displayFinalText, fromStep: false }
       : resolveInlineAgentAnswerText(displayFinalText, lastCompletedStepText);
     const finalText = resolvedAnswer.answer;
-    if (
-      lastCompletedStep &&
-      (resolvedAnswer.fromStep ||
-        isInlineAgentStepTextTheFinalAnswer(lastCompletedStepText, finalText))
-    ) {
-      updateStepStreamText(lastCompletedStep, finalText);
-      refreshAgentStepCodeRunners(lastCompletedStep);
-    } else if (finalText) {
-      appendInlineAgentNarration(inlineAgentContainer, finalText, msg.loopId);
+    // 该轮是否已提交到原生历史（web 后端 + 有 responseMessageId）。
+    // 如果是，刷新后原生消息会渲染最终答案，扩展不应再渲染一份，否则重复。
+    const hasNativeTurn = !budgetPaused && activeInlineAgentTrace
+      ? isInlineAgentNativeHistoryBackedTrace(activeInlineAgentTrace)
+      : false;
+    if (!hasNativeTurn) {
+      if (
+        lastCompletedStep &&
+        (resolvedAnswer.fromStep ||
+          isInlineAgentStepTextTheFinalAnswer(lastCompletedStepText, finalText))
+      ) {
+        updateStepStreamText(lastCompletedStep, finalText);
+        refreshAgentStepCodeRunners(lastCompletedStep);
+      } else if (finalText) {
+        appendInlineAgentNarration(inlineAgentContainer, finalText, msg.loopId);
+      }
     }
     renderTerminalAgentConsoleHeader(
       inlineAgentContainer,
