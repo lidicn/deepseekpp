@@ -171,7 +171,8 @@ export function readTextFile(filePath) {
 // 返回 { content: 窗口字符串(≤maxChars 字符), totalChars: 整文件字符数 }。
 export function readTextFileWindow(filePath, startChar, maxChars) {
   const stat = safeStat(filePath);
-  if (!stat || !stat.isFile()) throw new Error(`Local file is not readable: ${filePath}`);
+  if (!stat) throw new Error(`File not found: ${filePath}`);
+  if (!stat.isFile()) throw new Error(`Path is not a file: ${filePath}`);
   const totalBytes = stat.size;
   if (totalBytes === 0) return { content: '', totalChars: 0, charsRead: 0 };
 
