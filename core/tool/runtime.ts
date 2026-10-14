@@ -148,6 +148,21 @@ async function executeRuntimeToolCall(
     source: 'tool-runtime',
     message: `tool start: ${identifiedCall.name}`,
   });
+
+  // P0-2: 静默失败检测——工具执行超过 90 秒还没完成，记一条 warn
+  // （默认超时是 120 秒，90 秒能在超时前就发现问题）
+  const toolStartTime = Date.now();
+  const stalledTimer = setTimeout(() => {
+    const elapsed = Math.round((Date.now() - toolStartTime) / 1000);
+    diagnosticLogBuffer.record({
+      level: 'warn',
+      source: 'tool-runtime',
+      message: `tool running long: ${identifiedCall.name} (${elapsed}s)`,
+      details: '可能卡住了，等待超时或 MCP host 无响应',
+    });
+  }, 90_000);
+  stalledTimer.unref?.();
+
   if (identifiedCall.parseError) {
     const result = createParseErrorToolResult(identifiedCall, locale);
     await appendAuthorizedFailureHistory(identifiedCall, result, context);
@@ -238,6 +253,7 @@ async function executeRuntimeToolCall(
     }
     assertRuntimeExecutionActive(options);
   } catch (error) {
+    clearTimeout(stalledTimer);
     diagnosticLogBuffer.record({
       level: 'error',
       source: 'tool-runtime',
@@ -247,6 +263,7 @@ async function executeRuntimeToolCall(
     await completeAuthorizationAfterProvider(authorized.reservation);
     throw error;
   }
+  clearTimeout(stalledTimer);
   await completeAuthorizationAfterProvider(authorized.reservation, result);
   try {
     await appendRuntimeToolHistory(resolvedCall, result, authorized.trigger);
