@@ -159,6 +159,23 @@ export function hookFetch(): () => void {
       ? fallbackToolDescriptors
       : executableToolDescriptors;
     recordRequestFromBody(requestBodyStr, route ?? "unknown", modified !== null);
+
+    // P1: 记录最近的用户消息到 storage（用于导出日志时带上上下文）
+    try {
+      const userPrompt = originalContext.originalPrompt;
+      if (typeof userPrompt === 'string' && userPrompt.trim().length > 0) {
+        const trimmed = userPrompt.trim().slice(0, 200);
+        chrome.storage.local.get('dpp_recent_user_messages').then((data) => {
+          const existing = Array.isArray(data?.dpp_recent_user_messages)
+            ? data.dpp_recent_user_messages
+            : [];
+          const updated = [...existing, trimmed].slice(-3);
+          void chrome.storage.local.set({ dpp_recent_user_messages: updated });
+        });
+      }
+    } catch {
+      // 存储失败不影响主流程
+    }
     // 如果 body 没变（modified.body === init.body），直接复用 originalContext
     // 的 parsed body 来消除第二次 JSON.parse。
     const bodyUnchanged = requestBodyStr === initBodyStr && initBodyParsed !== null;

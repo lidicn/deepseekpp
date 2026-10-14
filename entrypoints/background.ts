@@ -412,6 +412,15 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
     }),
     ...createDiagnosticsRuntimeHandlers({
       getVersion: getExtensionVersion,
+      getRecentUserMessages: async () => {
+        try {
+          const data = await chrome.storage.local.get('dpp_recent_user_messages');
+          const messages = data?.dpp_recent_user_messages;
+          return Array.isArray(messages) ? messages : [];
+        } catch {
+          return [];
+        }
+      },
     }),
     ...createPersistenceRuntimeHandlers({
       memory: {

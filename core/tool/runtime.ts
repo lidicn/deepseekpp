@@ -147,6 +147,7 @@ async function executeRuntimeToolCall(
     level: 'info',
     source: 'tool-runtime',
     message: `tool start: ${identifiedCall.name}`,
+    details: summarizeToolCall(identifiedCall) || undefined,
   });
 
   // P0-2: 静默失败检测——工具执行超过 90 秒还没完成，记一条 warn
@@ -286,6 +287,33 @@ function summarizeToolResult(result: ToolResult): string {
   const parts = [result.summary];
   if (result.detail) parts.push(result.detail.slice(0, 500));
   return parts.join(' | ').slice(0, 600);
+}
+
+/** P1: 提取工具调用的参数摘要（用于日志，只记关键信息，不记完整 payload） */
+function summarizeToolCall(call: ToolCall): string {
+  const payload = call.payload ?? {};
+  const name = call.name;
+
+  // 文件工具：记 path
+  if (name === 'local_file_write' || name === 'local_file_read' || name === 'local_file_stat') {
+    const path = typeof payload.path === 'string' ? payload.path : '';
+    return `path=${path.slice(0, 200)}`;
+  }
+
+  // Shell 工具：记 command 前 100 字
+  if (name === 'shell_exec' || name === 'shell_session_exec') {
+    const cmd = typeof payload.command === 'string' ? payload.command : '';
+    return `cmd=${cmd.slice(0, 100)}`;
+  }
+
+  // Python 工具：记 script 前 100 字
+  if (name === 'python_exec') {
+    const script = typeof payload.script === 'string' ? payload.script : '';
+    return `script=${script.slice(0, 100)}`;
+  }
+
+  // 其他工具：不记参数（避免泄露）
+  return '';
 }
 
 export function createInvalidToolCallResult(
