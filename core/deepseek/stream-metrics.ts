@@ -73,7 +73,7 @@ export function createResponseTokenSpeedTracker(
   };
 
   const emit = (active: boolean, force = false) => {
-    if (finished && active) return;
+    if (finished) return;
 
     const now = performance.now();
     if (!force && now - lastEmitAt < emitIntervalMs) return;
@@ -187,6 +187,10 @@ function isSameTokenSpeedRequest(
   }
   if (progress.assistantMessageId !== null || previous.assistantMessageId !== null) {
     return progress.assistantMessageId === previous.assistantMessageId;
+  }
+  // Fallback: 两者都无 ID 时，按 chatSessionId 去重
+  if (progress.chatSessionId || previous.chatSessionId) {
+    return progress.chatSessionId === previous.chatSessionId;
   }
   return false;
 }
