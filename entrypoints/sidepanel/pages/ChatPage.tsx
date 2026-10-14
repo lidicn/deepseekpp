@@ -110,6 +110,10 @@ export default function ChatPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesRef = useRef<ChatMessageType[]>([]);
+  // 会话代际标记：newSession 时递增，旧流 chunk 不匹配则丢弃，避免串台
+  const sessionEpochRef = useRef(0);
+  // 当前正在等待的流所属的 epoch
+  const currentStreamEpochRef = useRef(0);
   const imageAttachmentsRef = useRef<VisionImageAttachment[]>([]);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const voiceSettingsRef = useRef<VoiceSettings>(DEFAULT_VOICE_SETTINGS);
@@ -251,6 +255,9 @@ export default function ChatPage() {
 
       if (msg.type !== 'CHAT_STREAM_CHUNK') return;
 
+      // 会话代际检查：如果 epoch 已经变了（newSession 被调用过），丢弃所有旧流 chunk
+      if (sessionEpochRef.current !== currentStreamEpochRef.current) return;
+
       if (msg.error) {
         setError(msg.error);
         setIsStreaming(false);
@@ -308,6 +315,9 @@ export default function ChatPage() {
     const refFileIds = readyImageFileIds;
     setAtTrigger({ active: false, query: '' });
 
+    // 记录当前 epoch，handler 收到 chunk 时会检查
+    currentStreamEpochRef.current = sessionEpochRef.current;
+
     setMessages((prev) => {
       const next = [...prev, { role: 'user' as const, text }];
       messagesRef.current = next;
@@ -346,6 +356,8 @@ export default function ChatPage() {
       setError(err instanceof Error ? err.message : String(err));
       return;
     }
+    // 递增会话代际：旧流的 chunk 会被 handler 丢弃
+    sessionEpochRef.current++;
     messagesRef.current = [];
     setMessages([]);
     setError(null);

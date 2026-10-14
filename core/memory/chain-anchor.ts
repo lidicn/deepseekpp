@@ -30,6 +30,18 @@ export interface SessionChainAnchor {
 
 const anchors = memoryDb.table(ANCHOR_TABLE_NAME);
 
+// 简单的内存锁：同一 sessionId 的写操作串行执行，避免读-改-写丢失更新
+const sessionLocks = new Map<string, Promise<unknown>>();
+
+async function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = sessionLocks.get(sessionId) ?? Promise.resolve();
+  const next = prev.then(fn, fn); // 无论前一个成功还是失败，都继续执行
+  sessionLocks.set(sessionId, next.finally(() => {
+    if (sessionLocks.get(sessionId) === next) sessionLocks.delete(sessionId);
+  }));
+  return next;
+}
+
 /**
  * 获取会话链锚点；不存在则返回 null。
  */
@@ -80,12 +92,14 @@ export async function updateLastMessageId(
   sessionId: string,
   lastMessageId: string,
 ): Promise<SessionChainAnchor | null> {
-  const anchor = await getChainAnchor(sessionId);
-  if (!anchor) return null;
-  anchor.lastMessageId = lastMessageId;
-  anchor.turnCount += 1;
-  await saveChainAnchor(anchor);
-  return anchor;
+  return withSessionLock(sessionId, async () => {
+    const anchor = await getChainAnchor(sessionId);
+    if (!anchor) return null;
+    anchor.lastMessageId = lastMessageId;
+    anchor.turnCount += 1;
+    await saveChainAnchor(anchor);
+    return anchor;
+  });
 }
 
 /**
@@ -96,23 +110,27 @@ export async function recordAttachFailure(
   sessionId: string,
   failThreshold = 3,
 ): Promise<SessionChainAnchor | null> {
-  const anchor = await getChainAnchor(sessionId);
-  if (!anchor) return null;
-  anchor.consecutiveAttachFailures += 1;
-  if (anchor.consecutiveAttachFailures >= failThreshold && anchor.mode === 'chained') {
-    anchor.mode = 'full';
-  }
-  await saveChainAnchor(anchor);
-  return anchor;
+  return withSessionLock(sessionId, async () => {
+    const anchor = await getChainAnchor(sessionId);
+    if (!anchor) return null;
+    anchor.consecutiveAttachFailures += 1;
+    if (anchor.consecutiveAttachFailures >= failThreshold && anchor.mode === 'chained') {
+      anchor.mode = 'full';
+    }
+    await saveChainAnchor(anchor);
+    return anchor;
+  });
 }
 
 /**
  * 挂接成功时重置失败计数。
  */
 export async function resetAttachFailures(sessionId: string): Promise<SessionChainAnchor | null> {
-  const anchor = await getChainAnchor(sessionId);
-  if (!anchor) return null;
-  anchor.consecutiveAttachFailures = 0;
-  await saveChainAnchor(anchor);
-  return anchor;
+  return withSessionLock(sessionId, async () => {
+    const anchor = await getChainAnchor(sessionId);
+    if (!anchor) return null;
+    anchor.consecutiveAttachFailures = 0;
+    await saveChainAnchor(anchor);
+    return anchor;
+  });
 }
