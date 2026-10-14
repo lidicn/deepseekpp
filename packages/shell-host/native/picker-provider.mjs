@@ -125,7 +125,16 @@ function ensureTrailingPathSeparator(value) {
 
 function normalizeFolderPickerError(error) {
   const message = error instanceof Error ? error.message : String(error);
-  return /User canceled|cancelled|canceled|exit code 2|The operation couldn.?t be completed/i.test(message)
-    ? 'Folder selection was cancelled.'
-    : message;
+
+  // 用户取消
+  if (/User canceled|cancelled|canceled|exit code 2|The operation couldn.?t be completed/i.test(message)) {
+    return 'Folder selection was cancelled.';
+  }
+
+  // PowerShell 失败（返回的是 base64 编码命令和 CLIXML，没有人类可读信息）
+  if (/EncodedCommand|CLIXML|powershell\.exe/i.test(message)) {
+    return 'Folder picker failed to start. This usually means there is no interactive desktop session available (e.g. running in a headless/automated environment).';
+  }
+
+  return message;
 }

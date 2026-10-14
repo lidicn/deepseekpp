@@ -126,14 +126,17 @@ export function createShellInvocation(command, shell) {
     // 命令末尾用 $LASTEXITCODE 作为退出码，避免 PowerShell 7 的 NativeCommandError
     // （原生命令写 stderr + 管道时）导致进程 exit code 误报为 1。
     // 对纯 PowerShell cmdlet（$LASTEXITCODE 为 null），exit $null 等价于 exit 0。
+    // 改用 -EncodedCommand 传递，避免 PowerShell 重新解析命令串中的嵌套引号/管道字符。
+    const fullCommand = `${WINDOWS_POWERSHELL_UTF8_PREAMBLE}; ${fixedCommand}; if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }`;
+    const encodedCommand = Buffer.from(fullCommand, 'utf16le').toString('base64');
     return {
       shellBin,
       shellArgs: [
         '-NoLogo',
         '-NoProfile',
         '-NonInteractive',
-        '-Command',
-        `${WINDOWS_POWERSHELL_UTF8_PREAMBLE}; ${fixedCommand}; if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }`,
+        '-EncodedCommand',
+        encodedCommand,
       ],
     };
   }

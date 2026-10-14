@@ -27,7 +27,10 @@ export async function fetchWithTimeout(
   } catch (err) {
     if (callerSignal?.aborted) throwSignalReason(callerSignal);
     if (abortScope.timedOut()) {
-      throw new McpTransportError('mcp_transport_timeout', `MCP request exceeded ${timeoutMs} ms.`);
+      throw new McpTransportError(
+        'mcp_transport_timeout',
+        `MCP request exceeded ${timeoutMs} ms. This usually means the command is still running or the native host is unresponsive. Check if the command is stuck, or increase the timeout_ms parameter.`,
+      );
     }
     if (err instanceof TypeError) {
       const endpoint = typeof input === 'string' || input instanceof URL ? String(input) : 'configured endpoint';
