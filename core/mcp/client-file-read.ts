@@ -88,6 +88,11 @@ export async function callLocalFileReadAuto(
     const data = (windowResult.structuredContent as Record<string, unknown> | undefined)?.data as
       | Record<string, unknown>
       | undefined;
+    // 检查是否是错误结果（文件不存在等）
+    if (windowResult.isError || (data && typeof data.ok === 'boolean' && !data.ok)) {
+      const errorMessage = (data?.error as string) || (windowResult.content?.[0] as { text?: string })?.text || 'Unknown error';
+      return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, errorMessage);
+    }
     const content = typeof data?.content === 'string' ? data.content : undefined;
     if (typeof content !== 'string') {
       return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, '无法从工具结果解析窗口内容');
