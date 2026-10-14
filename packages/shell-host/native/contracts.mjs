@@ -32,6 +32,10 @@ const WINDOWS_POWERSHELL_UTF8_PREAMBLE = [
   '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)',
   '$OutputEncoding = [Console]::OutputEncoding',
   'try { chcp.com 65001 > $null } catch {}',
+  // 防止原生命令写 stderr（特别是管道 2>&1 | 时）被 PowerShell 7 包装为
+  // NativeCommandError 导致进程 exit code 误报为 1。
+  '$ErrorActionPreference = \'Continue\'',
+  'try { $PSNativeCommandUseErrorActionPreference = $false } catch {}',
 ].join('; ');
 const HOST_FEATURES = {
   windowsFolderPickerEncodedCommand: true,

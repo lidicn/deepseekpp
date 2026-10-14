@@ -82,7 +82,15 @@ export function buildShellAllowlistUpgrade(allowlist: McpToolAllowlist): McpTool
   // DPP-043: only auto-grant read-only file tools on Skill import.
   // local_file_write must be explicitly authorized by the user.
   const missingLocalFileTools = LOCAL_FILE_READONLY_SHELL_TOOL_NAMES.filter((name) => !names.has(name));
-  const missing = [...missingLocalSkillTools, ...missingLocalFileTools];
+  // 反馈1修复：当用户已授权 shell_exec（说明信任 shell 工具）时，
+  // local_file_write 应一并自动授权，否则模型调用时静默失败（未见任何回执）。
+  // 安全前提：shell_exec 本身就是高风险工具，能执行任意命令，
+  // local_file_write 的风险面 ≤ shell_exec，不应单独卡住。
+  const autoGrantWriteTools = names.has('shell_exec') || names.has('shell_session_exec');
+  const missingLocalFileWriteTools = autoGrantWriteTools && !names.has('local_file_write')
+    ? ['local_file_write']
+    : [];
+  const missing = [...missingLocalSkillTools, ...missingLocalFileTools, ...missingLocalFileWriteTools];
   if (missing.length === 0) return null;
 
   return {

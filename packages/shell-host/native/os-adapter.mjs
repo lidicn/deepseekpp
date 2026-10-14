@@ -119,6 +119,13 @@ export function createShellInvocation(command, shell) {
   const shellBin = shell || DEFAULT_SHELL;
 
   if (shellKind === 'powershell') {
+    // 模型经常把命令中的换行双重转义为字面 \n（反斜杠+n），导致
+    // PowerShell here-string（@'...'@）等多行写法失败。
+    // 在此将字面 \n 还原为真实换行。
+    const fixedCommand = command.replace(/\\n/g, '\n');
+    // 命令末尾用 $LASTEXITCODE 作为退出码，避免 PowerShell 7 的 NativeCommandError
+    // （原生命令写 stderr + 管道时）导致进程 exit code 误报为 1。
+    // 对纯 PowerShell cmdlet（$LASTEXITCODE 为 null），exit $null 等价于 exit 0。
     return {
       shellBin,
       shellArgs: [
@@ -126,7 +133,7 @@ export function createShellInvocation(command, shell) {
         '-NoProfile',
         '-NonInteractive',
         '-Command',
-        `${WINDOWS_POWERSHELL_UTF8_PREAMBLE}; ${command}`,
+        `${WINDOWS_POWERSHELL_UTF8_PREAMBLE}; ${fixedCommand}; if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }`,
       ],
     };
   }
