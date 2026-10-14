@@ -595,7 +595,11 @@ export function formatExecSummary(result) {
   if (result.exitCode !== 0) parts.push(`[exit ${result.exitCode}]`);
   if (result.truncated) parts.push('[output truncated]');
   if (result.stdout) parts.push(result.stdout.slice(0, 4000));
-  if (result.stderr) parts.push(`STDERR: ${result.stderr.slice(0, 2000)}`);
+  if (result.stderr) {
+    // PowerShell 错误输出常把命令截断成 ...，加一行提示完整命令在上面
+    if (result.exitCode !== 0) parts.push('(Note: PowerShell may truncate long commands in its error output; the full command is shown on the first line.)');
+    parts.push(`STDERR: ${result.stderr.slice(0, 2000)}`);
+  }
   return parts.join('\n') || '(no output)';
 }
 

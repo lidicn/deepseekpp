@@ -54,7 +54,8 @@ function createLocalFileReadResult(args) {
   try {
     const resolvedPath = resolveLocalPath(inputPath);
     const stat = safeStat(resolvedPath);
-    if (!stat || !stat.isFile()) throw new Error(`Local file is not readable: ${resolvedPath}`);
+    if (!stat) throw new Error(`File not found: ${resolvedPath}`);
+    if (!stat.isFile()) throw new Error(`Path is not a file: ${resolvedPath}`);
 
     const { content, totalChars, charsRead } = readTextFileWindow(resolvedPath, start, maxChars);
     const nextStart = start + charsRead;
