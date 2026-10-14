@@ -149,7 +149,7 @@ export function assertSubjectMatches(
   if (currentChatSessionId !== expectedChatSessionId) {
     throw new ToolAuthorizationError(
       'tool_session_mismatch',
-      'Tool authorization belongs to another chat session.',
+      'Tool authorization session mismatch. This is often a transient issue — retry the same call once. If it persists, start a new chat session.',
     );
   }
   return false;

@@ -283,6 +283,7 @@ class XmlStreamingToolCallParser implements StreamingToolCallParser {
             'Tool call body is not valid JSON.',
             'Use double quotes for strings and escape backslashes in local file paths, for example "D:\\\\project\\\\file.txt" or "D:/project/file.txt".',
             error instanceof Error ? error.message : String(error),
+            `Raw body (first 200 chars): ${body.slice(0, 200)}`,
           ].join(' '),
         ),
       });
