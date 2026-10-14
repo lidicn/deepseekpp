@@ -127,9 +127,11 @@ class XmlStreamingToolCallParser implements StreamingToolCallParser {
     }
 
     // 调试日志：记录找到的工具标签
-    diagnosticLogBuffer.append('tool_call_parser', 'info', `Found tool tag: ${found.name}`, {
-      tagPreview: found.raw.slice(0, 200),
-      textPreview: text.slice(Math.max(0, found.startIndex - 50), found.startIndex + 100),
+    diagnosticLogBuffer.record({
+      level: 'info',
+      source: 'tool_call_parser',
+      message: `Found tool tag: ${found.name}`,
+      details: `tag=${found.raw.slice(0, 200)} ctx=${text.slice(Math.max(0, found.startIndex - 50), found.startIndex + 100)}`,
     });
 
     const id = crypto.randomUUID();
@@ -249,10 +251,11 @@ class XmlStreamingToolCallParser implements StreamingToolCallParser {
       });
     } catch (error) {
       // 调试日志：记录 JSON 解析失败的原始文本
-      diagnosticLogBuffer.append('tool_call_parser', 'error', `JSON parse failed for ${current.invocationName}`, {
-        bodyPreview: body.slice(0, 500),
-        bodyLength: body.length,
-        errorMessage: error instanceof Error ? error.message : String(error),
+      diagnosticLogBuffer.record({
+        level: 'error',
+        source: 'tool_call_parser',
+        message: `JSON parse failed for ${current.invocationName}`,
+        details: `body=${body.slice(0, 500)} len=${body.length} err=${error instanceof Error ? error.message : String(error)}`,
       });
 
       // 转义容错修复层：先尝试修复转义问题，再解析一次
