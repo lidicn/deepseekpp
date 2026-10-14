@@ -12,6 +12,7 @@ import {
   getPartialXmlToolTagTailLength,
 } from '../tool/xml-tags';
 import { repairToolJsonBody } from './repair-tool-json';
+import { diagnosticLogBuffer } from '../diagnostics/log-buffer';
 
 const STREAM_TOOL_RAW_MAX_LENGTH = 2048;
 const TRUNCATION_SUFFIX = '\n...[truncated]';
@@ -124,6 +125,12 @@ class XmlStreamingToolCallParser implements StreamingToolCallParser {
       this.pendingNormal = tailLength > 0 ? text.slice(-tailLength) : '';
       return '';
     }
+
+    // 调试日志：记录找到的工具标签
+    diagnosticLogBuffer.append('tool_call_parser', 'info', `Found tool tag: ${found.name}`, {
+      tagPreview: found.raw.slice(0, 200),
+      textPreview: text.slice(Math.max(0, found.startIndex - 50), found.startIndex + 100),
+    });
 
     const id = crypto.randomUUID();
     this.state = 'SUPPRESSING';
@@ -241,6 +248,13 @@ class XmlStreamingToolCallParser implements StreamingToolCallParser {
         localSkillDir: this.activeLocalSkillDir,
       });
     } catch (error) {
+      // 调试日志：记录 JSON 解析失败的原始文本
+      diagnosticLogBuffer.append('tool_call_parser', 'error', `JSON parse failed for ${current.invocationName}`, {
+        bodyPreview: body.slice(0, 500),
+        bodyLength: body.length,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+
       // 转义容错修复层：先尝试修复转义问题，再解析一次
       const repaired = repairToolJsonBody(body);
       if (repaired !== null) {
