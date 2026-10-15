@@ -12,6 +12,7 @@ import {
   decodeAutomationRunList,
 } from '../../../core/automation/storage-codec';
 import { validateAutomationSchedule } from '../../../core/automation/schedule';
+import { createAutomationFromNaturalLanguage } from '../../../core/automation/natural-language-create';
 import type { SupportedLocale } from '../../../core/i18n';
 import { createRequestGenerationFence } from '../async-state';
 import PageIntro from '../components/PageIntro';
@@ -70,6 +71,10 @@ export default function AutomationPage() {
   const [loading, setLoading] = useState(true);
   const [hasConfirmedSnapshot, setHasConfirmedSnapshot] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [showNLDialog, setShowNLDialog] = useState(false);
+  const [nlInput, setNlInput] = useState('');
+  const [nlLoading, setNlLoading] = useState(false);
+  const [nlDraft, setNlDraft] = useState<ReturnType<typeof createAutomationFromNaturalLanguage> extends Promise<infer T> ? T : null>(null);
   const loadFence = useRef(createRequestGenerationFence());
   const banner = useBanner();
   const { confirm, node: confirmNode } = useConfirm();
@@ -150,6 +155,51 @@ export default function AutomationPage() {
     setForm(EMPTY_FORM);
     banner.clear();
     setShowForm((prev) => !prev);
+  };
+
+  const startNaturalLanguage = () => {
+    setNlInput('');
+    setNlDraft(null);
+    setNlLoading(false);
+    setShowNLDialog(true);
+  };
+
+  const generateDraft = async () => {
+    if (!nlInput.trim()) {
+      banner.show('error', '请输入自然语言描述');
+      return;
+    }
+    setNlLoading(true);
+    try {
+      const draft = await createAutomationFromNaturalLanguage({
+        instruction: nlInput,
+        timezone: DEFAULT_TIMEZONE,
+      });
+      setNlDraft(draft);
+    } catch (error) {
+      banner.show('error', getRuntimeErrorMessage(error));
+    } finally {
+      setNlLoading(false);
+    }
+  };
+
+  const applyDraft = () => {
+    if (!nlDraft) return;
+    const input = nlDraft.createInput;
+    setEditing(null);
+    setForm({
+      name: input.name,
+      prompt: input.prompt,
+      scheduleKind: input.schedule.kind,
+      expression: input.schedule.expression ?? '',
+      timezone: input.schedule.timezone,
+      modelType: input.promptOptions.modelType ?? '',
+      searchEnabled: input.promptOptions.searchEnabled,
+      thinkingEnabled: input.promptOptions.thinkingEnabled,
+    });
+    setShowNLDialog(false);
+    setShowForm(true);
+    banner.show('success', '已生成 draft，可在表单中进一步编辑');
   };
 
   const startEdit = (automation: Automation) => {
@@ -268,21 +318,98 @@ export default function AutomationPage() {
         description={t('sidepanel.automationPage.description')}
         meta={t('sidepanel.automationPage.summary', { total: automations.length, active: activeCount })}
         actions={(
-        <button
-          onClick={startCreate}
-          className="ds-btn-primary px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-all duration-150 flex items-center gap-1"
-        >
-          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-          </svg>
-          {t('sidepanel.automationPage.create')}
-        </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={startNaturalLanguage}
+              className="ds-btn-secondary px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-150 flex items-center gap-1"
+              title="用自然语言创建自动化"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              ✨ 自然语言
+            </button>
+            <button
+              onClick={startCreate}
+              className="ds-btn-primary px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-all duration-150 flex items-center gap-1"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+              {t('sidepanel.automationPage.create')}
+            </button>
+          </div>
         )}
       />
 
       {banner.node}
       {loadError && <StatusMessage tone="error">{loadError}</StatusMessage>}
       {confirmNode}
+
+      {showNLDialog && (
+        <div className="animate-slide-down ds-card p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="text-sm font-medium">✨ 自然语言创建自动化</div>
+            <button
+              onClick={() => setShowNLDialog(false)}
+              className="text-gray-400 hover:text-gray-600"
+            >
+              ✕
+            </button>
+          </div>
+
+          <textarea
+            value={nlInput}
+            onChange={(e) => setNlInput(e.target.value)}
+            placeholder="例如：每天早上9点给我发深圳天气"
+            className="w-full h-20 px-3 py-2 text-sm border rounded-lg resize-none"
+          />
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={generateDraft}
+              disabled={nlLoading || !nlInput.trim()}
+              className="ds-btn-primary px-4 py-1.5 text-xs font-medium text-white rounded-lg disabled:opacity-50"
+            >
+              {nlLoading ? '生成中...' : '生成 draft'}
+            </button>
+            {nlDraft && (
+              <button
+                onClick={applyDraft}
+                className="ds-btn-success px-4 py-1.5 text-xs font-medium text-white rounded-lg"
+              >
+                用此 draft 创建
+              </button>
+            )}
+          </div>
+
+          {nlDraft && (
+            <div className="text-xs space-y-1 p-3 bg-gray-50 rounded-lg">
+              <div>
+                <span className="text-gray-500">名称：</span>
+                <span>{nlDraft.createInput.name}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">提示词：</span>
+                <span className="line-clamp-2">{nlDraft.createInput.prompt}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">调度：</span>
+                <span>
+                  {nlDraft.createInput.schedule.kind === 'manual'
+                    ? '手动'
+                    : `cron: ${nlDraft.createInput.schedule.expression}`}
+                </span>
+              </div>
+              {nlDraft.issues.some((i) => i.severity === 'error') && (
+                <div className="text-red-500">
+                  ⚠️ {nlDraft.issues.filter((i) => i.severity === 'error').map((i) => i.message).join('; ')}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {showForm && (
         <div className="animate-slide-down">
