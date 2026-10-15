@@ -8,6 +8,7 @@
  */
 
 import type { Memory } from '../types';
+import { keywordScore, MIN_KEYWORD_SCORE_PROJECT, MIN_KEYWORD_SCORE_GLOBAL, segmentText } from './selector';
 
 /** L2 槽位类型 */
 export type L2Slot =
@@ -41,6 +42,8 @@ export interface MemoryDigest {
   omitted: number;
   /** 摘要 hash（用于去重） */
   hash: string;
+  /** 实际包含的记忆 ID 列表（用于调试和效果验证） */
+  includedRecordIds?: number[];
 }
 
 /**
@@ -112,6 +115,7 @@ const SLOT_LABELS: Record<L2Slot, string> = {
  */
 export function buildDigest(
   memories: Memory[],
+  prompt: string = '',
   maxTokens = 500,
 ): MemoryDigest {
   if (memories.length === 0) {
@@ -120,11 +124,15 @@ export function buildDigest(
       estimatedTokens: 0,
       omitted: 0,
       hash: simpleHash('empty'),
+      includedRecordIds: [],
     };
   }
 
+  // 0. 先过滤 archived 的记忆
+  const activeMemories = memories.filter((m) => !m.archived);
+
   // 1. 按重要度排序（pinned > importance > accessCount > 新鲜度）
-  const sorted = [...memories].sort((a, b) => {
+  const sorted = [...activeMemories].sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;
     if (!a.pinned && b.pinned) return 1;
     const aScore = (a.accessCount || 0) + (Date.now() - a.lastAccessedAt < 7 * 86400_000 ? 5 : 0);
@@ -132,9 +140,21 @@ export function buildDigest(
     return bScore - aScore;
   });
 
-  // 2. 按槽位分组
+  // 2. 相关性门控（如果有 prompt）
+  const promptWords = prompt ? segmentText(prompt) : [];
+  const relevantMemories = promptWords.length > 0
+    ? sorted.filter((m) => {
+        if (m.pinned) return true; // pinned 记忆绕过相关性门控
+        const kwScore = keywordScore(promptWords, m);
+        const isGlobal = m.scope === undefined || m.scope === 'global';
+        const minScore = isGlobal ? MIN_KEYWORD_SCORE_GLOBAL : MIN_KEYWORD_SCORE_PROJECT;
+        return kwScore >= minScore;
+      })
+    : sorted;
+
+  // 3. 按槽位分组
   const slotGroups = new Map<L2Slot, Memory[]>();
-  for (const mem of sorted) {
+  for (const mem of relevantMemories) {
     const slot = mapSlot(mem);
     if (!slotGroups.has(slot)) {
       slotGroups.set(slot, []);
@@ -142,10 +162,11 @@ export function buildDigest(
     slotGroups.get(slot)!.push(mem);
   }
 
-  // 3. 逐槽位渲染，直到达到 token 上限
+  // 4. 逐槽位渲染，直到达到 token 上限
   const lines: string[] = [];
+  const includedRecordIds: number[] = [];
   let currentTokens = 0;
-  let omitted = 0;
+  let omitted = activeMemories.length - relevantMemories.length;
   const SLOTS: L2Slot[] = ['identity', 'preferences', 'constraints', 'projects', 'procedures', 'goals'];
 
   for (const slot of SLOTS) {
@@ -167,6 +188,9 @@ export function buildDigest(
 
       lines.push(line);
       currentTokens += lineTokens;
+      if (mem.id !== undefined) {
+        includedRecordIds.push(mem.id);
+      }
     }
   }
 
@@ -177,5 +201,6 @@ export function buildDigest(
     estimatedTokens: currentTokens,
     omitted,
     hash: simpleHash(text),
+    includedRecordIds,
   };
 }

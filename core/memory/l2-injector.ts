@@ -117,7 +117,7 @@ export async function injectL2Digest(
     };
   }
 
-  const digest: MemoryDigest = buildDigest(memories, maxTokens);
+  const digest: MemoryDigest = buildDigest(memories, originalPrompt, maxTokens);
   if (digest.estimatedTokens === 0) {
     anchor.injectedDigestHash = 'empty';
     anchor.lastInjectedAt = Date.now();

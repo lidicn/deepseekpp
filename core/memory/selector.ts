@@ -5,6 +5,10 @@ import { estimateTokens } from '../token/estimator';
 
 export { estimateTokens } from '../token/estimator';
 
+// 相关性门控阈值（供 digest.ts 复用）
+export const MIN_KEYWORD_SCORE_PROJECT = 1;
+export const MIN_KEYWORD_SCORE_GLOBAL = 5;
+
 const segmenter =
   typeof Intl !== 'undefined' && Intl.Segmenter
     ? new Intl.Segmenter('zh-Hans', { granularity: 'word' })
@@ -35,7 +39,7 @@ export function segmentText(text: string): string[] {
   return words;
 }
 
-function keywordScore(promptWords: string[], memory: Memory): number {
+export function keywordScore(promptWords: string[], memory: Memory): number {
   const promptSet = new Set(promptWords);
 
   let tagHits = 0;
@@ -96,14 +100,6 @@ export function selectMemories(
   if (candidates.length === 0) return [];
 
   const promptWords = segmentText(prompt);
-
-  // Relevance threshold (fix: prevent unrelated global memories from being
-  // injected into unrelated conversations). Non-pinned memories must have
-  // at least some keyword overlap with the prompt. Global-scope memories
-  // require a higher threshold because they are visible across all
-  // conversations and are more likely to be irrelevant noise.
-  const MIN_KEYWORD_SCORE_PROJECT = 1;
-  const MIN_KEYWORD_SCORE_GLOBAL = 5;
 
   const scored = candidates
     .map((m) => {

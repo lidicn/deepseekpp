@@ -14,6 +14,8 @@ export type MemoryOrganizeOperationType =
   | 'unpin'
   | 'merge'
   | 'retitle'
+  | 'retag'
+  | 'compress'
   | 'clean_stale';
 
 export interface MemoryOrganizeOperation {
@@ -21,6 +23,10 @@ export interface MemoryOrganizeOperation {
   memoryId?: number;
   memoryIds?: number[];
   newTitle?: string;
+  newTags?: string[];
+  mergedContent?: string;
+  compressedContent?: string;
+  tags?: string[];
   reason?: string;
 }
 
@@ -28,16 +34,21 @@ export interface MemoryOrganizeDraft {
   operations: MemoryOrganizeOperation[];
   summary: string;
   ready: boolean;
+  baseTime: number;
   issues: readonly { code: string; severity: 'info' | 'warning' | 'error'; message: string }[];
 }
 
 export interface MemorySnapshot {
   id: number;
-  title: string;
+  name: string;
   content: string;
+  tags: string[];
+  scope: string;
+  type: string;
   updatedAt: number;
   accessCount: number;
   pinned: boolean;
+  archived: boolean;
 }
 
 /* ------------------------------------------------------------------ *
@@ -80,17 +91,35 @@ export function memoryTextSimilarity(a: string, b: string): number {
 }
 
 export function buildMemorySnapshots(
-  memories: Array<{ id?: number; content?: string; text?: string; summary?: string; body?: string; updatedAt?: number; accessCount?: number; pinned?: boolean }>,
+  memories: Array<{
+    id?: number;
+    name?: string;
+    content?: string;
+    text?: string;
+    summary?: string;
+    body?: string;
+    tags?: string[];
+    scope?: string;
+    type?: string;
+    updatedAt?: number;
+    accessCount?: number;
+    pinned?: boolean;
+    archived?: boolean;
+  }>,
 ): MemorySnapshot[] {
   return memories
     .filter((m) => m.id !== undefined)
     .map((m, index) => ({
       id: m.id!,
-      title: readMemoryText(m).slice(0, 50) || `记忆 ${index + 1}`,
+      name: m.name ?? readMemoryText(m).slice(0, 50) || `记忆 ${index + 1}`,
       content: readMemoryText(m),
+      tags: m.tags ?? [],
+      scope: m.scope ?? 'global',
+      type: m.type ?? 'unknown',
       updatedAt: m.updatedAt ?? Date.now(),
       accessCount: m.accessCount ?? 0,
       pinned: m.pinned ?? false,
+      archived: m.archived ?? false,
     }));
 }
 
@@ -210,6 +239,7 @@ export function planMemoryOrganizeLocally(
     operations,
     summary: `共 ${operations.length} 个操作`,
     ready: !issues.some((i) => i.severity === 'error'),
+    baseTime: Date.now(),
     issues,
   };
 }
@@ -244,7 +274,10 @@ export interface ApplyMemoryOrganizeDraftOptions {
     archive?: (id: number) => Promise<void>;
     pin?: (id: number) => Promise<void>;
     unpin?: (id: number) => Promise<void>;
-    merge?: (ids: number[]) => Promise<void>;
+    merge?: (ids: number[], mergedContent: string, tags?: string[]) => Promise<void>;
+    retitle?: (id: number, newTitle: string) => Promise<void>;
+    retag?: (id: number, newTags: string[]) => Promise<void>;
+    compress?: (id: number, compressedContent: string) => Promise<void>;
     cleanStale?: (ids: number[]) => Promise<void>;
   };
 }
@@ -259,6 +292,13 @@ export async function applyMemoryOrganizeDraft(
 ): Promise<ApplyMemoryOrganizeDraftResult> {
   if (!options.confirmed) {
     return { ok: false, error: 'Draft must be confirmed before applying.' };
+  }
+
+  // 并发守卫：draft 过期校验（5 分钟内有效）
+  const now = Date.now();
+  const maxAgeMs = 5 * 60 * 1000;
+  if (draft.baseTime && now - draft.baseTime > maxAgeMs) {
+    return { ok: false, error: 'Draft expired. Please regenerate and confirm again.' };
   }
 
   const hasDestructiveOps = draft.operations.some((op) => op.type === 'delete' || op.type === 'clean_stale' || op.type === 'merge');
@@ -299,8 +339,26 @@ export async function applyMemoryOrganizeDraft(
           }
           break;
         case 'merge':
-          if (op.memoryIds && options.executor.merge) {
-            await options.executor.merge(op.memoryIds);
+          if (op.memoryIds && op.mergedContent && options.executor.merge) {
+            await options.executor.merge(op.memoryIds, op.mergedContent, op.tags);
+            executed++;
+          }
+          break;
+        case 'retitle':
+          if (op.memoryId !== undefined && op.newTitle && options.executor.retitle) {
+            await options.executor.retitle(op.memoryId, op.newTitle);
+            executed++;
+          }
+          break;
+        case 'retag':
+          if (op.memoryId !== undefined && op.newTags && options.executor.retag) {
+            await options.executor.retag(op.memoryId, op.newTags);
+            executed++;
+          }
+          break;
+        case 'compress':
+          if (op.memoryId !== undefined && op.compressedContent && options.executor.compress) {
+            await options.executor.compress(op.memoryId, op.compressedContent);
             executed++;
           }
           break;

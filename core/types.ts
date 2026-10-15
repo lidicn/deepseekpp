@@ -231,6 +231,7 @@ export interface Memory {
   description: string;
   tags: string[];
   pinned: boolean;
+  archived?: boolean;
   createdAt: number;
   updatedAt: number;
   accessCount: number;

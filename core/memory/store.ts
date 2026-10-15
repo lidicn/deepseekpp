@@ -15,6 +15,7 @@ import {
   MEMORY_TABLE_SCHEMAS,
   migrateMemoryV1RecordToV2,
   migrateMemoryV2RecordToV3,
+  migrateMemoryV3RecordToV4,
 } from './schema';
 import {
   decodeImportedMemory,
@@ -61,6 +62,19 @@ const db = new IndexedDb(MEMORY_DATABASE_NAME, [
       [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[3],
       [ANCHOR_TABLE_NAME]: ANCHOR_TABLE_SCHEMA,
       [INDEX_TABLE_NAME]: INDEX_TABLE_SCHEMA,
+    },
+  },
+  {
+    version: 60,
+    stores: {
+      [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[4],
+      [ANCHOR_TABLE_NAME]: ANCHOR_TABLE_SCHEMA,
+      [INDEX_TABLE_NAME]: INDEX_TABLE_SCHEMA,
+    },
+    migrate: (tx) => {
+      return tx.table(MEMORY_TABLE_NAME).modifyAll((memory) => {
+        Object.assign(memory, migrateMemoryV3RecordToV4(memory));
+      });
     },
   },
 ]);
