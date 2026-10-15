@@ -79,6 +79,27 @@ export default function AutomationPage() {
   const banner = useBanner();
   const { confirm, node: confirmNode } = useConfirm();
 
+  // 持久化自然语言对话框状态
+  useEffect(() => {
+    const loadNLState = async () => {
+      const stored = await chrome.storage.local.get('automation_nl_state');
+      if (stored.automation_nl_state) {
+        const state = stored.automation_nl_state as { showNLDialog: boolean; nlInput: string; nlDraft: any };
+        setShowNLDialog(state.showNLDialog ?? false);
+        setNlInput(state.nlInput ?? '');
+        setNlDraft(state.nlDraft ?? null);
+      }
+    };
+    void loadNLState();
+  }, []);
+
+  // 状态变化时保存
+  useEffect(() => {
+    void chrome.storage.local.set({
+      automation_nl_state: { showNLDialog, nlInput, nlDraft },
+    });
+  }, [showNLDialog, nlInput, nlDraft]);
+
   const activeCount = useMemo(
     () => automations.filter((item) => item.status === 'active').length,
     [automations],
@@ -199,6 +220,10 @@ export default function AutomationPage() {
     });
     setShowNLDialog(false);
     setShowForm(true);
+    // 清除持久化的自然语言状态
+    setNlInput('');
+    setNlDraft(null);
+    void chrome.storage.local.remove('automation_nl_state');
     banner.show('success', '已生成 draft，可在表单中进一步编辑');
   };
 
