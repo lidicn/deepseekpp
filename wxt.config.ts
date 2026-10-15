@@ -111,6 +111,10 @@ export function createManifest(env: ConfigEnv): UserManifest {
         matches: ['<all_urls>'],
       },
     ],
+    externally_connectable: {
+      // 允许本地 HTML 调试页面连接（用于 P3 记忆系统调试）
+      matches: ['http://localhost/*', 'http://127.0.0.1/*'],
+    },
     ...(isChromiumTarget ? {
       action: {
         default_title: MANIFEST_ACTION_TITLE,

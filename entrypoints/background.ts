@@ -809,6 +809,43 @@ export default defineBackground(() => {
     return true;
   });
 
+  // DPP Bridge: 外部页面（本地调试 HTML）消息入口
+  // 用于 P3 记忆系统调试：从外部页面调用 runtime 命令
+  chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+    // 只允许本地调试页面调用
+    const senderUrl = sender.url || '';
+    if (!senderUrl.startsWith('http://localhost') && !senderUrl.startsWith('http://127.0.0.1')) {
+      sendResponse({ ok: false, error: 'unauthorized_origin' });
+      return false;
+    }
+
+    let envelope: RuntimeMessageEnvelope | undefined;
+    try {
+      envelope = decodeRuntimeMessageEnvelope(message);
+    } catch (error) {
+      sendResponse(createRuntimeBoundaryErrorResponse(error, envelope));
+      return false;
+    }
+
+    // 构造 trusted context（外部页面调用，不走授权流程）
+    const context: RuntimeMessageContext = {
+      tabId: undefined,
+      tabUrl: senderUrl,
+      origin: senderUrl,
+      kind: 'trusted',
+      trigger: 'external_bridge',
+    } as RuntimeMessageContext;
+
+    ensureRecoveryReadyWithTimeout()
+      .then(() => handleMessage(envelope, context))
+      .then(sendResponse)
+      .catch((error) => sendResponse({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    return true;
+  });
+
   chrome.storage.onChanged.addListener((changes) => {
     if ('deepseek_pp_chat_enabled' in changes || DEEPSEEK_API_KEY_STORAGE_KEY in changes) {
       createContextMenus()
