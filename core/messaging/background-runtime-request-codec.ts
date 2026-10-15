@@ -37,6 +37,7 @@ interface DecodedBackgroundRuntimePayloads {
   SET_AUTOMATION_STATUS: AutomationStatusRequest;
   DELETE_AUTOMATION: AutomationIdRequest;
   RUN_AUTOMATION_NOW: AutomationIdRequest;
+  PARSE_NATURAL_LANGUAGE_AUTOMATION: { instruction: string };
   SCENARIOS_UPDATED: ScenarioRuntimeRequest;
 }
 
@@ -72,6 +73,11 @@ export const BACKGROUND_RUNTIME_PAYLOAD_DECODERS: BackgroundRuntimePayloadDecode
   },
   RUN_AUTOMATION_NOW(value) {
     return decodeAutomationIdRequest(value, 'RUN_AUTOMATION_NOW');
+  },
+  PARSE_NATURAL_LANGUAGE_AUTOMATION(value) {
+    const payload = isRecord(value) ? value : {};
+    const instruction = typeof payload.instruction === 'string' ? payload.instruction : '';
+    return { instruction };
   },
   SCENARIOS_UPDATED: decodeScenarioRuntimeRequest,
 };

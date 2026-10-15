@@ -128,6 +128,10 @@ export interface BackgroundRuntimeCommandContracts {
     request: { type: 'RUN_AUTOMATION_NOW'; payload: { id: string } };
     response: AutomationRun | DomainFailure;
   };
+  PARSE_NATURAL_LANGUAGE_AUTOMATION: {
+    request: { type: 'PARSE_NATURAL_LANGUAGE_AUTOMATION'; payload: { instruction: string } };
+    response: unknown;
+  };
   SCENARIOS_UPDATED: {
     request: { type: 'SCENARIOS_UPDATED'; payload?: ScenarioRuntimeRequest };
     response: Ack | { ok: true; scenarios: ScenarioConfig[] };

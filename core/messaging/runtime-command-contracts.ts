@@ -183,6 +183,7 @@ export const RUNTIME_COMMAND_CONTRACTS = {
   SET_AUTOMATION_STATUS: typedCommand('payload-decoded', 'value-or-domain-error', 'background-error', 'live-only'),
   DELETE_AUTOMATION: typedCommand('payload-decoded', 'ack', 'background-error', 'live-only'),
   RUN_AUTOMATION_NOW: typedCommand('payload-decoded', 'value', 'background-error', 'live-only'),
+  PARSE_NATURAL_LANGUAGE_AUTOMATION: typedCommand('payload-decoded', 'value', 'background-error', 'live-only'),
   SCENARIOS_UPDATED: typedCommand('payload-decoded', 'value', 'background-error', 'live-only', 'optional'),
   TOOL_CALL_EXECUTED: command('client-only', 'payload-cast', 'unrouted', 'none', 'declared-only'),
   MEMORIES_UPDATED: command('client-only', 'none', 'unrouted', 'none', 'declared-only', 'none'),
