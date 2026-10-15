@@ -27,6 +27,7 @@ export interface AutomationRuntimeHandlerDependencies {
   runAutomationNow(id: string, excludeTabId?: number): Promise<AutomationRun | AutomationDomainFailure>;
   broadcastAutomationUpdate(excludeTabId?: number): Promise<void>;
   broadcastAutomationRunsUpdate(excludeTabId?: number): Promise<void>;
+  parseNaturalLanguageAutomation(instruction: string): Promise<{ ok: true; draft: unknown } | { ok: false; error: string }>;
 }
 
 export function createAutomationRuntimeHandlers(
@@ -73,6 +74,9 @@ export function createAutomationRuntimeHandlers(
     }),
     defineBackgroundPayloadRuntimeCommandHandler('RUN_AUTOMATION_NOW', ({ id }, context) => (
       dependencies.runAutomationNow(id, context.tabId)
+    )),
+    defineBackgroundPayloadRuntimeCommandHandler('PARSE_NATURAL_LANGUAGE_AUTOMATION', ({ instruction }) => (
+      dependencies.parseNaturalLanguageAutomation(instruction)
     )),
   ]);
 }

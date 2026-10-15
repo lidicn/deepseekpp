@@ -650,6 +650,54 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         runAutomationNow,
         broadcastAutomationUpdate,
         broadcastAutomationRunsUpdate,
+        parseNaturalLanguageAutomation: async (instruction: string) => {
+          try {
+            // 导入自然语言解析模块
+            const { buildAutomationDraftPrompt, createAutomationFromNaturalLanguage } = await import('../core/automation/natural-language-create');
+            
+            // 构造 Prompt
+            const prompt = buildAutomationDraftPrompt({
+              instruction,
+              now: Date.now(),
+              timezone: 'Asia/Shanghai',
+            });
+            
+            // 用 DeepSeek client 调用 LLM
+            const clientHeaders = deepSeekAutomationClient.createClientHeaders({
+              missingTokenMessage: AUTOMATION_AUTH_TOKEN_MISSING_MESSAGE,
+            });
+            const chatSessionId = await deepSeekAutomationClient.createChatSession(clientHeaders, {});
+            const powHeaders = await deepSeekAutomationClient.createPowHeaders(clientHeaders, {});
+            
+            // 发送 prompt
+            const turn = await deepSeekAutomationClient.submitPrompt({
+              chatSessionId,
+              parentMessageId: null,
+              modelType: null,
+              prompt: `${prompt.system}\n\n${prompt.user}`,
+              refFileIds: [],
+              thinkingEnabled: false,
+              searchEnabled: false,
+              clientHeaders,
+              powHeaders,
+            }, {});
+            
+            // 用 LLM 输出生成 draft
+            const draft = await createAutomationFromNaturalLanguage({
+              instruction,
+              timezone: 'Asia/Shanghai',
+            }, {
+              interpret: async () => turn.assistantText,
+            });
+            
+            return { ok: true as const, draft };
+          } catch (error) {
+            return {
+              ok: false as const,
+              error: error instanceof Error ? error.message : String(error),
+            };
+          }
+        },
       },
       scenario: {
         getAllScenarios,

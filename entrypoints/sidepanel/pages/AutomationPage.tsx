@@ -192,12 +192,21 @@ export default function AutomationPage() {
     }
     setNlLoading(true);
     try {
-      const draft = await createAutomationFromNaturalLanguage({
-        instruction: nlInput,
-        timezone: DEFAULT_TIMEZONE,
-      });
-      // 直接填充到表单里
-      applyDraftWithDraft(draft);
+      // 调用 runtime 命令，通过 DeepSeek LLM 解析自然语言
+      const result = await sidepanelRuntimeClient.request(
+        { type: 'PARSE_NATURAL_LANGUAGE_AUTOMATION', payload: { instruction: nlInput } },
+        { acceptFailure: true },
+      );
+      
+      if (result && 'ok' in result && !result.ok) {
+        banner.show('error', result.error);
+        return;
+      }
+      
+      if (result && 'draft' in result) {
+        // 直接填充到表单里
+        applyDraftWithDraft(result.draft as any);
+      }
     } catch (error) {
       banner.show('error', getRuntimeErrorMessage(error));
     } finally {
