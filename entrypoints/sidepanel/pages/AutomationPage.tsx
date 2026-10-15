@@ -196,7 +196,8 @@ export default function AutomationPage() {
         instruction: nlInput,
         timezone: DEFAULT_TIMEZONE,
       });
-      setNlDraft(draft);
+      // 直接填充到表单里
+      applyDraftWithDraft(draft);
     } catch (error) {
       banner.show('error', getRuntimeErrorMessage(error));
     } finally {
@@ -204,9 +205,9 @@ export default function AutomationPage() {
     }
   };
 
-  const applyDraft = () => {
-    if (!nlDraft) return;
-    const input = nlDraft.createInput;
+  const applyDraftWithDraft = (draft: typeof nlDraft) => {
+    if (!draft) return;
+    const input = draft.createInput;
     setEditing(null);
     setForm({
       name: input.name,
@@ -218,13 +219,14 @@ export default function AutomationPage() {
       searchEnabled: input.promptOptions.searchEnabled,
       thinkingEnabled: input.promptOptions.thinkingEnabled,
     });
+    // 关闭自然语言对话框，直接打开现有表单
     setShowNLDialog(false);
     setShowForm(true);
     // 清除持久化的自然语言状态
     setNlInput('');
     setNlDraft(null);
     void chrome.storage.local.remove('automation_nl_state');
-    banner.show('success', '已生成 draft，可在表单中进一步编辑');
+    banner.show('success', '已生成 draft，请在表单中进一步编辑后保存');
   };
 
   const startEdit = (automation: Automation) => {
@@ -396,43 +398,9 @@ export default function AutomationPage() {
               disabled={nlLoading || !nlInput.trim()}
               className="ds-btn-primary px-4 py-1.5 text-xs font-medium text-white rounded-lg disabled:opacity-50"
             >
-              {nlLoading ? '生成中...' : '生成 draft'}
+              {nlLoading ? '生成中...' : '生成并填充到表单'}
             </button>
-            {nlDraft && (
-              <button
-                onClick={applyDraft}
-                className="ds-btn-success px-4 py-1.5 text-xs font-medium text-white rounded-lg"
-              >
-                用此 draft 创建
-              </button>
-            )}
           </div>
-
-          {nlDraft && (
-            <div className="text-xs space-y-1 p-3 bg-gray-50 rounded-lg">
-              <div>
-                <span className="text-gray-500">名称：</span>
-                <span>{nlDraft.createInput.name}</span>
-              </div>
-              <div>
-                <span className="text-gray-500">提示词：</span>
-                <span className="line-clamp-2">{nlDraft.createInput.prompt}</span>
-              </div>
-              <div>
-                <span className="text-gray-500">调度：</span>
-                <span>
-                  {nlDraft.createInput.schedule.kind === 'manual'
-                    ? '手动'
-                    : `cron: ${nlDraft.createInput.schedule.expression}`}
-                </span>
-              </div>
-              {nlDraft.issues.some((i) => i.severity === 'error') && (
-                <div className="text-red-500">
-                  ⚠️ {nlDraft.issues.filter((i) => i.severity === 'error').map((i) => i.message).join('; ')}
-                </div>
-              )}
-            </div>
-          )}
         </div>
       )}
 

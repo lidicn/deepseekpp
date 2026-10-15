@@ -307,20 +307,31 @@ export function parseTimeOfDay(raw: string): TimeOfDay | null {
 
   // 匹配 "早上9点"、"晚上8点半"、"下午3:30" 等
   const patterns = [
+    // 24小时制：19点18分、19:18、19点
+    /(\d{1,2})\s*(点|:|：)\s*(\d{1,2})\s*分?/,
     // 早上/上午/中午/下午/晚上 + 数字点/半
-    /(早上|上午|中午|下午|傍晚|晚上|凌晨)\s*(\d{1,2})\s*(点|:|：)\s*(\d{1,2})?\s*(半)?/,
+    /(早上|上午|中午|下午|傍晚|晚上|凌晨)\s*(\d{1,2})\s*(点|:|：)\s*(\d{1,2})?\s*(分|半)?/,
     // 数字点 + 半
-    /(\d{1,2})\s*(点|:|：)\s*(\d{1,2})?\s*(半)?/,
+    /(\d{1,2})\s*(点|:|：)\s*(\d{1,2})?\s*(分|半)?/,
   ];
 
-  for (const pattern of patterns) {
+  for (let patternIndex = 0; patternIndex < patterns.length; patternIndex++) {
+    const pattern = patterns[patternIndex];
     const match = pattern.exec(text);
     if (!match) continue;
 
     let hour: number;
     let minute = 0;
 
-    if (match.length === 6) {
+    if (patternIndex === 0) {
+      // 24小时制：19点18分、19:18、19点
+      const h = parseInt(match[1], 10);
+      const m = match[3] ? parseInt(match[3], 10) : 0;
+      if (isNaN(h) || h < 0 || h > 23) continue;
+      if (!isNaN(m) && (m < 0 || m > 59)) continue;
+      hour = h;
+      minute = m;
+    } else if (patternIndex === 1) {
       // 带时段的匹配
       const period = match[1];
       const h = parseInt(match[2], 10);
@@ -421,6 +432,34 @@ export function deriveScheduleFromTimeExpression(raw: string): ParsedTimeSchedul
       expression: null,
       timeExpression: text,
     };
+  }
+
+  // 匹配 "今晚X点X分"、"明天X点"、"今天X点" 等一次性时间
+  // 注意：cron 不支持一次性任务，所以这些都用 manual，但记录 timeExpression
+  const oneTimeMatch = /(今晚|明天|今天|后天|大后天)\s*(.+)?/.exec(text);
+  if (oneTimeMatch) {
+    const timeText = oneTimeMatch[2] ?? '';
+    const time = parseTimeOfDay(timeText);
+    if (time) {
+      return {
+        kind: 'manual',
+        expression: null,
+        timeExpression: `${oneTimeMatch[1]} ${timeText}`.trim(),
+      };
+    }
+  }
+
+  // 匹配纯时间："19点18分"、"9点半"
+  const pureTimeMatch = /^(\d{1,2})\s*(点|:|：)\s*(\d{1,2})\s*分?$/.exec(text);
+  if (pureTimeMatch) {
+    const time = parseTimeOfDay(text);
+    if (time) {
+      return {
+        kind: 'manual',
+        expression: null,
+        timeExpression: text,
+      };
+    }
   }
 
   return null;
