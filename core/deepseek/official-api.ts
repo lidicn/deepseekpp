@@ -152,10 +152,12 @@ async function readOfficialApiStream(
     }
   }
 
-  callbacks.onFinished?.();
+  // R2-N2: 与 web 通道（active-client.ts）对齐——先置真实终态再回调，否则
+  // onFinished 里读到的 turn.finished 永远是初值，拿不到"被中断的不完整"状态。
   if (streamAbortedEarly) {
-    turn.finished = false; // explicitly mark as incomplete
+    turn.finished = false;
   }
+  callbacks.onFinished?.();
   return turn;
 }
 
