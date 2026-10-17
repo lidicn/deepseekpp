@@ -4,6 +4,7 @@ import {
   createDeepSeekStreamSummary,
   extractResponseUsageStatsFromParsed,
   extractResponseTextForTokenSpeed,
+  getDeepSeekFragmentState,
   isStreamFinishedFromParsed,
   type SSEEvent,
 } from './stream-codec';
@@ -157,29 +158,42 @@ export async function createChatSession(
   return createChatSessionWithContext(clientHeaders, { signal });
 }
 
+const CREATE_SESSION_RETRY_ATTEMPTS = 3;
+const CREATE_SESSION_BACKOFF_MS = [300, 900, 2700];
+
 async function createChatSessionWithContext(
   clientHeaders: Record<string, string>,
   context: DeepSeekRequestContext,
 ): Promise<string> {
-  const response = await requestDeepSeek(
-    encodeCreateSessionRequest(clientHeaders),
-    'DeepSeek chat session create',
-    'session',
-    context,
-  );
-  const json = await readJsonResponse(response, 'DeepSeek chat session create', 'session');
-  const data = json?.data;
-  const chatSessionId = firstString(data?.biz_data?.chat_session?.id);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= CREATE_SESSION_RETRY_ATTEMPTS; attempt++) {
+    const response = await requestDeepSeek(
+      encodeCreateSessionRequest(clientHeaders),
+      'DeepSeek chat session create',
+      'session',
+      context,
+    );
+    const json = await readJsonResponse(response, 'DeepSeek chat session create', 'session');
+    const data = json?.data;
+    const chatSessionId = firstString(data?.biz_data?.chat_session?.id);
 
-  if (isAuthBizError(data, json)) {
-    throw new DeepSeekAuthError(`DeepSeek auth token was rejected while creating chat session: ${JSON.stringify(data ?? json)}`);
+    if (isAuthBizError(data, json)) {
+      throw new DeepSeekAuthError(`DeepSeek auth token was rejected while creating chat session: ${JSON.stringify(data ?? json)}`);
+    }
+
+    if (response.ok && data?.biz_code === 0 && chatSessionId) {
+      return chatSessionId;
+    }
+
+    // T4-2/T4-5: only 429 and 5xx are retryable with bounded exponential backoff;
+    // other failures (4xx payload issues) surface immediately.
+    const retryable = response.status === 429 || response.status >= 500;
+    lastError = new DeepSeekSessionError(`Failed to create DeepSeek chat session: ${JSON.stringify(data ?? json)}`);
+    if (!retryable || attempt >= CREATE_SESSION_RETRY_ATTEMPTS) break;
+    await sleep(retryDelayMs(response, CREATE_SESSION_BACKOFF_MS[attempt - 1] ?? 2700), context.signal);
   }
-
-  if (!response.ok || data?.biz_code !== 0 || !chatSessionId) {
-    throw new DeepSeekSessionError(`Failed to create DeepSeek chat session: ${JSON.stringify(data ?? json)}`);
-  }
-
-  return chatSessionId;
+  if (lastError instanceof Error) throw lastError;
+  throw new DeepSeekSessionError('Failed to create DeepSeek chat session.');
 }
 
 export async function createPowHeaders(
@@ -596,8 +610,15 @@ async function readCompletionStreamWithCallbacks(
         // 20261007 fix: use receivedAnyVisibleChunk (tracked from onTextChunk
         // deltas) instead of summary.assistantText, which is never accumulated
         // when retainAssistantText:false.
+        // T1-1: a model may declare an output fragment (a TOOL fragment opening
+        // with no text/thinking delta yet) before the connection resets or the
+        // step timeout fires. Declared fragments prove the server started a
+        // response, so this interruption is a recoverable partial turn rather
+        // than a fatal error. The ready/id frame alone still does NOT qualify
+        // (see S-2 note above) — only a declared output fragment does.
         const hasPartialContent = receivedAnyVisibleChunk
-          || summary.assistantReasoningText !== '';
+          || summary.assistantReasoningText !== ''
+          || getDeepSeekFragmentState(summary).fragmentTypes.length > 0;
         if (hasPartialContent) {
           streamAbortedMidResponse = true;
           break;
@@ -834,7 +855,7 @@ async function readJsonResponse(
     const message = `${label} returned non-JSON HTTP ${response.status}: ${preview || response.statusText}`;
     if (errorKind === 'pow') throw new DeepSeekPowError(message);
     if (errorKind === 'session') throw new DeepSeekSessionError(message);
-    throw new DeepSeekPayloadError(message, { retryable: response.status >= 500 });
+    throw new DeepSeekPayloadError(message, { retryable: response.status === 429 || response.status >= 500 });
   }
 }
 
@@ -895,6 +916,22 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${Math.round(bytes / 1024 / 1024)}MB`;
   if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
   return `${bytes}B`;
+}
+
+/**
+ * T4-5: compute a retry delay honoring a numeric Retry-After (seconds) header,
+ * falling back to the caller's exponential backoff and adding small jitter so
+ * concurrent clients do not thundering-herd the same recovery window.
+ */
+function retryDelayMs(response: Response, fallbackMs: number): number {
+  const raw = response.headers.get('retry-after');
+  if (raw) {
+    const seconds = Number(raw);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      return Math.min(seconds * 1000, 30_000) + Math.floor(Math.random() * 250);
+    }
+  }
+  return fallbackMs + Math.floor(Math.random() * 250);
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
