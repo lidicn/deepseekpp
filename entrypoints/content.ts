@@ -266,7 +266,11 @@ import {
 import { notifyContentAuthStatusChanged } from "./content/auth-status-notifier";
 import { createContentPersistenceTracker } from "./content/persistence-tracking";
 import { getRestoredMessageMutationAction } from "./content/restored-message-targets";
-import { bindNewChatToolCallToBrowserSession } from "./content/tool-session-binding";
+import {
+  bindNewChatToolCallToBrowserSession,
+  waitForBrowserOwnedChatSession,
+  TOOL_SESSION_BINDING_TIMEOUT_MS,
+} from "./content/tool-session-binding";
 import {
   createBrowserDownloadManager,
   type BrowserDownloadManager,
@@ -4919,13 +4923,29 @@ async function startInlineAgentIfNeeded(
   if (userAskedToContinue && continuableExecutions.length === 0) {
     console.log('[DPP-AUTO] user continuation prompt detected, starting agent loop without prior tool executions');
   }
-  if (!complete.chatSessionId || complete.assistantMessageId == null) {
-    console.log('[DPP-AUTO] skip: missing session/assistant id', {
-      chatSessionId: complete.chatSessionId,
-      assistantMessageId: complete.assistantMessageId,
+  // T2-1: a brand-new chat's first request carries no chat_session_id — the
+  // browser-owned route /chat/s/<id> appears only after the server creates the
+  // session, so the request body has chatSessionId === null. Previously this
+  // guard silently returned (console.log only), so the continuation loop never
+  // started after a successful first-turn tool call. Reuse the tool-binding
+  // layer's bounded wait for the SPA route instead of abandoning the turn.
+  let resolvedChatSessionId = complete.chatSessionId;
+  if (!resolvedChatSessionId) {
+    resolvedChatSessionId = await waitForBrowserOwnedChatSession({
+      readChatSessionId: getCurrentChatSessionId,
+      timeoutMs: TOOL_SESSION_BINDING_TIMEOUT_MS,
     });
+  }
+  // T2-1 / T2-3: never fail silently. If the route never appears or the server
+  // never sent an assistant message id, show a visible warning instead of a
+  // console.log-only return.
+  const sessionId = resolvedChatSessionId;
+  if (!sessionId || complete.assistantMessageId == null) {
+    showContentToast(contentT("content.agent.startFailed"), "warning");
     return;
   }
+  const assistantId = complete.assistantMessageId;
+  complete = { ...complete, chatSessionId: sessionId };
 
   const loopId = crypto.randomUUID();
   const authorization = complete.requestId
@@ -4951,8 +4971,8 @@ async function startInlineAgentIfNeeded(
   const payload: InlineAgentStartPayload = {
     loopId,
     capabilityScopeRequestId: complete.requestId,
-    chatSessionId: complete.chatSessionId,
-    parentMessageId: complete.assistantMessageId,
+    chatSessionId: sessionId,
+    parentMessageId: assistantId,
     originalPrompt: complete.agentTaskPrompt || complete.originalPrompt,
     agentTaskPrompt: complete.agentTaskPrompt || complete.originalPrompt,
     toolExecutions: continuableExecutions,
