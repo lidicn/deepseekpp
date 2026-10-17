@@ -52,6 +52,9 @@ export function createWebSearchToolDescriptors(
       mode: 'auto',
       enabled: true,
       risk: 'low',
+      // T3-2: declare a byte ceiling so downstream governance/history can bound
+      // the result; web_search returns at most topK compact snippets.
+      maxResultBytes: 32_000,
     },
   },
   {
@@ -76,6 +79,10 @@ export function createWebSearchToolDescriptors(
       mode: 'auto',
       enabled: true,
       risk: 'medium',
+      // T3-2: web_fetch snapshots can reach ~50k chars; declare a ceiling so the
+      // generic governance layer and history persistence do not store unbounded
+      // output.
+      maxResultBytes: 32_000,
     },
   },
   ];

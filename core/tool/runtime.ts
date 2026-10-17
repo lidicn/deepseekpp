@@ -65,6 +65,14 @@ export interface RuntimeToolRuntimeOptions {
   capabilityInvocationResolver?: RuntimeCapabilityInvocationResolver;
 }
 
+/**
+ * T3-1: unified fallback timeout for tool execution. Providers that declare
+ * their own shorter timeout keep it; this only caps tools that otherwise have
+ * no timeout at all (web-search fetch, artifact writes, ...) so a hung provider
+ * cannot block keepalive indefinitely. Aligned with the MCP request ceiling.
+ */
+const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
+
 export interface RuntimeToolRuntime {
   getToolDescriptors(locale?: SupportedLocale): Promise<ToolDescriptor[]>;
   getAuthorizationDescriptors(locale?: SupportedLocale): Promise<ToolDescriptor[]>;
@@ -203,6 +211,12 @@ async function executeRuntimeToolCall(
   let resolvedCall = authorized.call;
   let executionDescriptor = authorized.descriptor;
   let providerCompleted = false;
+  // T3-1: effective outer timeout = caller override, then the descriptor's own
+  // timeout, then the 120s fallback. A provider's shorter internal timeout still
+  // wins; this only prevents an unbounded hang when none is declared.
+  const effectiveTimeoutMs = options.timeoutMs
+    ?? executionDescriptor.execution.timeoutMs
+    ?? DEFAULT_TOOL_TIMEOUT_MS;
   try {
     resolvedCall = await resolveToolCallPayload(
       authorized.call,
@@ -223,32 +237,34 @@ async function executeRuntimeToolCall(
       } else {
         resolvedCall = resolution.call;
         executionDescriptor = resolution.descriptor;
-        result = await providerRegistry.execute(
-          resolvedCall,
-          executionDescriptor,
-          {
+        result = await withUnifiedTimeout(
+          providerRegistry.execute(resolvedCall, executionDescriptor, {
             locale,
             signal: options.signal,
             timeoutMs: options.timeoutMs,
             maxResultBytes: options.maxResultBytes,
             availableDescriptors: currentDescriptors,
             capabilityScope: createRuntimeCapabilityScope(context, authorized.call),
-          },
+          }),
+          effectiveTimeoutMs,
+          resolvedCall,
+          locale,
         );
         providerCompleted = true;
       }
     } else {
-      result = await providerRegistry.execute(
-        resolvedCall,
-        executionDescriptor,
-        {
+      result = await withUnifiedTimeout(
+        providerRegistry.execute(resolvedCall, executionDescriptor, {
           locale,
           signal: options.signal,
           timeoutMs: options.timeoutMs,
           maxResultBytes: options.maxResultBytes,
           availableDescriptors: currentDescriptors,
           capabilityScope: createRuntimeCapabilityScope(context, authorized.call),
-        },
+        }),
+        effectiveTimeoutMs,
+        resolvedCall,
+        locale,
       );
       providerCompleted = true;
     }
@@ -555,4 +571,42 @@ function authorizationHintKey(code: string): AuthorizationHintKey {
     default:
       return 'tool.runtime.authorizationGenericHint';
   }
+}
+
+/**
+ * T3-1: race the provider call against the unified fallback timeout. A timeout
+ * resolves to a structured `tool_timeout` ToolResult instead of hanging forever;
+ * provider rejections and aborts still propagate to the caller's catch.
+ */
+async function withUnifiedTimeout(
+  providerCall: Promise<ToolResult>,
+  timeoutMs: number,
+  call: ToolCall,
+  locale: SupportedLocale,
+): Promise<ToolResult> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<ToolResult>((resolve) => {
+    timer = setTimeout(() => resolve(createToolTimeoutResult(call, locale, timeoutMs)), timeoutMs);
+  });
+  try {
+    return await Promise.race([providerCall, timeoutPromise]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
+
+function createToolTimeoutResult(call: ToolCall, locale: SupportedLocale, timeoutMs: number): ToolResult {
+  return {
+    ok: false,
+    summary: `Tool ${call.name} timed out after ${Math.round(timeoutMs / 1000)}s.`,
+    detail: `The tool did not produce a result within ${Math.round(timeoutMs / 1000)}s; returning a structured timeout instead of hanging.`,
+    name: call.name,
+    provider: call.provider,
+    descriptorId: call.descriptorId,
+    error: {
+      code: 'tool_timeout',
+      message: `Tool execution exceeded ${Math.round(timeoutMs / 1000)}s.`,
+      retryable: false,
+    },
+  };
 }
