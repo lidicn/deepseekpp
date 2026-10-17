@@ -22,9 +22,10 @@ export interface StepSignal {
 
 /**
  * Creates an abort signal that fires either when the parent signal aborts or
- * when the step timeout (120s) elapses. Mirrors the original loop semantics:
- * the timeout reason is a `TimeoutError` DOMException and `timedOut()` reports
- * whether the timeout (not a parent abort) fired.
+ * when the step timeout elapses (INLINE_AGENT_STEP_TIMEOUT_MS, currently 300s —
+ * not 120s; the earlier comment drifted from the constant). Mirrors the
+ * original loop semantics: the timeout reason is a `TimeoutError` DOMException
+ * and `timedOut()` reports whether the timeout (not a parent abort) fired.
  */
 export function createStepSignal(parentSignal: AbortSignal): StepSignal {
   const controller = new AbortController();

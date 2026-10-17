@@ -72,8 +72,10 @@ export function createResponseTokenSpeedTracker(
     return Number.isFinite(elapsedMs) && elapsedMs > 0 ? elapsedMs : null;
   };
 
-  const emit = (active: boolean, force = false) => {
-    if (finished) return;
+  // terminal=true lets the final state (finish() / post-finish server stats)
+  // pass the finished guard; ordinary progress emits stay blocked after finish.
+  const emit = (active: boolean, force = false, terminal = false) => {
+    if (finished && !terminal) return;
 
     const now = performance.now();
     if (!force && now - lastEmitAt < emitIntervalMs) return;
@@ -144,7 +146,9 @@ export function createResponseTokenSpeedTracker(
         changed = true;
       }
 
-      if (changed) emit(!finished, true);
+      // After finish, late server usage frames still need to be reported
+      // (active:false, terminal) so accumulatedTokens are not dropped.
+      if (changed) emit(finished ? false : true, true, finished);
     },
     finish() {
       if (finished) return;
@@ -153,7 +157,7 @@ export function createResponseTokenSpeedTracker(
         clearInterval(tickTimer);
         tickTimer = null;
       }
-      emit(false, true);
+      emit(false, true, true);
     },
   };
 }
