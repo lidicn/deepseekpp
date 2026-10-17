@@ -28,7 +28,7 @@ describe('inline agent execution policy', () => {
     ]);
   });
 
-  it('excludes local tools that carry no continuation contract', () => {
+  it('keeps ordinary local tools continuable by default (continuation blacklist is empty)', () => {
     const failed = makeExecution({
       result: {
         ok: false,
@@ -41,7 +41,13 @@ describe('inline agent execution policy', () => {
       provider: { kind: 'local', id: 'clock', displayName: 'Clock', transport: 'in_process' },
     });
 
-    expect(selectContinuableToolExecutions([failed, unsupported])).toEqual([failed]);
+    // R1: NO_CONTINUATION_TOOL_NAMES is intentionally empty. Every non-pending
+    // tool is continuable by default so a newly added local tool can always be
+    // re-emitted (this avoids the artifact_create/sandbox_run断流 regression).
+    // The old test asserted clock_now was excluded; clock_now is fictional and
+    // the blacklist no longer excludes anything, so the correct assertion is
+    // that ordinary local tools are kept.
+    expect(selectContinuableToolExecutions([failed, unsupported])).toEqual([failed, unsupported]);
   });
 
   it('keeps every memory tool call in the continuation set', () => {

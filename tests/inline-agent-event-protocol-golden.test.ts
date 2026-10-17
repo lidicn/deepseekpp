@@ -242,7 +242,9 @@ describe('AGENT_* event protocol golden', () => {
     expect(events).toEqual([
       { type: 'AGENT_STEP_STARTED', loopId: 'loop-1', stepIndex: 0 },
       { type: 'AGENT_STREAM_CHUNK', loopId: 'loop-1', stepIndex: 0, text: '', fullText: 'Here is the final answer.' },
-      { type: 'AGENT_STEP_COMPLETE', loopId: 'loop-1', stepIndex: 0, responseMessageId: null, toolExecutions: [] },
+      // T1-4: responseMessageId=null no longer clobbers the chain; the step
+      // keeps the payload's parentMessageId (100) instead of emitting null.
+      { type: 'AGENT_STEP_COMPLETE', loopId: 'loop-1', stepIndex: 0, responseMessageId: 100, toolExecutions: [] },
       { type: 'AGENT_LOOP_COMPLETE', loopId: 'loop-1', totalSteps: 1, totalTools: 1, finalText: 'Here is the final answer.' },
     ]);
   });
