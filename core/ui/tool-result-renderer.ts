@@ -2,6 +2,7 @@ import type { ToolCardResult } from '../types';
 import type { ArtifactOutput, ArtifactRuntimeLanguage } from '../artifact';
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
 import { injectInjectedThemeStyles } from './injected-theme';
+import { diagnosticLogBuffer } from '../diagnostics/log-buffer';
 
 export type ToolResultRendererInput = {
   target: HTMLElement;
@@ -22,7 +23,19 @@ export function registerToolResultRenderer(renderer: ToolResultRenderer): void {
 
 export function renderToolResultWithRegistry(input: ToolResultRendererInput): boolean {
   for (const renderer of renderers) {
-    if (renderer(input)) return true;
+    try {
+      if (renderer(input)) return true;
+    } catch (error) {
+      // UI-02/03: 单个 renderer 抛错不能击穿 content script（否则所有工具卡永久不渲染、
+      // 必须刷新）。记诊断、清掉它可能已写入 target 的半成品 DOM，继续试下一个 renderer。
+      diagnosticLogBuffer.record({
+        level: 'error',
+        source: 'tool-result-renderer',
+        message: 'renderer threw',
+        details: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      });
+      input.target.replaceChildren();
+    }
   }
   return false;
 }
