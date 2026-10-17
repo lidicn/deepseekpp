@@ -253,8 +253,17 @@ async function submitAutomationPrompt(
   execution?.assertActive();
 
   // Phase 3: L2 记忆注入 — 新会话根消息时自动注入记忆摘要
-  const { injectL2Digest } = await import('../memory/l2-injector');
-  const { prompt: injectedPrompt } = await injectL2Digest(chatSessionId, prompt, parentMessageId);
+  // R-10: 记忆注入是可选增强。无 IndexedDB（隐私模式/策略禁用/迁移异常）时 injectL2Digest
+  // 会抛「IndexedDB is unavailable」，旧版直接炸掉整个 turn（submitPrompt 一次都发不出）。
+  // 与同文件 extractor hook 的 catch{} 降级模式一致：注入失败时降级为原 prompt，不阻断主流程。
+  let injectedPrompt = prompt;
+  try {
+    const { injectL2Digest } = await import('../memory/l2-injector');
+    const result = await injectL2Digest(chatSessionId, prompt, parentMessageId);
+    injectedPrompt = result.prompt;
+  } catch {
+    injectedPrompt = prompt;
+  }
 
   return deepSeekClient.submitPrompt({
     chatSessionId,

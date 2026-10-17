@@ -306,11 +306,13 @@ export function parseTimeOfDay(raw: string): TimeOfDay | null {
   if (!text) return null;
 
   // 匹配 "早上9点"、"晚上8点半"、"下午3:30" 等
+  // R-9: 带时段的正则必须排在最前——否则 24h 正则会先命中 "下午3:30" 里的 "3:30"，
+  // 时段前缀被吞、建出 03:30 而非 15:30。数组顺序已按此重排（0=时段 / 1=24h / 2=数字+半）。
   const patterns = [
-    // 24小时制：19点18分、19:18、19点
-    /(\d{1,2})\s*(点|:|：)\s*(\d{1,2})\s*分?/,
     // 早上/上午/中午/下午/晚上 + 数字点/半
     /(早上|上午|中午|下午|傍晚|晚上|凌晨)\s*(\d{1,2})\s*(点|:|：)\s*(\d{1,2})?\s*(分|半)?/,
+    // 24小时制：19点18分、19:18、19点
+    /(\d{1,2})\s*(点|:|：)\s*(\d{1,2})\s*分?/,
     // 数字点 + 半
     /(\d{1,2})\s*(点|:|：)\s*(\d{1,2})?\s*(分|半)?/,
   ];
@@ -323,7 +325,7 @@ export function parseTimeOfDay(raw: string): TimeOfDay | null {
     let hour: number;
     let minute = 0;
 
-    if (patternIndex === 0) {
+    if (patternIndex === 1) {
       // 24小时制：19点18分、19:18、19点
       const h = parseInt(match[1], 10);
       const m = match[3] ? parseInt(match[3], 10) : 0;
@@ -331,7 +333,7 @@ export function parseTimeOfDay(raw: string): TimeOfDay | null {
       if (!isNaN(m) && (m < 0 || m > 59)) continue;
       hour = h;
       minute = m;
-    } else if (patternIndex === 1) {
+    } else if (patternIndex === 0) {
       // 带时段的匹配
       const period = match[1];
       const h = parseInt(match[2], 10);

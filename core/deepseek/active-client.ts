@@ -167,30 +167,43 @@ async function createChatSessionWithContext(
 ): Promise<string> {
   let lastError: unknown;
   for (let attempt = 1; attempt <= CREATE_SESSION_RETRY_ATTEMPTS; attempt++) {
-    const response = await requestDeepSeek(
-      encodeCreateSessionRequest(clientHeaders),
-      'DeepSeek chat session create',
-      'session',
-      context,
-    );
-    const json = await readJsonResponse(response, 'DeepSeek chat session create', 'session');
-    const data = json?.data;
-    const chatSessionId = firstString(data?.biz_data?.chat_session?.id);
+    try {
+      const response = await requestDeepSeek(
+        encodeCreateSessionRequest(clientHeaders),
+        'DeepSeek chat session create',
+        'session',
+        context,
+      );
+      const json = await readJsonResponse(response, 'DeepSeek chat session create', 'session');
+      const data = json?.data;
+      const chatSessionId = firstString(data?.biz_data?.chat_session?.id);
 
-    if (isAuthBizError(data, json)) {
-      throw new DeepSeekAuthError(`DeepSeek auth token was rejected while creating chat session: ${JSON.stringify(data ?? json)}`);
+      if (isAuthBizError(data, json)) {
+        throw new DeepSeekAuthError(`DeepSeek auth token was rejected while creating chat session: ${JSON.stringify(data ?? json)}`);
+      }
+
+      if (response.ok && data?.biz_code === 0 && chatSessionId) {
+        return chatSessionId;
+      }
+
+      // T4-2/T4-5: only 429 and 5xx are retryable with bounded exponential backoff;
+      // other failures (4xx payload issues) surface immediately.
+      const retryable = response.status === 429 || response.status >= 500;
+      lastError = new DeepSeekSessionError(`Failed to create DeepSeek chat session: ${JSON.stringify(data ?? json)}`);
+      if (!retryable || attempt >= CREATE_SESSION_RETRY_ATTEMPTS) break;
+      await sleep(retryDelayMs(response, CREATE_SESSION_BACKOFF_MS[attempt - 1] ?? 2700), context.signal);
+    } catch (error) {
+      // R-7: 旧版 attempt 体在 try 外，fetch 抛 TypeError（Failed to fetch）或 readJsonResponse
+      // 抛 503 空体 NetworkPolicyError 时直接逃出循环、一次即溃——这正是「新建对话最开头
+      // 服务器暂时不可用」的主因。包进 try 后：AbortError（用户取消）与 AuthError 立即抛；
+      // 可重试的传输层错误（TypeError 或带 retryable 标志的网络策略错误）走退避；其余直接抛。
+      const err = error as { name?: string; retryable?: boolean };
+      if (err?.name === 'AbortError' || error instanceof DeepSeekAuthError) throw error;
+      const transportRetryable = err?.name === 'TypeError' || err?.retryable === true;
+      if (!transportRetryable || attempt >= CREATE_SESSION_RETRY_ATTEMPTS) throw error;
+      lastError = error;
+      await sleep(CREATE_SESSION_BACKOFF_MS[attempt - 1] ?? 2700, context.signal);
     }
-
-    if (response.ok && data?.biz_code === 0 && chatSessionId) {
-      return chatSessionId;
-    }
-
-    // T4-2/T4-5: only 429 and 5xx are retryable with bounded exponential backoff;
-    // other failures (4xx payload issues) surface immediately.
-    const retryable = response.status === 429 || response.status >= 500;
-    lastError = new DeepSeekSessionError(`Failed to create DeepSeek chat session: ${JSON.stringify(data ?? json)}`);
-    if (!retryable || attempt >= CREATE_SESSION_RETRY_ATTEMPTS) break;
-    await sleep(retryDelayMs(response, CREATE_SESSION_BACKOFF_MS[attempt - 1] ?? 2700), context.signal);
   }
   if (lastError instanceof Error) throw lastError;
   throw new DeepSeekSessionError('Failed to create DeepSeek chat session.');
