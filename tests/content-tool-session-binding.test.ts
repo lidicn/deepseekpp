@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   bindNewChatToolCallToBrowserSession,
+  waitForBrowserOwnedChatSession,
 } from '../entrypoints/content/tool-session-binding';
 import type { ToolCall } from '../core/types';
 
@@ -74,5 +75,41 @@ describe('content new-chat tool session binding', () => {
     abort.abort();
 
     await expect(pending).resolves.toBeNull();
+  });
+});
+
+// T2-1 regression: startInlineAgentIfNeeded waits for the browser-owned route
+// instead of silently returning on a null chatSessionId. The wait itself lives
+// in tool-session-binding; these cases pin its resolve/timeout contract that
+// the inline-agent continuation gate now relies on.
+describe('T2-1 new-chat continuation session resolution', () => {
+  it('resolves with the browser-owned session once the SPA route appears', async () => {
+    const target = new EventTarget();
+    let routeSessionId: string | null = null;
+    const pending = waitForBrowserOwnedChatSession({
+      target,
+      timeoutMs: 100,
+      readChatSessionId: () => routeSessionId,
+    });
+
+    routeSessionId = 'browser-session';
+    target.dispatchEvent(new Event('dpp:navigation'));
+
+    await expect(pending).resolves.toBe('browser-session');
+  });
+
+  it('returns null when the route never appears within the bounded window', async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = waitForBrowserOwnedChatSession({
+        target: new EventTarget(),
+        timeoutMs: 100,
+        readChatSessionId: () => null,
+      });
+      await vi.advanceTimersByTimeAsync(100);
+      await expect(pending).resolves.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
