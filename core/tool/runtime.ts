@@ -170,7 +170,8 @@ async function executeRuntimeToolCall(
       details: '可能卡住了，等待超时或 MCP host 无响应',
     });
   }, 90_000);
-  stalledTimer.unref?.();
+  // D-08: 不要 unref。MV3 SW 本身就在等待事件，unref 会让该 stalled 告警定时器
+  // 不被调度、或随 SW 回收一起消失，导致 90s 超时前的卡住告警永不出现。
 
   if (identifiedCall.parseError) {
     const result = createParseErrorToolResult(identifiedCall, locale);
@@ -277,8 +278,16 @@ async function executeRuntimeToolCall(
       message: `tool execution failed: ${resolvedCall.name}`,
       details: error instanceof Error ? error.message : String(error),
     });
-    await completeAuthorizationAfterProvider(authorized.reservation);
-    throw error;
+    // D-02: provider 异常不再穿透成未捕获 throw（那会让整条回复链静默断掉，
+    // 用户连"工具失败了"都看不到）。转成结构化错误 ToolResult，落到统一收尾，
+    // 让模型拿到 ok:false + retryable，并能向用户说明或重试。
+    // 仅 ToolPostEffectPersistenceError（provider 已成功、但外部持久化状态不明）
+    // 维持原 throw——那是"副作用不确定"的语义，不能假装成功也不能假装失败。
+    if (error instanceof ToolPostEffectPersistenceError) {
+      await completeAuthorizationAfterProvider(authorized.reservation);
+      throw error;
+    }
+    result = createProviderExecutionErrorResult(resolvedCall, error);
   }
   clearTimeout(stalledTimer);
   await completeAuthorizationAfterProvider(authorized.reservation, result);
@@ -493,6 +502,23 @@ function createUnsupportedToolResult(call: ToolCall, locale: SupportedLocale): T
       code: 'tool_unsupported',
       message: `Unsupported tool: ${call.name}`,
       retryable: false,
+    },
+  };
+}
+
+function createProviderExecutionErrorResult(call: ToolCall, error: unknown): ToolResult {
+  const message = error instanceof Error ? error.message : String(error);
+  return {
+    ok: false,
+    summary: 'Tool execution failed',
+    detail: message,
+    name: call.name,
+    provider: call.provider,
+    descriptorId: call.descriptorId,
+    error: {
+      code: 'tool_provider_execution_failed',
+      message,
+      retryable: true,
     },
   };
 }

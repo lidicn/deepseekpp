@@ -153,8 +153,10 @@ function decodeDeepSeekRequestRecord(bodyStr: string): Record<string, unknown> {
   let value: unknown;
   try {
     value = JSON.parse(bodyStr);
-  } catch {
-    throw new Error('DeepSeek request body must be valid JSON.');
+  } catch (cause) {
+    // D-11: 保留原始解析错误（行列/偏移），否则线上只知道"body 不合法"，
+    // 定位不到第几字节出错。
+    throw new Error('DeepSeek request body must be valid JSON.', { cause });
   }
 
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -175,7 +177,9 @@ export function augmentDecodedRequestBody(
   const locale = state.locale ?? DEFAULT_LOCALE;
 
   const thinkingEnabled = body.thinking_enabled === true;
-  const isFirstMessage = body.parent_message_id === null || body.parent_message_id === undefined;
+  // D-05: 首轮判定收紧为 falsy 即首轮。上游若误用 0 / "" 表示"无父消息"，
+  // 旧的严格 null/undefined 判断会把它当成非首轮，导致 preset/隐式 skill 不注入。
+  const isFirstMessage = !body.parent_message_id;
   const messageCount = isFirstMessage ? 1 : state.messageCount + 1;
   const promptSettings = normalizePromptInjectionSettings(state.promptSettings ?? DEFAULT_PROMPT_INJECTION_SETTINGS);
   const shouldInjectPreset = shouldInjectPresetForTurn({
