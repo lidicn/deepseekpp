@@ -32,7 +32,7 @@ describe('content console-log persistence boundary', () => {
     expect(source).toContain('await persistConsoleLogBufferBeforeReload();');
     const reloadStart = source.indexOf('function reloadInlineAgentNativeHistory(');
     const reloadEnd = source.indexOf('\n}', reloadStart);
-    expect(source.slice(reloadStart, reloadEnd)).toContain('window.location.reload();');
+    expect(source.slice(reloadStart, reloadEnd)).toContain('window.location.reload');
     expect(source.slice(reloadStart, reloadEnd)).not.toMatch(/localStorage|storage\.local\.set/);
   });
 

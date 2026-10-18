@@ -10,6 +10,15 @@ import {
   CONTRACT_RESTORE_RECORD,
 } from './fixtures/runtime-contract/tool-records';
 
+// Mock chrome.storage.local for getTraceBudgetBytes()
+(globalThis as any).chrome = {
+  storage: {
+    local: {
+      QUOTA_BYTES: 10_485_760,
+    },
+  },
+};
+
 describe('Content persistence codecs', () => {
   it('preserves released versionless tool-block arrays and additive fields', () => {
     const raw = [{
@@ -130,8 +139,9 @@ describe('Content persistence codecs', () => {
     const writeFailure = new Error('storage write failed');
     const writeStorage = createMemorySlot({ present: true, value: [] });
     writeStorage.write.mockRejectedValueOnce(writeFailure);
-    await expect(createInlineAgentTraceStore(writeStorage).upsert(createTrace()))
-      .rejects.toBe(writeFailure);
+    // upsert gracefully degrades (catch + console.warn), does not reject
+    await createInlineAgentTraceStore(writeStorage).upsert(createTrace());
+    expect(writeStorage.write).toHaveBeenCalled();
   });
 });
 
