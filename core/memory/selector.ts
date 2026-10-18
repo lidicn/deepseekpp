@@ -6,8 +6,10 @@ import { estimateTokens } from '../token/estimator';
 export { estimateTokens } from '../token/estimator';
 
 // 相关性门控阈值（供 digest.ts 复用）
+// 方案甲：门控只做 0 分剔除，排序仍用 keywordScore
+// kwScore >= 1 才通过（即 kwScore=0 的被剔除）
 export const MIN_KEYWORD_SCORE_PROJECT = 1;
-export const MIN_KEYWORD_SCORE_GLOBAL = 5;
+export const MIN_KEYWORD_SCORE_GLOBAL = 1;
 
 const segmenter =
   typeof Intl !== 'undefined' && Intl.Segmenter
@@ -75,6 +77,8 @@ function decayScore(memory: Memory): number {
 export interface SelectOptions {
   budget?: number;
   identityOnly?: boolean;
+  /** 是否包含归档的记忆（默认 false，不包含） */
+  includeArchived?: boolean;
 }
 
 export function getMemoryBudget(promptTokens: number): number {
@@ -91,11 +95,17 @@ export function selectMemories(
 ): Memory[] {
   if (allMemories.length === 0) return [];
 
-  const { budget = MEMORY_TOKEN_BUDGET, identityOnly = false } = options ?? {};
+  const { budget = MEMORY_TOKEN_BUDGET, identityOnly = false, includeArchived = false } = options ?? {};
+
+  // 先过滤 archived 的记忆（除非 includeArchived 为 true）
+  const activeMemories = includeArchived
+    ? allMemories
+    : allMemories.filter((m) => !m.archived);
+  if (activeMemories.length === 0) return [];
 
   const candidates = identityOnly
-    ? allMemories.filter((m) => m.type === 'user' || m.type === 'feedback' || m.pinned)
-    : allMemories;
+    ? activeMemories.filter((m) => m.type === 'user' || m.type === 'feedback' || m.pinned)
+    : activeMemories;
 
   if (candidates.length === 0) return [];
 
@@ -107,7 +117,9 @@ export function selectMemories(
       const isGlobal = m.scope === undefined || m.scope === 'global';
       const minScore = isGlobal ? MIN_KEYWORD_SCORE_GLOBAL : MIN_KEYWORD_SCORE_PROJECT;
       // Pinned memories bypass the relevance threshold (user explicitly pinned them)
-      const passesThreshold = m.pinned || kwScore >= minScore;
+      // Archived memories need stricter threshold (archived = weakened, should be harder to recall)
+      const effectiveMin = m.archived ? minScore * 3 : minScore;
+      const passesThreshold = m.pinned || kwScore >= effectiveMin;
       return {
         memory: m,
         passesThreshold,

@@ -2,6 +2,7 @@ import { decodePersistedMemoryRecord } from '../../../core/memory/codec';
 import { decodeSavedItem, decodeSavedItemsState } from '../../../core/saved-items/codec';
 import type { SavedItem, SavedItemInput } from '../../../core/saved-items/types';
 import type { Memory, NewMemory } from '../../../core/types';
+import type { MemoryOrganizeDraft, ApplyMemoryOrganizeDraftResult } from '../../../core/memory/natural-language-organize';
 import {
   sidepanelRuntimeClient,
   type SidepanelRuntimeClient,
@@ -16,6 +17,8 @@ export interface LibraryController {
   saveSavedItem(item: SavedItemInput): Promise<SavedItem>;
   deleteSavedItem(id: string): Promise<void>;
   insertSavedPrompt(text: string): Promise<void>;
+  organizeMemoriesFromNaturalLanguage(instruction: string): Promise<{ ok: true; draft: MemoryOrganizeDraft } | { ok: false; error: string }>;
+  applyMemoryOrganizeDraft(draft: MemoryOrganizeDraft, confirmed: boolean, destructiveConfirmed?: boolean): Promise<ApplyMemoryOrganizeDraftResult>;
 }
 
 export function decodeMemoryList(value: unknown, path: string): Memory[] {
@@ -81,6 +84,18 @@ export function createLibraryController(
       await runtimeClient.request(
         { type: 'INSERT_SAVED_PROMPT_INTO_CHAT', payload: { text } },
         { decode: decodeAck },
+      );
+    },
+    async organizeMemoriesFromNaturalLanguage(instruction) {
+      return runtimeClient.request(
+        { type: 'ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE', payload: { instruction } },
+        { decode: (value) => value as { ok: true; draft: MemoryOrganizeDraft } | { ok: false; error: string } },
+      );
+    },
+    async applyMemoryOrganizeDraft(draft, confirmed, destructiveConfirmed) {
+      return runtimeClient.request(
+        { type: 'APPLY_MEMORY_ORGANIZE_DRAFT', payload: { draft, confirmed, destructiveConfirmed } },
+        { decode: (value) => value as ApplyMemoryOrganizeDraftResult },
       );
     },
   };

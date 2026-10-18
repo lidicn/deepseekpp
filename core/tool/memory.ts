@@ -17,7 +17,7 @@ export const MEMORY_TOOL_PROVIDER: ToolProviderIdentity = {
   transport: 'in_process',
 };
 
-export const MEMORY_TOOL_NAMES = ['memory_save', 'memory_update', 'memory_delete', 'memory_search'] as const;
+export const MEMORY_TOOL_NAMES = ['memory_save', 'memory_update', 'memory_delete', 'memory_archive', 'memory_unarchive', 'memory_search'] as const;
 
 export type MemoryToolName = typeof MEMORY_TOOL_NAMES[number];
 
@@ -30,6 +30,8 @@ export interface MemoryToolRuntime {
   getMemoryById(id: number): Promise<Memory | null>;
   updateMemory(memory: Memory): Promise<void>;
   deleteMemory(id: number): Promise<void>;
+  archiveMemory(id: number): Promise<void>;
+  unarchiveMemory(id: number): Promise<void>;
   getAllMemories(): Promise<Memory[]>;
 }
 
@@ -129,6 +131,48 @@ export function createMemoryToolDescriptors(
     },
   },
   {
+    id: 'local:memory:memory_archive',
+    provider,
+    name: 'memory_archive',
+    invocationName: 'memory_archive',
+    title: '归档记忆',
+    description: '归档一条记忆（软删除，不再注入但仍可检索）。适合旧的、不再常用但不想彻底删除的记忆。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'integer', description: '要归档的记忆 ID' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    execution: {
+      mode: 'auto',
+      enabled: true,
+      risk: 'low',
+    },
+  },
+  {
+    id: 'local:memory:memory_unarchive',
+    provider,
+    name: 'memory_unarchive',
+    invocationName: 'memory_unarchive',
+    title: '取消归档',
+    description: '取消归档一条记忆，让它重新可以被注入和检索。',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'integer', description: '要取消归档的记忆 ID' },
+      },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    execution: {
+      mode: 'auto',
+      enabled: true,
+      risk: 'low',
+    },
+  },
+  {
     id: 'local:memory:memory_search',
     provider,
     name: 'memory_search',
@@ -140,6 +184,7 @@ export function createMemoryToolDescriptors(
       properties: {
         query: { type: 'string', description: '检索关键词（如"用户偏好"、"项目约束"、"上次决策"）' },
         topK: { type: 'integer', description: '返回前 K 条结果（默认 5）', default: 5 },
+        includeArchived: { type: 'boolean', description: '是否包含已归档的记忆（默认 false，不包含）', default: false },
       },
       required: ['query'],
       additionalProperties: false,
@@ -174,6 +219,14 @@ export async function executeMemoryToolCall(
 
   if (call.name === 'memory_delete') {
     return deleteExistingMemory(runtime, call, locale);
+  }
+
+  if (call.name === 'memory_archive') {
+    return archiveExistingMemory(runtime, call, locale);
+  }
+
+  if (call.name === 'memory_unarchive') {
+    return unarchiveExistingMemory(runtime, call, locale);
   }
 
   if (call.name === 'memory_search') {
@@ -338,6 +391,30 @@ async function deleteExistingMemory(
   return success(call, locale, translate(locale, 'tool.memory.deleted'), `#${id}`);
 }
 
+async function archiveExistingMemory(
+  runtime: MemoryToolRuntime,
+  call: ToolCall,
+  locale: SupportedLocale,
+): Promise<ToolResult> {
+  const id = numberValue(call.payload.id);
+  if (!id) return failure(call, 'memory_invalid_id', translate(locale, 'tool.memory.invalidId'), undefined, false);
+
+  await runtime.archiveMemory(id);
+  return success(call, locale, `已归档 #${id}`, `#${id}`);
+}
+
+async function unarchiveExistingMemory(
+  runtime: MemoryToolRuntime,
+  call: ToolCall,
+  locale: SupportedLocale,
+): Promise<ToolResult> {
+  const id = numberValue(call.payload.id);
+  if (!id) return failure(call, 'memory_invalid_id', translate(locale, 'tool.memory.invalidId'), undefined, false);
+
+  await runtime.unarchiveMemory(id);
+  return success(call, locale, `已取消归档 #${id}`, `#${id}`);
+}
+
 async function searchMemory(
   runtime: MemoryToolRuntime,
   call: ToolCall,
@@ -349,6 +426,7 @@ async function searchMemory(
   }
 
   const topK = Number(call.payload.topK ?? 5);
+  const includeArchived = Boolean(call.payload.includeArchived ?? false);
 
   // 1. 拉取所有记忆
   const allMemories = await runtime.getAllMemories();
@@ -360,6 +438,7 @@ async function searchMemory(
   const { selectMemories, formatMemoriesBlock } = await import('../memory/selector');
   const selected = selectMemories(query, allMemories, {
     budget: topK * 200, // 每条记忆约 200 token
+    includeArchived,
   });
 
   if (selected.length === 0) {

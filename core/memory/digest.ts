@@ -9,6 +9,7 @@
 
 import type { Memory } from '../types';
 import { keywordScore, MIN_KEYWORD_SCORE_PROJECT, MIN_KEYWORD_SCORE_GLOBAL, segmentText } from './selector';
+import { MEMORY_TOKEN_BUDGET } from '../constants';
 
 /** L2 槽位类型 */
 export type L2Slot =
@@ -116,7 +117,7 @@ const SLOT_LABELS: Record<L2Slot, string> = {
 export function buildDigest(
   memories: Memory[],
   prompt: string = '',
-  maxTokens = 500,
+  maxTokens = MEMORY_TOKEN_BUDGET,
 ): MemoryDigest {
   if (memories.length === 0) {
     return {
@@ -163,11 +164,13 @@ export function buildDigest(
   }
 
   // 4. 逐槽位渲染，直到达到 token 上限
+  // 顺序：preferences → constraints → identity → projects → procedures → goals
+  // （preferences 和 constraints 优先，避免被 identity 槽位挤掉）
   const lines: string[] = [];
   const includedRecordIds: number[] = [];
   let currentTokens = 0;
   let omitted = activeMemories.length - relevantMemories.length;
-  const SLOTS: L2Slot[] = ['identity', 'preferences', 'constraints', 'projects', 'procedures', 'goals'];
+  const SLOTS: L2Slot[] = ['preferences', 'constraints', 'identity', 'projects', 'procedures', 'goals'];
 
   for (const slot of SLOTS) {
     const group = slotGroups.get(slot);

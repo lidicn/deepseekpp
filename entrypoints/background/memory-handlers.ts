@@ -4,6 +4,7 @@ import {
 } from '../../core/messaging/runtime-command-registry';
 import type { Memory, NewMemory } from '../../core/types';
 import { definePersistencePayloadRuntimeCommandHandler } from './runtime-handler';
+import type { MemoryOrganizeDraft, ApplyMemoryOrganizeDraftResult } from '../../core/memory/natural-language-organize';
 
 export interface MemoryRuntimeHandlerDependencies {
   getAllMemories(): Promise<Memory[]>;
@@ -12,8 +13,15 @@ export interface MemoryRuntimeHandlerDependencies {
   importMemoriesAtomically(memories: readonly NewMemory[]): Promise<number[]>;
   updateMemory(memory: Memory): Promise<void>;
   deleteMemory(id: number): Promise<void>;
+  archiveMemory(id: number): Promise<void>;
+  unarchiveMemory(id: number): Promise<void>;
   touchMemories(ids: number[]): Promise<void>;
   notifyCommittedStateUpdate(excludeTabId?: number): Promise<void>;
+  organizeMemoriesFromNaturalLanguage(instruction: string): Promise<{ ok: true; draft: MemoryOrganizeDraft } | { ok: false; error: string }>;
+  applyMemoryOrganizeDraft(
+    draft: MemoryOrganizeDraft,
+    options: { confirmed: boolean; destructiveConfirmed?: boolean },
+  ): Promise<ApplyMemoryOrganizeDraftResult>;
 }
 
 export function createMemoryRuntimeHandlers(
@@ -57,6 +65,27 @@ export function createMemoryRuntimeHandlers(
       await dependencies.deleteMemory(payload.id);
       await dependencies.notifyCommittedStateUpdate(context.tabId);
       return { ok: true as const };
+    }),
+    definePersistencePayloadRuntimeCommandHandler('ARCHIVE_MEMORY', async (payload, context) => {
+      await dependencies.archiveMemory(payload.id);
+      await dependencies.notifyCommittedStateUpdate(context.tabId);
+      return { ok: true as const };
+    }),
+    definePersistencePayloadRuntimeCommandHandler('UNARCHIVE_MEMORY', async (payload, context) => {
+      await dependencies.unarchiveMemory(payload.id);
+      await dependencies.notifyCommittedStateUpdate(context.tabId);
+      return { ok: true as const };
+    }),
+    definePersistencePayloadRuntimeCommandHandler('ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE', async (payload) => {
+      return await dependencies.organizeMemoriesFromNaturalLanguage(payload.instruction);
+    }),
+    definePersistencePayloadRuntimeCommandHandler('APPLY_MEMORY_ORGANIZE_DRAFT', async (payload, context) => {
+      const result = await dependencies.applyMemoryOrganizeDraft(
+        payload.draft as MemoryOrganizeDraft,
+        { confirmed: payload.confirmed, destructiveConfirmed: payload.destructiveConfirmed },
+      );
+      await dependencies.notifyCommittedStateUpdate(context.tabId);
+      return result;
     }),
     definePersistencePayloadRuntimeCommandHandler('TOUCH_MEMORIES', async (payload) => {
       await dependencies.touchMemories(payload.ids);

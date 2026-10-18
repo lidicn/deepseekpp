@@ -1,5 +1,7 @@
 import {
   deleteMemory,
+  archiveMemory,
+  unarchiveMemory,
   getAllMemories,
   getMemoryById,
   saveMemory,
@@ -73,6 +75,12 @@ const memoryRuntime: MemoryToolRuntime = {
   },
   async deleteMemory(id: number) {
     await deleteMemory(id);
+  },
+  async archiveMemory(id: number) {
+    await archiveMemory(id);
+  },
+  async unarchiveMemory(id: number) {
+    await unarchiveMemory(id);
   },
   async getAllMemories() {
     return await getAllMemories();

@@ -24,6 +24,7 @@ import type {
 import type { PromptInjectionSettings } from '../prompt/settings';
 import type { SkillAutoActivationSettings } from '../skill/auto-activation-settings';
 import type { VoiceCapabilityState, VoiceSettings } from '../voice/settings';
+import type { MemoryOrganizeDraft, ApplyMemoryOrganizeDraftResult } from '../memory/natural-language-organize';
 
 type DeclaredRuntimeRequest<TType extends MessageAction['type']> = Extract<
   MessageAction,
@@ -57,6 +58,22 @@ export interface PersistenceRuntimeCommandContracts {
   DELETE_MEMORY: {
     request: DeclaredRuntimeRequest<'DELETE_MEMORY'>;
     response: Ack;
+  };
+  ARCHIVE_MEMORY: {
+    request: DeclaredRuntimeRequest<'ARCHIVE_MEMORY'>;
+    response: Ack;
+  };
+  UNARCHIVE_MEMORY: {
+    request: DeclaredRuntimeRequest<'UNARCHIVE_MEMORY'>;
+    response: Ack;
+  };
+  ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE: {
+    request: DeclaredRuntimeRequest<'ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE'>;
+    response: { ok: true; draft: MemoryOrganizeDraft } | { ok: false; error: string };
+  };
+  APPLY_MEMORY_ORGANIZE_DRAFT: {
+    request: DeclaredRuntimeRequest<'APPLY_MEMORY_ORGANIZE_DRAFT'>;
+    response: ApplyMemoryOrganizeDraftResult;
   };
   TOUCH_MEMORIES: {
     request: { type: 'TOUCH_MEMORIES'; payload: { ids: number[] } };

@@ -569,6 +569,10 @@ export type MessageAction =
   | { type: 'SAVE_MEMORY'; payload: NewMemory }
   | { type: 'IMPORT_MEMORY_DRAFTS'; payload: { memories: NewMemory[] } }
   | { type: 'DELETE_MEMORY'; payload: { id: number } }
+  | { type: 'ARCHIVE_MEMORY'; payload: { id: number } }
+  | { type: 'UNARCHIVE_MEMORY'; payload: { id: number } }
+  | { type: 'ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE'; payload: { instruction: string } }
+  | { type: 'APPLY_MEMORY_ORGANIZE_DRAFT'; payload: { draft: unknown; confirmed: boolean; destructiveConfirmed?: boolean } }
   | { type: 'UPDATE_MEMORY'; payload: Memory }
   | { type: 'SAVE_SKILL'; payload: SaveSkillPayload }
   | { type: 'DELETE_SKILL'; payload: { name: string } }

@@ -10,6 +10,7 @@
 import type { Memory } from '../types';
 import { getAllMemories } from './store';
 import { buildDigest, type MemoryDigest } from './digest';
+import { MEMORY_TOKEN_BUDGET } from '../constants';
 import {
   getChainAnchor,
   saveChainAnchor,
@@ -58,14 +59,14 @@ function buildInjectedPrompt(originalPrompt: string, digestText: string): string
  * @param sessionId 会话 ID
  * @param originalPrompt 原始 prompt
  * @param parentMessageId 当前 parent_message_id（null = 根消息）
- * @param maxTokens 摘要最大 token 数（默认 500）
+ * @param maxTokens 摘要最大 token 数（默认 MEMORY_TOKEN_BUDGET）
  * @returns 注入后的 prompt + 注入结果
  */
 export async function injectL2Digest(
   sessionId: string,
   originalPrompt: string,
   parentMessageId: number | null,
-  maxTokens = 500,
+  maxTokens = MEMORY_TOKEN_BUDGET,
 ): Promise<{ prompt: string; result: L2InjectionResult }> {
   // 非根消息：不注入
   if (!isRootMessage(parentMessageId)) {

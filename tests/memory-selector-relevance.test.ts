@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { selectMemories } from '../core/memory/selector';
+import { buildDigest } from '../core/memory/digest';
 import type { Memory } from '../core/types';
 
 describe('memory selector relevance threshold', () => {
@@ -116,3 +117,49 @@ function makeMemory(overrides: Partial<Memory> & { id: number }): Memory {
     ...overrides,
   };
 }
+
+describe('memory organize effect verification (B3)', () => {
+  it('archiving irrelevant memories reduces token usage and improves relevance', () => {
+    // 构造一组记忆，包含相关和不相关的
+    const memories = [
+      makeMemory({
+        id: 1,
+        name: '前端 CSS 偏好',
+        content: '我喜欢用 flexbox 布局，不喜欢 float',
+        tags: ['preference', '前端', 'CSS'],
+        accessCount: 10,
+      }),
+      makeMemory({
+        id: 2,
+        name: '空调使用习惯',
+        content: '卧室空调通常在晚上 8 点开启',
+        tags: ['空调', '卧室'],
+        accessCount: 5,
+      }),
+      makeMemory({
+        id: 3,
+        name: '前端框架偏好',
+        content: '我更喜欢 React 而不是 Vue',
+        tags: ['preference', '前端', '框架'],
+        accessCount: 8,
+      }),
+    ];
+
+    // 整理前：跑 buildDigest
+    const beforeDigest = buildDigest(memories, '前端 CSS 偏好');
+
+    // 整理后：归档不相关的空调记忆
+    const archivedMemories = memories.map((m) =>
+      m.id === 2 ? { ...m, archived: true } : m,
+    );
+    const afterDigest = buildDigest(archivedMemories, '前端 CSS 偏好');
+
+    // 验证：
+    // 1. 整理后 token 更少
+    expect(afterDigest.estimatedTokens).toBeLessThanOrEqual(beforeDigest.estimatedTokens);
+    // 2. 整理后 includedRecordIds 不包含被归档的记忆
+    expect(afterDigest.includedRecordIds).not.toContain(2);
+    // 3. 整理后仍然包含相关的记忆
+    expect(afterDigest.includedRecordIds).toContain(1);
+  });
+});

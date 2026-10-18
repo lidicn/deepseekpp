@@ -191,6 +191,18 @@ export async function deleteMemory(id: number): Promise<void> {
   }));
 }
 
+export async function archiveMemory(id: number): Promise<void> {
+  const existing = await getMemoryById(id);
+  if (!existing) throw new Error(`Memory not found: ${id}`);
+  await updateMemory({ ...existing, archived: true });
+}
+
+export async function unarchiveMemory(id: number): Promise<void> {
+  const existing = await getMemoryById(id);
+  if (!existing) throw new Error(`Memory not found: ${id}`);
+  await updateMemory({ ...existing, archived: false });
+}
+
 export async function deleteMemoriesForProject(projectId: string): Promise<number> {
   const trimmedProjectId = projectId.trim();
   if (!trimmedProjectId) throw new Error('Project id is required.');
@@ -274,17 +286,22 @@ export async function archiveStaleMemories(): Promise<number> {
     return db.transaction('rw', memories, async (tx) => {
       const threshold = Date.now() - STALE_THRESHOLD_DAYS * 86_400_000;
       const current = await readValidatedMemoryRecords(tx);
-      const ids = current
-        .filter((memory) => (
-          memory.lastAccessedAt < threshold
-          && !memory.pinned
-          && memory.accessCount < MIN_ACCESS_FOR_RETENTION
-        ))
-        .map((memory) => memory.id)
-        .filter((id): id is number => id !== undefined);
+      // M-01: 旧版名为 archive 实为 bulkDelete 物理删除，且不排除已归档记忆——
+      // 用户手动归档的记忆（archived=true 后 lastAccessedAt 不再更新）会被二次硬删、
+      // 无法恢复。改为：跳过已归档项；命中的一律软归档（archived=true），不再物理删除。
+      const stale = current.filter((memory) => (
+        memory.lastAccessedAt < threshold
+        && !memory.pinned
+        && !memory.archived
+        && memory.accessCount < MIN_ACCESS_FOR_RETENTION
+      ));
 
-      if (ids.length > 0) await tx.table(MEMORY_TABLE_NAME).bulkDelete(ids);
-      return ids.length;
+      if (stale.length > 0) {
+        await tx.table(MEMORY_TABLE_NAME).bulkPut(
+          stale.map((memory) => ({ ...memory, archived: true })),
+        );
+      }
+      return stale.length;
     });
   });
 }

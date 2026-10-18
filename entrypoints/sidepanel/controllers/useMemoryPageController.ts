@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LocaleMessageKey, MessageParams } from '../../../core/i18n';
 import type { Memory, NewMemory } from '../../../core/types';
+import type { MemoryOrganizeDraft } from '../../../core/memory/natural-language-organize';
 import { createRequestGenerationFence } from '../async-state';
 import { getRuntimeErrorMessage } from '../runtime-response';
 import { decodeMemoryList, libraryController } from './library-controller';
@@ -23,6 +24,10 @@ export function useMemoryPageController(t: Translator, confirm: Confirm, feedbac
   const [loadFailed, setLoadFailed] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingMemory, setEditingMemory] = useState<Memory | null>(null);
+  const [showOrganizePanel, setShowOrganizePanel] = useState(false);
+  const [organizeInput, setOrganizeInput] = useState('');
+  const [organizeDraft, setOrganizeDraft] = useState<MemoryOrganizeDraft | null>(null);
+  const [organizeLoading, setOrganizeLoading] = useState(false);
   const requestFence = useRef(createRequestGenerationFence());
   const translatorRef = useRef(t);
   const feedbackRef = useRef(feedback);
@@ -127,12 +132,67 @@ export function useMemoryPageController(t: Translator, confirm: Confirm, feedbac
     }
   }, [feedback, load, showOperationError]);
 
+  const generateOrganizeDraft = useCallback(async () => {
+    if (!organizeInput.trim()) return;
+    try {
+      feedback.clear();
+      setOrganizeLoading(true);
+      const result = await libraryController.organizeMemoriesFromNaturalLanguage(organizeInput.trim());
+      if (result.ok) {
+        setOrganizeDraft(result.draft);
+      } else {
+        showOperationError(result.error);
+      }
+    } catch (error) {
+      showOperationError(error);
+    } finally {
+      setOrganizeLoading(false);
+    }
+  }, [feedback, organizeInput, showOperationError]);
+
+  const applyOrganizeDraft = useCallback(async (destructiveConfirmed: boolean) => {
+    if (!organizeDraft) return;
+    try {
+      feedback.clear();
+      setOrganizeLoading(true);
+      const result = await libraryController.applyMemoryOrganizeDraft(organizeDraft, true, destructiveConfirmed);
+      if (result.ok) {
+        const successCount = result.outcomes.filter((o) => o.ok).length;
+        const failCount = result.outcomes.filter((o) => !o.ok).length;
+        if (failCount === 0) {
+          feedback.clear();
+        } else {
+          showOperationError(`${successCount} 条成功，${failCount} 条失败`);
+        }
+        setOrganizeDraft(null);
+        setOrganizeInput('');
+        await load();
+      } else {
+        showOperationError(result.error);
+      }
+    } catch (error) {
+      showOperationError(error);
+    } finally {
+      setOrganizeLoading(false);
+    }
+  }, [feedback, load, organizeDraft, showOperationError]);
+
+  const cancelOrganize = useCallback(() => {
+    setOrganizeDraft(null);
+    setOrganizeInput('');
+    setShowOrganizePanel(false);
+  }, []);
+
   return {
     memories,
     loading,
     loadFailed,
     showForm,
     editingMemory,
+    showOrganizePanel,
+    organizeInput,
+    organizeDraft,
+    organizeLoading,
     toggleCreateForm() {
       setEditingMemory(null);
       setShowForm((visible) => !visible);
@@ -148,5 +208,12 @@ export function useMemoryPageController(t: Translator, confirm: Confirm, feedbac
     remove,
     save,
     togglePin,
+    setOrganizeInput,
+    toggleOrganizePanel() {
+      setShowOrganizePanel((visible) => !visible);
+    },
+    generateOrganizeDraft,
+    applyOrganizeDraft,
+    cancelOrganize,
   };
 }

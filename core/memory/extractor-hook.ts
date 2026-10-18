@@ -7,7 +7,7 @@
  * 设计参考：doc/设计/memory-system-v2-mimo-design.md §提取集成
  */
 
-import { saveMemory } from './store';
+import { saveMemory, getAllMemories } from './store';
 import {
   extractSignals,
   evaluateGate,
@@ -78,7 +78,24 @@ export async function runExtractionHook(
     };
   }
 
-  // 4. 保存到 memories 表
+  // 4. 查重：如果已经有相同 dedupeKey 的记忆，就跳过
+  const allMemories = await getAllMemories();
+  const existingMemory = allMemories.find((m) => {
+    const existingDedupeKey = m.content.slice(0, 50);
+    return existingDedupeKey === candidate.dedupeKey;
+  });
+
+  if (existingMemory) {
+    // 已经有相同的记忆，跳过保存
+    return {
+      triggered: true,
+      reason: 'duplicate_skipped',
+      savedCount: 0,
+      skippedCount: 1,
+    };
+  }
+
+  // 5. 保存到 memories 表
   try {
     await saveMemory({
       syncId: crypto.randomUUID(),

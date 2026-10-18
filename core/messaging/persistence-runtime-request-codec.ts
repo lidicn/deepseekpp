@@ -64,6 +64,33 @@ export const PERSISTENCE_RUNTIME_PAYLOAD_DECODERS: PersistenceRuntimePayloadDeco
     positiveSafeInteger(payload.id, 'DELETE_MEMORY.payload.id');
     return typedPayload<'DELETE_MEMORY'>(payload);
   },
+  ARCHIVE_MEMORY(value) {
+    const payload = recordValue(value, 'ARCHIVE_MEMORY.payload');
+    positiveSafeInteger(payload.id, 'ARCHIVE_MEMORY.payload.id');
+    return typedPayload<'ARCHIVE_MEMORY'>(payload);
+  },
+  UNARCHIVE_MEMORY(value) {
+    const payload = recordValue(value, 'UNARCHIVE_MEMORY.payload');
+    positiveSafeInteger(payload.id, 'UNARCHIVE_MEMORY.payload.id');
+    return typedPayload<'UNARCHIVE_MEMORY'>(payload);
+  },
+  ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE(value) {
+    const payload = recordValue(value, 'ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE.payload');
+    if (typeof payload.instruction !== 'string' || !payload.instruction.trim()) {
+      throw new Error('ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE.payload.instruction must be a non-empty string');
+    }
+    return typedPayload<'ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE'>({ instruction: payload.instruction });
+  },
+  APPLY_MEMORY_ORGANIZE_DRAFT(value) {
+    const payload = recordValue(value, 'APPLY_MEMORY_ORGANIZE_DRAFT.payload');
+    if (!payload.draft || typeof payload.draft !== 'object') {
+      throw new Error('APPLY_MEMORY_ORGANIZE_DRAFT.payload.draft must be an object');
+    }
+    if (typeof payload.confirmed !== 'boolean') {
+      throw new Error('APPLY_MEMORY_ORGANIZE_DRAFT.payload.confirmed must be a boolean');
+    }
+    return typedPayload<'APPLY_MEMORY_ORGANIZE_DRAFT'>(payload);
+  },
   TOUCH_MEMORIES(value) {
     const payload = recordValue(value, 'TOUCH_MEMORIES.payload');
     safeIntegerArray(payload.ids, 'TOUCH_MEMORIES.payload.ids');
