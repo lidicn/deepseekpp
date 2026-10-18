@@ -543,6 +543,7 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
               const memory = await getMemoryById(id);
               if (memory) { memory.content = compressedContent; await updateMemory(memory); }
             },
+            cleanStale: async (_ids: number[]) => { await archiveStaleMemories(); },
           };
           return await applyMemoryOrganizeDraftCore(draft, { ...options, executor });
         },
