@@ -30,6 +30,10 @@ export function insertTextIntoPromptTextarea(
 }
 
 function setTextareaValue(textarea: HTMLTextAreaElement, value: string): void {
+  // Invalidate React's value tracker so it detects the change (mirror skill-popup.selectSkill)
+  const tracker = (textarea as { _valueTracker?: { setValue(v: string): void } })._valueTracker;
+  if (tracker) tracker.setValue('');
+
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
   if (setter) {
     setter.call(textarea, value);

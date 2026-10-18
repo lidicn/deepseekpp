@@ -42,6 +42,7 @@ body {
   --dpp-ui-text-subtle:  oklch(0.70 0.015 264);
   --dpp-ui-border:       oklch(0.90 0.008 264);
   --dpp-ui-border-muted: oklch(0.94 0.006 264);
+  --dpp-ui-border-hover: oklch(0.84 0.012 264);
   --dpp-ui-accent:       oklch(0.62 0.19 264);
   --dpp-ui-accent-strong: oklch(0.56 0.20 266);
   --dpp-ui-accent-soft:  oklch(0.96 0.025 264);
@@ -64,6 +65,7 @@ body.dpp-theme-dark {
   --dpp-ui-text-subtle:  oklch(0.60 0.015 264);
   --dpp-ui-border:       oklch(0.32 0.014 264);
   --dpp-ui-border-muted: oklch(0.28 0.014 264);
+  --dpp-ui-border-hover: oklch(0.40 0.016 264);
   --dpp-ui-accent:       oklch(0.75 0.14 264);
   --dpp-ui-accent-strong: oklch(0.82 0.12 264);
   --dpp-ui-accent-soft:  oklch(0.30 0.06 264 / 0.55);
@@ -87,6 +89,7 @@ body.dpp-theme-dark {
     --dpp-ui-text-subtle:  oklch(0.60 0.015 264);
     --dpp-ui-border:       oklch(0.32 0.014 264);
     --dpp-ui-border-muted: oklch(0.28 0.014 264);
+    --dpp-ui-border-hover: oklch(0.40 0.016 264);
     --dpp-ui-accent:       oklch(0.75 0.14 264);
     --dpp-ui-accent-strong: oklch(0.82 0.12 264);
     --dpp-ui-accent-soft:  oklch(0.30 0.06 264 / 0.55);

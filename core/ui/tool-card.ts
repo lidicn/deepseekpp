@@ -266,7 +266,7 @@ const TOOL_CARD_CSS = `
 .dpp-tool-card[data-collapsed="true"] .dpp-tc-chevron { transform: rotate(-90deg); }
 
 .dpp-tc-body {
-  max-height: 2000px;
+  max-height: 10000px;
   overflow: hidden;
   transition: max-height 0.3s ease, opacity 0.2s ease;
   opacity: 1;
@@ -317,6 +317,8 @@ const TOOL_CARD_CSS = `
   line-height: 1.55;
   word-break: break-word;
   white-space: pre-wrap;
+  max-height: 60vh;
+  overflow-y: auto;
 }
 
 .dpp-dsml-hidden { display: none !important; }

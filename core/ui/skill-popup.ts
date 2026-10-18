@@ -109,6 +109,8 @@ function onKeydown(e: KeyboardEvent) {
       break;
     case 'Tab':
     case 'Enter':
+      // Let Shift+Enter through so users can still insert a newline while popup is open
+      if (e.shiftKey) return;
       e.preventDefault();
       e.stopImmediatePropagation();
       selectSkill(filtered[activeIdx]);
