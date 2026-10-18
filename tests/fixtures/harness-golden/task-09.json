@@ -1,0 +1,121 @@
+{
+  "id": "task-09",
+  "description": "六步多工具任务",
+  "category": "multi_step",
+  "initialPrompt": "[synthetic] 六步多工具任务（脱敏占位，无真实提示）",
+  "expectedOutcome": "auto_completed",
+  "finalDepth": 6,
+  "toolCallCount": 6,
+  "toolCalls": [
+    {
+      "name": "tool_0_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_1_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_1_1",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_2_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_3_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_4_0",
+      "mock": {
+        "ok": true
+      }
+    }
+  ],
+  "turns": [
+    {
+      "index": 0,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_0_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 1,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_1_0",
+          "ok": true
+        },
+        {
+          "name": "tool_1_1",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 2,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_2_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 3,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_3_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 4,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_4_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 5,
+      "modelDeclaredComplete": true,
+      "toolExecutions": [],
+      "chainContinuable": false,
+      "budgetExhausted": false
+    }
+  ],
+  "provenance": "synthetic"
+}

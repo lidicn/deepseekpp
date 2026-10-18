@@ -1,0 +1,20 @@
+{
+  "id": "task-01",
+  "description": "单轮纯问答，无工具",
+  "category": "simple",
+  "initialPrompt": "[synthetic] 单轮纯问答，无工具（脱敏占位，无真实提示）",
+  "expectedOutcome": "auto_completed",
+  "finalDepth": 1,
+  "toolCallCount": 0,
+  "toolCalls": [],
+  "turns": [
+    {
+      "index": 0,
+      "modelDeclaredComplete": true,
+      "toolExecutions": [],
+      "chainContinuable": false,
+      "budgetExhausted": false
+    }
+  ],
+  "provenance": "synthetic"
+}

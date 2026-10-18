@@ -1,0 +1,32 @@
+{
+  "id": "task-02",
+  "description": "单轮读取一个文件即完成",
+  "category": "simple",
+  "initialPrompt": "[synthetic] 单轮读取一个文件即完成（脱敏占位，无真实提示）",
+  "expectedOutcome": "auto_completed",
+  "finalDepth": 1,
+  "toolCallCount": 1,
+  "toolCalls": [
+    {
+      "name": "tool_0_0",
+      "mock": {
+        "ok": true
+      }
+    }
+  ],
+  "turns": [
+    {
+      "index": 0,
+      "modelDeclaredComplete": true,
+      "toolExecutions": [
+        {
+          "name": "tool_0_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": false,
+      "budgetExhausted": false
+    }
+  ],
+  "provenance": "synthetic"
+}

@@ -1,0 +1,39 @@
+{
+  "id": "task-03",
+  "description": "两步：读文件后回答",
+  "category": "simple",
+  "initialPrompt": "[synthetic] 两步：读文件后回答（脱敏占位，无真实提示）",
+  "expectedOutcome": "auto_completed",
+  "finalDepth": 2,
+  "toolCallCount": 1,
+  "toolCalls": [
+    {
+      "name": "tool_0_0",
+      "mock": {
+        "ok": true
+      }
+    }
+  ],
+  "turns": [
+    {
+      "index": 0,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_0_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 1,
+      "modelDeclaredComplete": true,
+      "toolExecutions": [],
+      "chainContinuable": false,
+      "budgetExhausted": false
+    }
+  ],
+  "provenance": "synthetic"
+}

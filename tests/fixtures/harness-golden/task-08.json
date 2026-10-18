@@ -1,0 +1,103 @@
+{
+  "id": "task-08",
+  "description": "五步：首步并行两工具",
+  "category": "multi_step",
+  "initialPrompt": "[synthetic] 五步：首步并行两工具（脱敏占位，无真实提示）",
+  "expectedOutcome": "auto_completed",
+  "finalDepth": 5,
+  "toolCallCount": 5,
+  "toolCalls": [
+    {
+      "name": "tool_0_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_0_1",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_1_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_2_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_3_0",
+      "mock": {
+        "ok": true
+      }
+    }
+  ],
+  "turns": [
+    {
+      "index": 0,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_0_0",
+          "ok": true
+        },
+        {
+          "name": "tool_0_1",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 1,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_1_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 2,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_2_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 3,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_3_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 4,
+      "modelDeclaredComplete": true,
+      "toolExecutions": [],
+      "chainContinuable": false,
+      "budgetExhausted": false
+    }
+  ],
+  "provenance": "synthetic"
+}

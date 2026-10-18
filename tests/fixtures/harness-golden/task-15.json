@@ -1,0 +1,91 @@
+{
+  "id": "task-15",
+  "description": "两次 nudge 后自动完成",
+  "category": "nudge_recovered",
+  "initialPrompt": "[synthetic] 两次 nudge 后自动完成（脱敏占位，无真实提示）",
+  "expectedOutcome": "auto_completed",
+  "finalDepth": 6,
+  "toolCallCount": 3,
+  "toolCalls": [
+    {
+      "name": "tool_0_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_1_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_2_0",
+      "mock": {
+        "ok": true
+      }
+    }
+  ],
+  "turns": [
+    {
+      "index": 0,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_0_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 1,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [],
+      "chainContinuable": true,
+      "budgetExhausted": false,
+      "nudge": true
+    },
+    {
+      "index": 2,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [],
+      "chainContinuable": true,
+      "budgetExhausted": false,
+      "nudge": true
+    },
+    {
+      "index": 3,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_1_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 4,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_2_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 5,
+      "modelDeclaredComplete": true,
+      "toolExecutions": [],
+      "chainContinuable": false,
+      "budgetExhausted": false
+    }
+  ],
+  "provenance": "synthetic"
+}

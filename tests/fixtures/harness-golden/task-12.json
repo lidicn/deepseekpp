@@ -1,0 +1,167 @@
+{
+  "id": "task-12",
+  "description": "长会话：八步深度任务",
+  "category": "long_session",
+  "initialPrompt": "[synthetic] 长会话：八步深度任务（脱敏占位，无真实提示）",
+  "expectedOutcome": "auto_completed",
+  "finalDepth": 8,
+  "toolCallCount": 9,
+  "toolCalls": [
+    {
+      "name": "tool_0_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_1_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_2_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_2_1",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_3_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_3_1",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_4_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_5_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_6_0",
+      "mock": {
+        "ok": true
+      }
+    }
+  ],
+  "turns": [
+    {
+      "index": 0,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_0_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 1,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_1_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 2,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_2_0",
+          "ok": true
+        },
+        {
+          "name": "tool_2_1",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 3,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_3_0",
+          "ok": true
+        },
+        {
+          "name": "tool_3_1",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 4,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_4_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 5,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_5_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 6,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_6_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 7,
+      "modelDeclaredComplete": true,
+      "toolExecutions": [],
+      "chainContinuable": false,
+      "budgetExhausted": false
+    }
+  ],
+  "provenance": "synthetic"
+}

@@ -1,0 +1,86 @@
+{
+  "id": "task-18",
+  "description": "第 4 步 parent 链断裂，需用户继续",
+  "category": "chain_broken",
+  "initialPrompt": "[synthetic] 第 4 步 parent 链断裂，需用户继续（脱敏占位，无真实提示）",
+  "expectedOutcome": "needed_user_continue",
+  "finalDepth": 4,
+  "toolCallCount": 4,
+  "toolCalls": [
+    {
+      "name": "tool_0_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_1_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_2_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_3_0",
+      "mock": {
+        "ok": true
+      }
+    }
+  ],
+  "turns": [
+    {
+      "index": 0,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_0_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 1,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_1_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 2,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_2_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 3,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_3_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": false,
+      "budgetExhausted": false
+    }
+  ],
+  "provenance": "synthetic"
+}

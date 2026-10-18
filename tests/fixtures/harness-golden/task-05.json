@@ -1,0 +1,42 @@
+{
+  "id": "task-05",
+  "description": "单轮并行读两个文件",
+  "category": "simple",
+  "initialPrompt": "[synthetic] 单轮并行读两个文件（脱敏占位，无真实提示）",
+  "expectedOutcome": "auto_completed",
+  "finalDepth": 1,
+  "toolCallCount": 2,
+  "toolCalls": [
+    {
+      "name": "tool_0_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_0_1",
+      "mock": {
+        "ok": true
+      }
+    }
+  ],
+  "turns": [
+    {
+      "index": 0,
+      "modelDeclaredComplete": true,
+      "toolExecutions": [
+        {
+          "name": "tool_0_0",
+          "ok": true
+        },
+        {
+          "name": "tool_0_1",
+          "ok": true
+        }
+      ],
+      "chainContinuable": false,
+      "budgetExhausted": false
+    }
+  ],
+  "provenance": "synthetic"
+}

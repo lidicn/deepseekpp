@@ -1,0 +1,122 @@
+{
+  "id": "task-19",
+  "description": "长任务第 6 步预算耗尽暂停",
+  "category": "budget_paused",
+  "initialPrompt": "[synthetic] 长任务第 6 步预算耗尽暂停（脱敏占位，无真实提示）",
+  "expectedOutcome": "needed_user_continue",
+  "finalDepth": 6,
+  "toolCallCount": 6,
+  "toolCalls": [
+    {
+      "name": "tool_0_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_1_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_2_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_3_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_4_0",
+      "mock": {
+        "ok": true
+      }
+    },
+    {
+      "name": "tool_5_0",
+      "mock": {
+        "ok": true
+      }
+    }
+  ],
+  "turns": [
+    {
+      "index": 0,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_0_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 1,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_1_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 2,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_2_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 3,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_3_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 4,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_4_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 5,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_5_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": true
+    }
+  ],
+  "provenance": "synthetic"
+}

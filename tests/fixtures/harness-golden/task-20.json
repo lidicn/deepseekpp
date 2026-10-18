@@ -1,0 +1,64 @@
+{
+  "id": "task-20",
+  "description": "nudge 超过上限（>3）仍未完成",
+  "category": "nudge_exhausted",
+  "initialPrompt": "[synthetic] nudge 超过上限（>3）仍未完成（脱敏占位，无真实提示）",
+  "expectedOutcome": "needed_user_continue",
+  "finalDepth": 5,
+  "toolCallCount": 1,
+  "toolCalls": [
+    {
+      "name": "tool_0_0",
+      "mock": {
+        "ok": true
+      }
+    }
+  ],
+  "turns": [
+    {
+      "index": 0,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [
+        {
+          "name": "tool_0_0",
+          "ok": true
+        }
+      ],
+      "chainContinuable": true,
+      "budgetExhausted": false
+    },
+    {
+      "index": 1,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [],
+      "chainContinuable": true,
+      "budgetExhausted": false,
+      "nudge": true
+    },
+    {
+      "index": 2,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [],
+      "chainContinuable": true,
+      "budgetExhausted": false,
+      "nudge": true
+    },
+    {
+      "index": 3,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [],
+      "chainContinuable": true,
+      "budgetExhausted": false,
+      "nudge": true
+    },
+    {
+      "index": 4,
+      "modelDeclaredComplete": false,
+      "toolExecutions": [],
+      "chainContinuable": true,
+      "budgetExhausted": false,
+      "nudge": true
+    }
+  ],
+  "provenance": "synthetic"
+}

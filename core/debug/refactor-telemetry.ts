@@ -21,6 +21,7 @@
  */
 
 import { isTelemetryCaptureEnabled } from "./telemetry-gate";
+import { g2UserInterventionRate, type HarnessEvent } from "./harness-events";
 
 export interface RequestMetrics {
   timestamp: number;
@@ -58,6 +59,36 @@ export interface DebugDump {
 const MAX_RECORDS = 200;
 const STORAGE_KEY = 'dpp_telemetry_aggregates';
 
+/** M0 G1：按天滚动窗口（含今天共 N 天），用于“最近 7 天工具调用成功率”。 */
+export const TOOL_CALL_WINDOW_DAYS = 7;
+export interface ToolCallDayBucket {
+  success: number;
+  failure: number;
+}
+
+/** 本地时区日期键 YYYY-MM-DD（避免 UTC 跨日误差）。 */
+function localDayKey(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** 从持久化数据恢复按天桶，损坏/缺字段降级为 0（不抛错）。 */
+function normalizeToolCallByDay(raw: unknown): Record<string, ToolCallDayBucket> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, ToolCallDayBucket> = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const bucket = value as Partial<ToolCallDayBucket>;
+    out[key] = {
+      success: Number(bucket.success) || 0,
+      failure: Number(bucket.failure) || 0,
+    };
+  }
+  return out;
+}
+
 interface PersistedAggregates {
   startedAt: number;
   toolCallSuccess: number;
@@ -68,6 +99,11 @@ interface PersistedAggregates {
   toolSchemaCacheHits: number;
   toolSchemaCacheMisses: number;
   prefixConsistencyRates: number[];
+  // M0 可选字段：缺失视为 0（向后兼容旧聚合，AGENTS.md:41）。
+  modelRequestedCount?: number;
+  userContinuedCount?: number;
+  loopDepthHistogram?: Record<number, number>;
+  toolCallByDay?: Record<string, ToolCallDayBucket>;
 }
 
 /**
@@ -96,6 +132,12 @@ class RefactorTelemetry {
   // v1.17 新增：缓存命中率
   private toolSchemaCacheHits = 0;
   private toolSchemaCacheMisses = 0;
+  // M0：G2 续跑分组计数 + turn 最终深度直方图（持久化聚合，ring buffer 不进此）。
+  private modelRequestedCount = 0;
+  private userContinuedCount = 0;
+  private loopDepthHistogram: Record<number, number> = {};
+  // M0 G1：最近 7 天工具调用成败分桶（本地日期键）。
+  private toolCallByDay: Record<string, ToolCallDayBucket> = {};
 
   constructor() {
     this.loadFromStorage();
@@ -113,6 +155,10 @@ class RefactorTelemetry {
         toolSchemaCacheHits: this.toolSchemaCacheHits,
         toolSchemaCacheMisses: this.toolSchemaCacheMisses,
         prefixConsistencyRates: this.prefixConsistencyRates.slice(-100),
+        modelRequestedCount: this.modelRequestedCount,
+        userContinuedCount: this.userContinuedCount,
+        loopDepthHistogram: { ...this.loopDepthHistogram },
+        toolCallByDay: JSON.parse(JSON.stringify(this.toolCallByDay)),
       };
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch {
@@ -134,6 +180,10 @@ class RefactorTelemetry {
       this.toolSchemaCacheHits = data.toolSchemaCacheHits || 0;
       this.toolSchemaCacheMisses = data.toolSchemaCacheMisses || 0;
       this.prefixConsistencyRates = data.prefixConsistencyRates || [];
+      this.modelRequestedCount = data.modelRequestedCount || 0;
+      this.userContinuedCount = data.userContinuedCount || 0;
+      this.loopDepthHistogram = data.loopDepthHistogram || {};
+      this.toolCallByDay = normalizeToolCallByDay(data.toolCallByDay);
     } catch {
       // 数据损坏，忽略
     }
@@ -186,7 +236,25 @@ class RefactorTelemetry {
         this.toolCallErrors[errorType] = (this.toolCallErrors[errorType] || 0) + 1;
       }
     }
+    // M0 G1：更新今天的按天桶，并裁剪到最近 TOOL_CALL_WINDOW_DAYS 天。
+    const today = localDayKey();
+    const bucket = this.toolCallByDay[today] ?? { success: 0, failure: 0 };
+    if (success) bucket.success++;
+    else bucket.failure++;
+    this.toolCallByDay[today] = bucket;
+    this.pruneToolCallByDay(Date.now());
     this.saveToStorage();
+  }
+
+  /** 删除窗口外的旧日期桶，保持存储有界。 */
+  private pruneToolCallByDay(now: number): void {
+    const allowed = new Set<string>();
+    for (let i = 0; i < TOOL_CALL_WINDOW_DAYS; i++) {
+      allowed.add(localDayKey(new Date(now - i * 24 * 60 * 60 * 1000)));
+    }
+    for (const key of Object.keys(this.toolCallByDay)) {
+      if (!allowed.has(key)) delete this.toolCallByDay[key];
+    }
   }
 
   // v1.17 新增：转义修复结果记录
@@ -211,6 +279,35 @@ class RefactorTelemetry {
     this.saveToStorage();
   }
 
+  /**
+   * M0：消费 harness 事件的持久化聚合部分。
+   * - continuation_triggered：按 reason 累加 G2 分子/分母（单一事件分组，无双计数）。
+   * - turn_finished：把最终深度记入直方图。
+   * - tool_call_start / tool_call_end / loop_depth_incremented：
+   *   G1 由独立 recordToolCall 承担（避免重复计数），瞬时深度由 ring buffer（harness-events.ts）保留，
+   *   本方法不重复持久化。
+   * 失败显式、有界、已测试地降级，观测永不成为主链路失败源（AGENTS.md:57）。
+   */
+  recordHarnessEvent(event: HarnessEvent): void {
+    if (!isTelemetryCaptureEnabled()) return;
+    try {
+      if (event.type === "continuation_triggered") {
+        if (event.reason === "user_continued") {
+          this.userContinuedCount++;
+        } else {
+          this.modelRequestedCount++;
+        }
+        this.saveToStorage();
+      } else if (event.type === "turn_finished") {
+        const depth = event.finalDepth;
+        this.loopDepthHistogram[depth] = (this.loopDepthHistogram[depth] || 0) + 1;
+        this.saveToStorage();
+      }
+    } catch (error) {
+      console.warn("[DPP-DEBUG] recordHarnessEvent degraded:", error);
+    }
+  }
+
   dump(): DebugDump {
     return {
       requests: [...this.requests],
@@ -232,6 +329,10 @@ class RefactorTelemetry {
     this.escapeRepairFailure = 0;
     this.toolSchemaCacheHits = 0;
     this.toolSchemaCacheMisses = 0;
+    this.modelRequestedCount = 0;
+    this.userContinuedCount = 0;
+    this.loopDepthHistogram = {};
+    this.toolCallByDay = {};
     try {
       window.localStorage.removeItem(STORAGE_KEY);
     } catch {}
@@ -282,6 +383,26 @@ class RefactorTelemetry {
       ? `${Math.round((this.toolSchemaCacheHits / totalCacheLookups) * 1000) / 10}%`
       : "样本不足";
 
+    // M0 G2：用户干预率 = userContinued / (userContinued + modelRequested)，样本为 0 时“样本不足”。
+    const g2 = g2UserInterventionRate({
+      modelRequestedCount: this.modelRequestedCount,
+      userContinuedCount: this.userContinuedCount,
+    });
+    const g2UserInterventionRateText =
+      g2 === null ? "样本不足" : `${Math.round(g2 * 1000) / 10}%`;
+
+    // M0 G1：最近 7 天滚动窗口成功率（桶已 prune 到窗口内，直接汇总）。
+    let windowSuccess = 0;
+    let windowFailure = 0;
+    for (const key of Object.keys(this.toolCallByDay)) {
+      windowSuccess += this.toolCallByDay[key].success;
+      windowFailure += this.toolCallByDay[key].failure;
+    }
+    const windowTotal = windowSuccess + windowFailure;
+    const toolCallSuccessRate7d = windowTotal > 0
+      ? `${Math.round((windowSuccess / windowTotal) * 1000) / 10}%`
+      : "样本不足";
+
     // v1.18: per-layer truncation breakdown.
     // Model-visible truncations = mcp + governance only.
     // storage truncations do NOT affect what the model sees.
@@ -323,6 +444,14 @@ class RefactorTelemetry {
       toolSchemaCacheHits: this.toolSchemaCacheHits,
       toolSchemaCacheMisses: this.toolSchemaCacheMisses,
       toolSchemaCacheHitRate: cacheHitRate,
+      // M0 G1 近 7 天窗口 + G2 续跑分组 + 深度直方图
+      toolCallSuccessRate7d,
+      toolCallWindowDays: TOOL_CALL_WINDOW_DAYS,
+      toolCallByDay: JSON.parse(JSON.stringify(this.toolCallByDay)),
+      modelRequestedCount: this.modelRequestedCount,
+      userContinuedCount: this.userContinuedCount,
+      g2UserInterventionRate: g2UserInterventionRateText,
+      loopDepthHistogram: { ...this.loopDepthHistogram },
     };
   }
 }
