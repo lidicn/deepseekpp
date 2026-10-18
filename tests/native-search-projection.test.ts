@@ -31,7 +31,7 @@ describe('projectToolDescriptorsForNativeSearch', () => {
     const projected = projectToolDescriptorsForNativeSearch(descriptors, true);
 
     const names = projected.map((descriptor) => descriptor.name);
-    expect(names).toEqual(['memory_save', 'memory_update', 'memory_delete']);
+    expect(names).toEqual(['memory_save', 'memory_update', 'memory_delete', 'memory_archive', 'memory_unarchive', 'memory_search']);
   });
 
   it('preserves descriptor order for the remaining descriptors', () => {
@@ -42,6 +42,9 @@ describe('projectToolDescriptorsForNativeSearch', () => {
       'local:memory:memory_save',
       'local:memory:memory_update',
       'local:memory:memory_delete',
+      'local:memory:memory_archive',
+      'local:memory:memory_unarchive',
+      'local:memory:memory_search',
     ]);
   });
 

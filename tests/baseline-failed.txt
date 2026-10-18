@@ -6,8 +6,6 @@
 # 修复一个就从这里删一行，不要新增这里的条目
 
 tests/persistence-burst-budget.test.ts::rejects an entire failed physical burst without partial state and accepts later mutations
-tests/native-search-projection.test.ts::removes all extension-owned networking tools when native search is enabled
-tests/native-search-projection.test.ts::preserves descriptor order for the remaining descriptors
 tests/background-deepseek-runtime-handlers.test.ts::keeps the released chat-disabled precedence before image validation or allocation
 tests/background-deepseek-runtime-handlers.test.ts::acks immediately, preserves disabled-before-empty precedence, and shares one signal
 tests/background-deepseek-runtime-handlers.test.ts::forwards web-backend reasoning deltas as reasoning-phase chunks
