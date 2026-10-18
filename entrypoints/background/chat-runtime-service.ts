@@ -24,7 +24,7 @@ import type {
 } from '../../core/tool/types';
 import type { ToolExecutionRecord } from '../../core/types';
 
-const MAX_CHAT_TOOL_STEPS = 20;
+import { MAX_CHAT_TOOL_STEPS, serializeToolExecutions } from '../../core/chat/loop-contract';
 
 export interface ChatStreamChunk {
   text: string;
@@ -783,38 +783,8 @@ export function createChatRuntimeService(
 }
 
 // 报告 R4 修复：侧面板工具结果序列化加截断，与 inline-agent renderToolResult 语义一致
-// (detail 4000 / output 8000 / error.message 400)，避免累积到 4MB 请求体硬上限。
-const SIDEBAR_TOOL_RESULT_DETAIL_MAX = 4000;
-const SIDEBAR_TOOL_RESULT_OUTPUT_MAX = 8000;
-const SIDEBAR_TOOL_RESULT_ERROR_MAX = 400;
-
-function clampSidebarText(value: string | undefined, maxLength: number): string | undefined {
-  if (!value) return value;
-  return value.length > maxLength ? `${value.slice(0, maxLength)}\n...[truncated]` : value;
-}
-
-function serializeToolExecutions(executions: readonly ToolExecutionRecord[]): string {
-  return executions.map((execution) => {
-    const result = execution.result;
-    const serialized = {
-      ok: result.ok,
-      summary: result.summary,
-      detail: clampSidebarText(result.detail, SIDEBAR_TOOL_RESULT_DETAIL_MAX),
-      error: result.error
-        ? {
-            code: result.error.code,
-            message: clampSidebarText(result.error.message, SIDEBAR_TOOL_RESULT_ERROR_MAX) ?? '',
-            retryable: result.error.retryable,
-          }
-        : undefined,
-      output: result.output === undefined
-        ? undefined
-        : clampSidebarText(JSON.stringify(result.output), SIDEBAR_TOOL_RESULT_OUTPUT_MAX),
-      truncated: result.truncated === true,
-    };
-    return `<${execution.name}_result>\n${JSON.stringify(serialized)}\n</${execution.name}_result>`;
-  }).join('\n');
-}
+// M1-2c D1: MAX_CHAT_TOOL_STEPS / serializeToolExecutions / clampSidebarText
+// 已抽到 core/chat/loop-contract.ts，与续跑循环共享
 
 function isExpectedCancellation(
   turn: ActiveChatTurn,
