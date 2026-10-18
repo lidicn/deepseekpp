@@ -29,7 +29,6 @@ tests/indexeddb-wrapper.test.ts::TODO
 tests/deepseek-protocol-contract.test.ts::TODO
 tests/tool-runtime-history.test.ts::TODO
 tests/runtime-command-registry.test.ts::TODO
-tests/mcp-native-host-version.test.ts::TODO
 tests/deepseek-official-api.test.ts::TODO
 tests/tool-record-contract.test.ts::TODO
 tests/content-persistence-codecs.test.ts::TODO

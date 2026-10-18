@@ -43,12 +43,13 @@ describe('First-party native host version gate', () => {
     });
   });
 
-  it('stays silent when the Shell Host matches or leads the extension', () => {
+  it('stays silent when the Shell Host matches, warns when it lags or leads (N-2 bidirectional)', () => {
     const server = nativeServer(SHELL_MCP_NATIVE_HOST);
     expect(nativeHostVersionHint(server, { name: 'deepseek-pp-shell', version: '1.16.0' }, '1.16.0'))
       .toBeNull();
+    // N-2: host newer than extension is also a mismatch (incompatible frame semantics)
     expect(nativeHostVersionHint(server, { name: 'deepseek-pp-shell', version: '1.17.1' }, '1.16.0'))
-      .toBeNull();
+      .toContain('mcp_native_host_version_newer');
   });
 
   it('judges the multimodal host by its own release line, not the extension version', () => {
