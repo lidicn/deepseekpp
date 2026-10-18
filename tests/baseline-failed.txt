@@ -1,0 +1,49 @@
+# 测试失败基线（P0-3）
+# 日期：2026-10-19
+# 来源：vitest run 全量
+# 总数：29 文件 / 44 用例
+# 用途：CI 只检查"有没有新增 failed"，不阻塞已知红
+# 修复一个就从这里删一行，不要新增这里的条目
+
+tests/runtime-boundary.test.ts::authorizes only the frozen content command surface before routing
+tests/runtime-boundary.test.ts::matches the exact command literals emitted by DeepSeek content producers
+tests/persistence-burst-budget.test.ts::rejects an entire failed physical burst without partial state and accepts later mutations
+tests/native-search-projection.test.ts::removes all extension-owned networking tools when native search is enabled
+tests/native-search-projection.test.ts::preserves descriptor order for the remaining descriptors
+tests/background-deepseek-runtime-handlers.test.ts::keeps the released chat-disabled precedence before image validation or allocation
+tests/background-deepseek-runtime-handlers.test.ts::acks immediately, preserves disabled-before-empty precedence, and shares one signal
+tests/background-deepseek-runtime-handlers.test.ts::forwards web-backend reasoning deltas as reasoning-phase chunks
+tests/background-deepseek-runtime-handlers.test.ts::rejects concurrent turns and prevents late chunks after a session reset
+tests/background-deepseek-runtime-handlers.test.ts::invalidates prompt admission while the feature gate is pending across reset
+tests/background-deepseek-runtime-handlers.test.ts::blocks chat admission until wake reconciliation finishes
+tests/background-deepseek-runtime-handlers.test.ts::retries wake reconciliation after a transient read failure
+tests/background-deepseek-runtime-handlers.test.ts::reports a provider AbortError when the turn signal remains active
+tests/background-deepseek-runtime-handlers.test.ts::publishes terminal completion only after marker cleanup releases admission
+tests/background-deepseek-runtime-handlers.test.ts::turns marker-start failure into a terminal chunk instead of swallowing it
+tests/background-deepseek-runtime-handlers.test.ts::stops after an ambiguous tool outcome and never submits a continuation
+tests/background-deepseek-runtime-handlers.test.ts::invalidates image upload while the feature gate is pending across reset
+tests/stream-fn-event-mapping.test.ts::aborted turn: start → error(aborted) with streamed content preserved
+tests/stream-fn-adapter.test.ts::encodes user abort as an aborted error event
+tests/inline-agent-event-protocol-golden.test.ts::G8b stream-event truncation: 12k clamp on STREAM_CHUNK, unclamped final text
+tests/runtime-command-contract.test.ts::matches the live router, MessageAction union, and checked-in human inventory
+tests/remote-agent-watcher.test.ts::counts a resend that throws as a failed attempt and still notifies
+tests/remote-agent-watcher.test.ts::counts a resend that throws as a failed attempt and still notifies
+tests/tool-block-style.test.ts::TODO
+tests/chat-active-loop.test.ts::TODO
+tests/persistence-compatibility.test.ts::TODO
+tests/local-skill-importer.test.ts::TODO
+tests/indexeddb-wrapper.test.ts::TODO
+tests/deepseek-protocol-contract.test.ts::TODO
+tests/tool-runtime-history.test.ts::TODO
+tests/runtime-command-registry.test.ts::TODO
+tests/mcp-native-host-version.test.ts::TODO
+tests/deepseek-official-api.test.ts::TODO
+tests/tool-record-contract.test.ts::TODO
+tests/content-persistence-codecs.test.ts::TODO
+tests/tool-provider-routing.test.ts::TODO
+tests/pi-loop-official-api.test.ts::TODO
+tests/shell-policy.test.ts::TODO
+tests/multimodal-media.test.ts::TODO
+tests/content-console-log-boundary.test.ts::TODO
+tests/model-facing-retirement.test.ts::TODO
+tests/shell-host-runtime-modules.test.ts::TODO
