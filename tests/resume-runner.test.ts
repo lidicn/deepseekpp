@@ -72,7 +72,10 @@ describe('rebuildJobFromMarker', () => {
 describe('resolveResumeIndex', () => {
   it('无执行 → resumeIndex=0', () => {
     const job = {
+      id: 'test-job',
+      turnId: 'test-turn',
       ...baseMarker,
+      parentMessageId: baseMarker.parentMessageId ?? null,
       calls: [{ name: 'a', payload: {}, raw: '{}' }],
       executions: [],
       position: { callIndex: 0, depth: 0 },
@@ -87,7 +90,10 @@ describe('resolveResumeIndex', () => {
 
   it('水位线权威', () => {
     const job = {
+      id: 'test-job',
+      turnId: 'test-turn',
       ...baseMarker,
+      parentMessageId: baseMarker.parentMessageId ?? null,
       calls: [{ name: 'a', payload: {}, raw: '{}' }, { name: 'b', payload: {}, raw: '{}' }],
       executions: [{ name: 'a', result: { ok: true, summary: '' } }],
       position: { callIndex: 1, depth: 0 },
@@ -103,7 +109,10 @@ describe('resolveResumeIndex', () => {
   it('in-flight 默认 synthesize', () => {
     const marker = { ...baseMarker, currentTool: { name: 'b', startedAt: Date.now() } };
     const job = {
+      id: 'test-job',
+      turnId: 'test-turn',
       ...baseMarker,
+      parentMessageId: baseMarker.parentMessageId ?? null,
       calls: [{ name: 'a', payload: {}, raw: '{}' }, { name: 'b', payload: {}, raw: '{}' }],
       executions: [{ name: 'a', result: { ok: true, summary: '' } }],
       position: { callIndex: 1, depth: 0 },

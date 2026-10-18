@@ -967,51 +967,8 @@ export default defineBackground(() => {
     return true;
   });
 
-  // DPP Bridge: 外部页面（本地调试 HTML）消息入口
-  // 用于 P3 记忆系统调试：从外部页面调用 runtime 命令
-  chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-    // 只允许本地调试页面调用
-    const senderUrl = sender.url || '';
-    if (!senderUrl.startsWith('http://localhost') && !senderUrl.startsWith('http://127.0.0.1')) {
-      sendResponse({ ok: false, error: 'unauthorized_origin' });
-      return false;
-    }
-
-    // 简单的 PING 命令，不走 runtime 解码
-    if (message && message.type === 'PING') {
-      sendResponse({ ok: true, message: 'pong', sender: senderUrl });
-      return false;
-    }
-
-    let envelope: RuntimeMessageEnvelope | undefined;
-    try {
-      envelope = decodeRuntimeMessageEnvelope(message);
-    } catch (error) {
-      sendResponse(createRuntimeBoundaryErrorResponse(error, envelope));
-      return false;
-    }
-
-    // 构造 trusted context（外部页面调用，不走授权流程）
-    let senderOrigin = senderUrl;
-    try { senderOrigin = new URL(senderUrl).origin; } catch { /* keep raw */ }
-    const context: RuntimeMessageContext = {
-      runtimeId: chrome.runtime.id,
-      surface: 'extension_context',
-      senderUrl,
-      senderOrigin,
-      documentSessionId: `external-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      tabId: undefined,
-    };
-
-    ensureRecoveryReadyWithTimeout()
-      .then(() => handleMessage(envelope, context))
-      .then(sendResponse)
-      .catch((error) => sendResponse({
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      }));
-    return true;
-  });
+  // P0-1 已修复：删除外部消息桥（原 onMessageExternal），不再暴露扩展给任意 localhost 页面
+  // 调试需求改用 chrome://extensions 直接 inspect background page
 
   // DPP Bridge: native messaging 连接（用于 P3 记忆系统调试）
   setupDppBridge();
