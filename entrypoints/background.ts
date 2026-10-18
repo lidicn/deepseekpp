@@ -880,8 +880,19 @@ export default defineBackground(() => {
   ensureBuiltInMcpPresets().catch((error) => reportBackgroundStartupError('builtin_mcp_presets_failed', error));
   refreshWhatsNewBadge().catch((error) => reportBackgroundStartupError('whats_new_badge_failed', error));
   ensureAutomationWakeAlarm().catch((error) => reportBackgroundStartupError('automation_alarm_create_failed', error));
-  chatRuntimeService.reconcileInterruptedOnWake()
-    .catch((error) => reportBackgroundStartupError('chat_loop_reconcile_failed', error));
+  // M1-2c H2: 延迟 arm 窗口（1000ms），窗口期内收到用户新消息则取消 resume
+  const RESUME_ARM_DELAY_MS = 1000;
+  let resumeCancelled = false;
+  const armTimer = setTimeout(() => {
+    if (resumeCancelled) return;
+    chatRuntimeService.reconcileInterruptedOnWake()
+      .catch((error) => reportBackgroundStartupError('chat_loop_reconcile_failed', error));
+  }, RESUME_ARM_DELAY_MS);
+  // 暴露给 submitPrompt 入口取消
+  (globalThis as unknown as { __dppResumeCancelled?: () => void }).__dppResumeCancelled = () => {
+    resumeCancelled = true;
+    clearTimeout(armTimer);
+  };
   syncLocalRecoveryBarrier.ensureReady()
     .then(() => scanDueAutomationsFromWake()
       .catch((error) => reportBackgroundStartupError('automation_startup_scan_failed', error)))

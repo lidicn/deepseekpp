@@ -567,6 +567,9 @@ export function createChatRuntimeService(
   };
 
   const submitPrompt: ChatRuntimeService['submitPrompt'] = async (request, excludeTabId) => {
+    // M1-2c H2: 用户新消息优先，取消延迟 arm 的 resume
+    const cancelResume = (globalThis as unknown as { __dppResumeCancelled?: () => void }).__dppResumeCancelled;
+    if (cancelResume) cancelResume();
     await ensureWakeReconciled();
     if (activeTurn || pendingAdmission || resetOperation) {
       return { ok: false, error: 'chat_already_running' };
