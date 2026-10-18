@@ -40,9 +40,26 @@ export function repairToolJsonBody(body: string): string | null {
     return body;
   }
 
+  // 策略 0a：剥离 markdown 代码围栏（```json / ```）。
+  // 真实错误：模型把工具参数包进 ``` 围栏，JSON.parse 报 "Unexpected token 反引号"。
+  const unfenced = stripMarkdownFence(body);
+  if (unfenced !== body && isParsable(unfenced)) {
+    refactorTelemetry.recordEscapeRepair(true);
+    return unfenced;
+  }
+
+  // 策略 0b：截取首个配平的 JSON 值，丢弃其后的尾随文字 / 残留闭合标签。
+  // 真实错误："non-whitespace character after JSON"（JSON 后多了解释文字或残留标签）。
+  const balanced = extractFirstBalancedJson(unfenced);
+  if (balanced !== null && isParsable(balanced)) {
+    refactorTelemetry.recordEscapeRepair(true);
+    return balanced;
+  }
+  const working = balanced ?? unfenced;
+
   // 策略 1 + 2：修复字符串字面量内部的转义问题
-  const escapesFixed = repairStringContents(body);
-  if (escapesFixed !== body && isParsable(escapesFixed)) {
+  const escapesFixed = repairStringContents(working);
+  if (escapesFixed !== working && isParsable(escapesFixed)) {
     refactorTelemetry.recordEscapeRepair(true);
     return escapesFixed;
   }
@@ -56,6 +73,77 @@ export function repairToolJsonBody(body: string): string | null {
 
   refactorTelemetry.recordEscapeRepair(false);
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// 策略 0：围栏剥离 + 首个配平 JSON 截取
+// ---------------------------------------------------------------------------
+
+/**
+ * 剥离首尾 markdown 代码围栏：开头 ```[语言标识]、结尾 ```。
+ * 只在原 body 已 parse 失败后调用，不触碰合法 JSON。
+ */
+function stripMarkdownFence(input: string): string {
+  let s = input.trim();
+  const openMatch = /^```[^\n`]*\n?/.exec(s);
+  if (openMatch) {
+    s = s.slice(openMatch[0].length);
+  }
+  s = s.replace(/\n?[ \t]*```[ \t]*$/, '');
+  return s.trim();
+}
+
+/**
+ * 字符串感知地截取第一个配平的 JSON 对象/数组。
+ * 遇到首个 `{` 或 `[` 起栈式配平，跳过字符串字面量与其转义；
+ * 配平完成即返回该子串，丢弃其后全部尾随内容。无法配平返回 null。
+ */
+function extractFirstBalancedJson(input: string): string | null {
+  const start = Math.min(
+    input.indexOf('{') === -1 ? Infinity : input.indexOf('{'),
+    input.indexOf('[') === -1 ? Infinity : input.indexOf('['),
+  );
+  if (start === Infinity) return null;
+
+  const pairs: Record<string, string> = { '{': '}', '[': ']' };
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < input.length; i += 1) {
+    const ch = input.charAt(i);
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (ch === '\\') {
+        escaped = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{' || ch === '[') {
+      stack.push(pairs[ch]);
+      continue;
+    }
+    if (ch === '}' || ch === ']') {
+      if (stack.length === 0 || stack[stack.length - 1] !== ch) {
+        return null; // 括号错配，保守放弃
+      }
+      stack.pop();
+      if (stack.length === 0) {
+        return input.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null; // 未闭合
 }
 
 // ---------------------------------------------------------------------------

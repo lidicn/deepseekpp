@@ -80,6 +80,36 @@ describe('repairToolJsonBody', () => {
     expect(JSON.parse(result as string).q).toBe('he said "hi" to me');
   });
 
+  // #54：剥离 markdown 代码围栏（```json / ```）——真实错误 "Unexpected token 反引号"
+  it('strips ```json fenced code block', () => {
+    const input = '```json\n{"cmd": "echo hello", "dir": "C:\\\\Users\\\\test"}\n```';
+    const result = repairToolJsonBody(input);
+    expect(result).not.toBeNull();
+    expect(JSON.parse(result as string).cmd).toBe('echo hello');
+  });
+
+  it('strips bare ``` fenced block without language', () => {
+    const input = '```\n{"a": 1}\n```';
+    const result = repairToolJsonBody(input);
+    expect(result).not.toBeNull();
+    expect(JSON.parse(result as string).a).toBe(1);
+  });
+
+  // #54：JSON 之后的尾随文字/残留标签 —— 真实错误 "non-whitespace character after JSON"
+  it('extracts first balanced object when trailing text follows', () => {
+    const input = '{"cmd": "echo hello"} 后面多了一句解释文字';
+    const result = repairToolJsonBody(input);
+    expect(result).not.toBeNull();
+    expect(JSON.parse(result as string).cmd).toBe('echo hello');
+  });
+
+  it('drops trailing residual close tag after the JSON object', () => {
+    const input = '{"code": "print(1)"}</python_exec>';
+    const result = repairToolJsonBody(input);
+    expect(result).not.toBeNull();
+    expect(JSON.parse(result as string).code).toBe('print(1)');
+  });
+
   // 空字符串
   it('returns null for empty input', () => {
     expect(repairToolJsonBody('')).toBeNull();
