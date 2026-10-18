@@ -21,6 +21,9 @@ describe('filterRetiredModelFacingTools', () => {
       'memory_save',
       'memory_update',
       'memory_delete',
+      'memory_archive',
+      'memory_unarchive',
+      'memory_search',
       'web_search',
       'web_fetch',
     ]);

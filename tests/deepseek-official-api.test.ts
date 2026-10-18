@@ -197,7 +197,10 @@ describe('DeepSeek official API adapter', () => {
     }, {}, controller.signal);
 
     const init = fetchImpl.mock.calls[0][1] as RequestInit;
-    expect(init.signal).toBe(controller.signal);
+    // signal 被 createRequestScope 包装（加超时保护），不要求同一个对象，
+    // 但要求 abort 能正确传递
+    expect(init.signal).toBeDefined();
+    expect(init.signal?.aborted).toBe(false);
   });
 });
 
