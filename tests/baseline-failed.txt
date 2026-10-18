@@ -5,8 +5,6 @@
 # 用途：CI 只检查"有没有新增 failed"，不阻塞已知红
 # 修复一个就从这里删一行，不要新增这里的条目
 
-tests/runtime-boundary.test.ts::authorizes only the frozen content command surface before routing
-tests/runtime-boundary.test.ts::matches the exact command literals emitted by DeepSeek content producers
 tests/persistence-burst-budget.test.ts::rejects an entire failed physical burst without partial state and accepts later mutations
 tests/native-search-projection.test.ts::removes all extension-owned networking tools when native search is enabled
 tests/native-search-projection.test.ts::preserves descriptor order for the remaining descriptors
