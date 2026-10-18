@@ -411,7 +411,18 @@ describe('inline-agent model prompts', () => {
     expect(shouldNudge('查行情', [SUCCESS_EXECUTION], "I'm going to look up the latest price.")).toBe(true);
     expect(shouldNudge('查行情', [SUCCESS_EXECUTION], 'I need to check the file now.')).toBe(true);
     expect(shouldNudge('查行情', [SUCCESS_EXECUTION], "Let's fetch the second page.")).toBe(true);
+    // English first-person future intent with verbs missing from the old
+    // closed list used to fall through to the sentence-period stop rule and
+    // end the loop before the tool call. These must nudge.
+    expect(shouldNudge('查行情', [SUCCESS_EXECUTION], "Now I'll examine the config file.")).toBe(true);
+    expect(shouldNudge('查行情', [SUCCESS_EXECUTION], 'Let me explore the directory structure.')).toBe(true);
+    expect(shouldNudge('查行情', [SUCCESS_EXECUTION], 'I need to scan the logs for errors.')).toBe(true);
+    expect(shouldNudge('查行情', [SUCCESS_EXECUTION], 'Let me grep the source for that string.')).toBe(true);
+    expect(shouldNudge('查行情', [SUCCESS_EXECUTION], "I'll print the result next.")).toBe(true);
+    expect(shouldNudge('查行情', [SUCCESS_EXECUTION], 'I will trace the failing request.')).toBe(true);
     expect(shouldNudge('查行情', [SUCCESS_EXECUTION], 'I will summarize the findings now.')).toBe(false);
+    // Past-tense / already-done English statements still do not nudge.
+    expect(shouldNudge('查行情', [SUCCESS_EXECUTION], 'I already checked the config file.')).toBe(false);
 
     // Issue (mid-output silent stop): common "让我…" / "我再…" phrasings
     // promised continued tool work but were missed by the detector, so the
