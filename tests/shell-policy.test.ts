@@ -67,6 +67,7 @@ describe('createShellMcpPresetInput', () => {
         'local_folder_pick',
         'local_file_stat',
         'local_file_read',
+        'local_file_write',
       ],
     });
   });
