@@ -13,7 +13,8 @@
 
 // P0-3: 扩展 marker 带工具执行历史 + 当前工具状态
 // SW 重启后 reconcile 能知道"执行到哪了"，而非只知道"断了"
-import type { ToolExecutionRecord } from '../types';
+import type { ToolCall, ToolExecutionRecord } from '../types';
+import type { JobState, ToolCallPosition } from '../tool/job';
 
 const SESSION_STORAGE_KEY = 'deepseek_pp_active_chat_loop';
 // P0-3: stale 阈值从 15s → 60s（和 keepalive 周期对齐：keepalive 30s 心跳，
@@ -100,10 +101,21 @@ export interface ActiveChatLoop {
   active: boolean;
   startedAt: number;
   provider: ChatLoopProvider;
-  // P0-3: 工具执行历史（纯数据，可 JSON 序列化）
   executions: ToolExecutionRecord[];
-  // P0-3: 正在执行的工具（若有）
   currentTool: { name: string; startedAt: number } | null;
+  // M1-2: job 状态持久化字段（v1 schema）
+  schemaVersion?: number;
+  revision?: number;
+  turnId?: string;
+  jobId?: string;
+  jobState?: JobState;
+  calls?: ToolCall[];
+  position?: ToolCallPosition;
+  parentMessageId?: number | null;
+  chatSessionId?: string | null;
+  attempt?: number;
+  lastUpsertAt?: number;
+  resumeDeadline?: number | null;
 }
 
 export interface InterruptedChatLoop {
@@ -122,12 +134,27 @@ async function readMarker(): Promise<ActiveChatLoop | null> {
   if (!value || typeof value !== 'object') return null;
   const marker = value as Partial<ActiveChatLoop>;
   if (marker.active !== true || typeof marker.startedAt !== 'number') return null;
+  // M1-2: normalize — 逐字段回落默认值，不抛异常
+  const schemaVersion = typeof marker.schemaVersion === 'number' ? marker.schemaVersion : 0;
   return {
     active: true,
     startedAt: marker.startedAt,
     provider: marker.provider === 'official-api' ? 'official-api' : 'web',
     executions: Array.isArray(marker.executions) ? marker.executions : [],
     currentTool: marker.currentTool ?? null,
+    // v1 新字段：v0 旧 marker 缺失时回落默认值
+    schemaVersion,
+    revision: typeof marker.revision === 'number' ? marker.revision : 1,
+    turnId: marker.turnId,
+    jobId: marker.jobId,
+    jobState: marker.jobState ?? 'running',
+    calls: Array.isArray(marker.calls) ? marker.calls : [],
+    position: marker.position ?? { callIndex: 0, depth: 0 },
+    parentMessageId: marker.parentMessageId ?? null,
+    chatSessionId: marker.chatSessionId ?? null,
+    attempt: typeof marker.attempt === 'number' ? marker.attempt : 0,
+    lastUpsertAt: typeof marker.lastUpsertAt === 'number' ? marker.lastUpsertAt : marker.startedAt,
+    resumeDeadline: marker.resumeDeadline ?? null,
   };
 }
 
