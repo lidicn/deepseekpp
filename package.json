@@ -17,6 +17,7 @@
     "build:all": "npm run build:chrome && npm run build:edge && npm run build:firefox",
     "reload": "python tools/reload-extension.py",
     "build:reload": "npm run build:chrome && python tools/reload-extension.py",
+    "test:cdp": "python tools/cdp-g1-test.py",
     "zip": "wxt zip",
     "zip:chrome": "wxt zip --browser chrome",
     "zip:edge": "wxt zip --browser edge",
