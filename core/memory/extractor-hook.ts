@@ -52,12 +52,25 @@ export async function runExtractionHook(
   turnCount: number,
   lastExtractionTurn: number | null,
   config: ExtractionGateConfig = DEFAULT_GATE_CONFIG,
+  options: { scope?: 'global' | 'project'; isAutoContinue?: boolean } = {},
 ): Promise<ExtractionHookResult> {
+  const scope = options.scope ?? 'global';
+
+  // auto_continue 轮不提取
+  if (options.isAutoContinue) {
+    return {
+      triggered: false,
+      reason: 'auto_continue_round',
+      savedCount: 0,
+      skippedCount: 0,
+    };
+  }
+
   // 1. 从用户消息提取信号
   const signals = extractSignals(userMessage);
 
-  // 2. 门控判断
-  const gate = evaluateGate(turnCount, lastExtractionTurn, signals, config);
+  // 2. 门控判断（传 text 用于 token 超限和凭据检测）
+  const gate = evaluateGate(turnCount, lastExtractionTurn, signals, userMessage, config);
   if (!gate.trigger) {
     return {
       triggered: false,
@@ -99,7 +112,7 @@ export async function runExtractionHook(
   try {
     await saveMemory({
       syncId: crypto.randomUUID(),
-      scope: 'global',
+      scope,
       type: candidate.kind,
       name: candidate.content.slice(0, 30) || '自动提取',
       content: candidate.content,

@@ -154,12 +154,31 @@ export function extractSignals(text: string): ExtractionSignal[] {
 }
 
 /**
+ * 凭据检测正则：疑似 API key / token / password 等敏感内容。
+ * 命中即 fail-closed 拒写，不落盘、不留痕。
+ */
+const CREDENTIAL_PATTERN = /(api[_-]?key|secret|password|passwd|token|sk-[a-zA-Z0-9]{20,}|bearer\s+[a-zA-Z0-9]{20,}|private[_-]?key)/i;
+
+/**
+ * 简单字符串 hash（djb2），输出 8 位 hex。
+ * 不需要加密安全，只用于 dedupeKey 稳定去重。
+ */
+function hashString(input: string): string {
+  let hash = 5381;
+  for (let i = 0; i < input.length; i++) {
+    hash = ((hash << 5) + hash + input.charCodeAt(i)) | 0;
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+/**
  * 门控判断：当前轮次是否应该触发提取。
  */
 export function evaluateGate(
   turnCount: number,
   lastExtractionTurn: number | null,
   signals: ExtractionSignal[],
+  text: string,
   config: ExtractionGateConfig = DEFAULT_GATE_CONFIG,
 ): ExtractionGateResult {
   // 轮数不够
@@ -170,6 +189,16 @@ export function evaluateGate(
   // 冷却中
   if (lastExtractionTurn !== null && turnCount - lastExtractionTurn < config.cooldownTurns) {
     return { trigger: false, reason: 'cooldown', signals };
+  }
+
+  // token 超限（内容太长不提取）
+  if (estimateTokens(text) > config.maxTokens) {
+    return { trigger: false, reason: 'too_long', signals };
+  }
+
+  // 凭据检测（fail-closed，命中拒写）
+  if (CREDENTIAL_PATTERN.test(text)) {
+    return { trigger: false, reason: 'policy', signals };
   }
 
   // 只有噪音信号
@@ -249,8 +278,8 @@ export function buildCandidate(
   const normalized = text.trim().replace(/\s+/g, ' ').slice(0, 200);
   const tokens = estimateTokens(normalized);
 
-  // 去重 key：取前 50 字符的 hash
-  const dedupeKey = normalized.slice(0, 50);
+  // 去重 key：hash(kind + normalized)，比前 50 字符更稳定
+  const dedupeKey = `${kind}:${hashString(normalized)}`;
 
   return {
     kind,
