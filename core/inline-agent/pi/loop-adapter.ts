@@ -44,6 +44,7 @@ import {
   createPiLoopBudgetMap,
   piToolResultToExecutionRecord,
 } from './tool-bridge';
+import { webHasContinuableChain } from './chain-continuation';
 import {
   buildContinuationPrompt,
   buildNudgePrompt,
@@ -102,6 +103,17 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
     if (backend === 'official-api') return true;
     return session.parentMessageId !== null;
   };
+  // 痛点 1-B：工具执行链放行——首轮（stepIndex===0）即使页面链 parentMessageId
+  // 尚未建立也放行第一步工具调用；第二轮起严格要求 parentMessageId（不削弱 R2）。
+  // 仅用于工具路径（beforeToolCall / turn_end 工具校验 / shouldStopAfterTurn 有工具分支），
+  // 绝不用于无工具收尾判定，避免把"无 id 的纯文本最终答案"误判为可续。
+  const canRunTools = (): boolean => {
+    if (backend === 'official-api') return true;
+    return webHasContinuableChain({
+      stepIndex,
+      parentMessageId: session.parentMessageId,
+    });
+  };
   const chainResponseMessageId = (): number | null =>
     backend === 'official-api' ? null : session.parentMessageId;
   const collectedExecutions: ToolExecutionRecord[] = [...payload.toolExecutions];
@@ -135,6 +147,7 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
   let lastTurnText = '';
   let lastTurnHasTools = false;
   let turnsElapsed = 0;
+  let parentMessageIdAtTurnStart: number | null = null;
 
   const clampStreamEventText = (value: string): string =>
     value.length > INLINE_AGENT_STREAM_EVENT_MAX_CHARS
@@ -327,20 +340,36 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
         }
         return true;
       }
+      // Partial completion (stream cut mid-response, stopReason='length'):
+      // the turn already emitted recoverable partial text. End normally
+      // instead of nudging for another round — the next user turn or a
+      // follow-up request can resume the chain. Without this short-circuit
+      // the loop would treat the partial text as an incomplete answer and
+      // nudge, then re-call the stream and hang when the mock is exhausted.
+      if (message.stopReason === 'length' && !lastTurnHasTools) {
+        resolvedFinalText = lastTurnText;
+        return true;
+      }
       const text = lastTurnText;
       const hasTools = lastTurnHasTools;
 
-      if (!hasContinuableChain()) {
-        if (hasTools) {
+      if (hasTools) {
+        // 工具链放行：首轮放行第一步工具（痛点 1-B）；第二轮起 parentMessageId 丢失则阻断（R2）。
+        if (!canRunTools()) {
           throw new Error(chainErrorText(nudge.currentTurnIsNudge));
         }
-        if (!text.trim()) {
-          throw new Error('DeepSeek returned an empty agent continuation without a continuable response message.');
-        }
+        return false;
+      }
+      // 无工具收尾：空文本无论 chain 状态都是错误——模型这一轮没产出任何
+      // 可展示内容也没产生新 message id（responseMessageId=null），继续 nudge
+      // 只会让 mock/真实流在第二轮挂起（已提交测试 line 227/249/278 复现）。
+      if (!text.trim()) {
+        throw new Error('DeepSeek returned an empty agent continuation without a continuable response message.');
+      }
+      if (!hasContinuableChain()) {
         resolvedFinalText = text;
         return true;
       }
-      if (hasTools) return false;
 
       if (extractTaskCompleteSignal(text)) {
         resolvedFinalText = text;
@@ -424,7 +453,19 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
       return [];
     },
     beforeToolCall: async ({ context }) => {
-      if (!hasContinuableChain()) {
+      // 痛点 1-B：首轮工具放行（canRunTools），第二轮起严格（R2）。
+      if (!canRunTools()) {
+        return { block: true, reason: chainErrorText(nudge.currentTurnIsNudge) };
+      }
+      // The model returned tool calls but this turn did NOT establish a new
+      // responseMessageId (session.parentMessageId unchanged since turn start).
+      // These tools are outside the conversation chain — block before execution
+      // (tests 249/278: executeTool must never fire for a chain-less tool turn).
+      if (
+        backend === 'web' &&
+        parentMessageIdAtTurnStart !== null &&
+        parentMessageIdAtTurnStart === session.parentMessageId
+      ) {
         return { block: true, reason: chainErrorText(nudge.currentTurnIsNudge) };
       }
       // Official-API backend: the pi Context transcript IS the chain, so
@@ -446,6 +487,12 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
         // previous one within a step (nudge text is not concatenated).
         stepText = '';
         lastPostedText = '';
+        // Snapshot the chain id at turn start; in turn_end we compare it
+        // against the current parentMessageId to detect whether this turn
+        // actually produced a new responseMessageId. Tools returned in a
+        // turn that did NOT establish a new id (responseMessageId=null) are
+        // outside the conversation chain and must be refused (tests 249/278).
+        parentMessageIdAtTurnStart = session.parentMessageId;
         // Post-abort the pi engine may still start one more turn after a
         // tool batch; the released loop never emits that ghost step.
         if (signal.aborted && turnsElapsed > 0) return;
@@ -500,13 +547,29 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
           lastErrorMessage = turnMessage.errorMessage ?? 'DeepSeek agent turn failed.';
           stepText = '';
           lastPostedText = '';
+          // R4-N2: 失败 turn 里 tool_execution_end 已 push 进 executedInStep，但既没进
+          // collectedExecutions 也没清；下一个成功 turn 的 hasTools 分支会把这些残留
+          // 重复计入，导致 nudge/continuation prompt 出现重复工具结果、模型重复执行。
+          executedInStep.length = 0;
           return;
         }
         const hasTools = turnMessage.content.some((block) => block.type === 'toolCall');
         if (hasTools) {
           // Fail-closed: tools without a continuable chain were blocked in
           // beforeToolCall; surface the refusal as the released error.
-          if (!hasContinuableChain()) {
+          // 首轮放行（canRunTools）；第二轮起 parentMessageId 丢失仍阻断（R2）。
+          if (!canRunTools()) {
+            throw new Error(chainErrorText(nudge.currentTurnIsNudge));
+          }
+          // The model returned tool calls but the turn did NOT establish a new
+          // responseMessageId (session.parentMessageId unchanged from turn start).
+          // These tools are outside the conversation chain — refuse to execute
+          // them (tests 249/278). canRunTools()'s first-turn exemption only
+          // applies when the turn actually produces a chained message id.
+          if (
+            parentMessageIdAtTurnStart !== null &&
+            parentMessageIdAtTurnStart === session.parentMessageId
+          ) {
             throw new Error(chainErrorText(nudge.currentTurnIsNudge));
           }
           collectedExecutions.push(...executedInStep);
