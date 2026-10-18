@@ -32,6 +32,12 @@ beforeEach(() => {
       },
     },
     tabs: { create: vi.fn() },
+    storage: {
+      local: {
+        get: vi.fn(async () => ({})),
+        set: vi.fn(async () => {}),
+      },
+    },
   });
 });
 
