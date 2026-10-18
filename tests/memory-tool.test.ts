@@ -64,6 +64,8 @@ describe('memory tool validation', () => {
       async getAllMemories() {
         return [];
       },
+      async archiveMemory() {},
+      async unarchiveMemory() {},
     };
 
     const result = await executeMemoryToolCall(runtime, memorySaveCall({
@@ -93,6 +95,8 @@ describe('memory tool validation', () => {
       async getAllMemories() {
         return [];
       },
+      async archiveMemory() {},
+      async unarchiveMemory() {},
     };
 
     const english = await executeMemoryToolCall(runtime, memorySaveCall({
@@ -129,6 +133,8 @@ describe('memory tool validation', () => {
       async getAllMemories() {
         return [];
       },
+      async archiveMemory() {},
+      async unarchiveMemory() {},
     };
 
     const result = await executeMemoryToolCall(runtime, memorySaveCall({

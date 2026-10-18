@@ -52,16 +52,16 @@ describe('buildMemorySnapshots', () => {
     ]);
     expect(snapshots.length).toBe(1);
     expect(snapshots[0].id).toBe(1);
-    expect(snapshots[0].title).toBe('test memory');
+    expect(snapshots[0].name).toBe('test memory');
   });
 });
 
 describe('groupNearDuplicateMemories', () => {
   it('分组相似记忆', () => {
     const snapshots = [
-      { id: 1, title: 'a', content: 'hello world this is a test', updatedAt: Date.now(), accessCount: 1, pinned: false },
-      { id: 2, title: 'b', content: 'hello world this is a test', updatedAt: Date.now(), accessCount: 1, pinned: false },
-      { id: 3, title: 'c', content: 'completely different content here', updatedAt: Date.now(), accessCount: 1, pinned: false },
+      { id: 1, name: '', tags: [], scope: 'session', type: 'topic', archived: false, content: 'hello world this is a test', updatedAt: Date.now(), accessCount: 1, pinned: false },
+      { id: 2, name: '', tags: [], scope: 'session', type: 'topic', archived: false, content: 'hello world this is a test', updatedAt: Date.now(), accessCount: 1, pinned: false },
+      { id: 3, name: '', tags: [], scope: 'session', type: 'topic', archived: false, content: 'completely different content here', updatedAt: Date.now(), accessCount: 1, pinned: false },
     ];
     const groups = groupNearDuplicateMemories(snapshots, { threshold: 0.8 });
     expect(groups.length).toBe(1);
@@ -73,9 +73,9 @@ describe('selectStaleMemorySnapshots', () => {
   it('选择过期记忆', () => {
     const now = Date.now();
     const snapshots = [
-      { id: 1, title: 'a', content: 'a', updatedAt: now - 100 * 24 * 60 * 60 * 1000, accessCount: 1, pinned: false },
-      { id: 2, title: 'b', content: 'b', updatedAt: now, accessCount: 1, pinned: false },
-      { id: 3, title: 'c', content: 'c', updatedAt: now - 100 * 24 * 60 * 60 * 1000, accessCount: 1, pinned: true },
+      { id: 1, name: '', tags: [], scope: 'session', type: 'topic', archived: false, content: 'a', updatedAt: now - 100 * 24 * 60 * 60 * 1000, accessCount: 1, pinned: false },
+      { id: 2, name: '', tags: [], scope: 'session', type: 'topic', archived: false, content: 'b', updatedAt: now, accessCount: 1, pinned: false },
+      { id: 3, name: '', tags: [], scope: 'session', type: 'topic', archived: false, content: 'c', updatedAt: now - 100 * 24 * 60 * 60 * 1000, accessCount: 1, pinned: true },
     ];
     const stale = selectStaleMemorySnapshots(snapshots, now);
     expect(stale.length).toBe(1);
@@ -86,7 +86,7 @@ describe('selectStaleMemorySnapshots', () => {
 describe('planMemoryOrganizeLocally', () => {
   it('罗列全部记忆', () => {
     const snapshots = [
-      { id: 1, title: 'a', content: 'a', updatedAt: Date.now(), accessCount: 1, pinned: false },
+      { id: 1, name: '', tags: [], scope: 'session', type: 'topic', archived: false, content: 'a', updatedAt: Date.now(), accessCount: 1, pinned: false },
     ];
     const draft = planMemoryOrganizeLocally('罗列全部记忆', snapshots);
     expect(draft.operations.length).toBeGreaterThan(0);
@@ -95,8 +95,8 @@ describe('planMemoryOrganizeLocally', () => {
 
   it('删除第1条', () => {
     const snapshots = [
-      { id: 1, title: 'a', content: 'a', updatedAt: Date.now(), accessCount: 1, pinned: false },
-      { id: 2, title: 'b', content: 'b', updatedAt: Date.now(), accessCount: 1, pinned: false },
+      { id: 1, name: '', tags: [], scope: 'session', type: 'topic', archived: false, content: 'a', updatedAt: Date.now(), accessCount: 1, pinned: false },
+      { id: 2, name: '', tags: [], scope: 'session', type: 'topic', archived: false, content: 'b', updatedAt: Date.now(), accessCount: 1, pinned: false },
     ];
     const draft = planMemoryOrganizeLocally('删除第1条', snapshots);
     expect(draft.operations.some((op) => op.type === 'delete' && op.memoryId === 1)).toBe(true);
@@ -105,7 +105,7 @@ describe('planMemoryOrganizeLocally', () => {
   it('清理过期记忆', () => {
     const now = Date.now();
     const snapshots = [
-      { id: 1, title: 'a', content: 'a', updatedAt: now - 100 * 24 * 60 * 60 * 1000, accessCount: 1, pinned: false },
+      { id: 1, name: '', tags: [], scope: 'session', type: 'topic', archived: false, content: 'a', updatedAt: now - 100 * 24 * 60 * 60 * 1000, accessCount: 1, pinned: false },
     ];
     const draft = planMemoryOrganizeLocally('清理过期记忆', snapshots);
     expect(draft.operations.some((op) => op.type === 'clean_stale')).toBe(true);
@@ -115,7 +115,7 @@ describe('planMemoryOrganizeLocally', () => {
 describe('organizeMemoriesFromNaturalLanguage', () => {
   it('整理记忆', () => {
     const snapshots = [
-      { id: 1, title: 'a', content: 'a', updatedAt: Date.now(), accessCount: 1, pinned: false },
+      { id: 1, name: '', tags: [], scope: 'session', type: 'topic', archived: false, content: 'a', updatedAt: Date.now(), accessCount: 1, pinned: false },
     ];
     const draft = organizeMemoriesFromNaturalLanguage({
       instruction: '罗列全部记忆',
@@ -132,6 +132,7 @@ describe('applyMemoryOrganizeDraft', () => {
       summary: 'test',
       ready: true,
       issues: [],
+      baseTime: Date.now(),
     };
     const result = await applyMemoryOrganizeDraft(draft, {
       confirmed: false,
@@ -147,6 +148,7 @@ describe('applyMemoryOrganizeDraft', () => {
       summary: 'test',
       ready: true,
       issues: [],
+      baseTime: Date.now(),
     };
     const result = await applyMemoryOrganizeDraft(draft, {
       confirmed: true,
@@ -156,7 +158,7 @@ describe('applyMemoryOrganizeDraft', () => {
     });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.executed).toBe(1);
+      expect(result.outcomes.length).toBe(1);
     }
     expect(executed).toBe(1);
   });

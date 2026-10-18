@@ -147,10 +147,10 @@ describe('R4.1 persistence runtime handler ownership', () => {
       localPreference: createLocalPreferenceDependencies(),
     });
     const types = handlers.map((handler) => handler.type);
-    const expected = readInventoryCommands('R4.1 / #360 — Persistence, library, and local preferences (61)');
+    const expected = readInventoryCommands('R4.1 / #360 — Persistence, library, and local preferences (65)');
 
-    expect(types).toHaveLength(61);
-    expect(new Set(types).size).toBe(61);
+    expect(types).toHaveLength(65);
+    expect(new Set(types).size).toBe(65);
     expect([...types].sort()).toEqual([...expected].sort());
     for (const type of types) expect(getRuntimeCommandOwner(type)).toBe('typed-handler');
     const decodedTypes = Object.entries(RUNTIME_COMMAND_CONTRACTS)
@@ -458,6 +458,10 @@ function createMemoryDependencies(): MemoryRuntimeHandlerDependencies {
     updateMemory: vi.fn(async () => undefined),
     deleteMemory: vi.fn(async () => undefined),
     touchMemories: vi.fn(async () => undefined),
+    archiveMemory: vi.fn(async () => undefined),
+    unarchiveMemory: vi.fn(async () => undefined),
+    organizeMemoriesFromNaturalLanguage: vi.fn(async () => ({ ok: true, draft: { operations: [], summary: '', ready: true, issues: [], baseTime: Date.now() } })) as any,
+    applyMemoryOrganizeDraft: vi.fn(async () => ({ ok: true, outcomes: [] })) as any,
     notifyCommittedStateUpdate: vi.fn(async () => undefined),
   };
 }

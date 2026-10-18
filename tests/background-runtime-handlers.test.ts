@@ -31,6 +31,7 @@ const R44_COMMANDS = [
   'DELETE_AUTOMATION',
   'RUN_AUTOMATION_NOW',
   'SCENARIOS_UPDATED',
+  'PARSE_NATURAL_LANGUAGE_AUTOMATION',
 ] as const;
 
 const R44_PAYLOAD_COMMANDS = [
@@ -48,6 +49,7 @@ const R44_PAYLOAD_COMMANDS = [
   'DELETE_AUTOMATION',
   'RUN_AUTOMATION_NOW',
   'SCENARIOS_UPDATED',
+  'PARSE_NATURAL_LANGUAGE_AUTOMATION',
 ] as const;
 
 const context: RuntimeMessageContext = {
@@ -60,7 +62,7 @@ const context: RuntimeMessageContext = {
 };
 
 describe('R4.4 background runtime closure', () => {
-  it('owns exactly the final 17 handlers and 14 receiving decoders', () => {
+  it('owns exactly the final 18 handlers and 15 receiving decoders', () => {
     const handlers = createBackgroundRuntimeHandlers(createDependencies());
     expect(handlers.map((handler) => handler.type).sort()).toEqual([...R44_COMMANDS].sort());
     expect(Object.keys(BACKGROUND_RUNTIME_PAYLOAD_DECODERS).sort())
@@ -275,6 +277,7 @@ function createDependencies(): BackgroundRuntimeHandlerDependencies {
       runAutomationNow: vi.fn(async () => automationRun()),
       broadcastAutomationUpdate: vi.fn(async () => undefined),
       broadcastAutomationRunsUpdate: vi.fn(async () => undefined),
+      parseNaturalLanguageAutomation: vi.fn(async () => ({ ok: true, draft: { operations: [], summary: '', ready: true, issues: [], baseTime: Date.now() } })) as any,
     },
     scenario: {
       getAllScenarios: vi.fn(async () => []),

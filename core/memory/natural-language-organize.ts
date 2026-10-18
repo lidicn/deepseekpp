@@ -111,7 +111,7 @@ export function buildMemorySnapshots(
     .filter((m) => m.id !== undefined)
     .map((m, index) => ({
       id: m.id!,
-      name: m.name ?? readMemoryText(m).slice(0, 50) || `记忆 ${index + 1}`,
+      name: m.name ?? (readMemoryText(m).slice(0, 50) || `记忆 ${index + 1}`),
       content: readMemoryText(m),
       tags: m.tags ?? [],
       scope: m.scope ?? 'global',
@@ -171,7 +171,7 @@ export function planMemoryOrganizeLocally(
   instruction: string,
   snapshots: MemorySnapshot[],
 ): MemoryOrganizeDraft {
-  const issues: MemoryOrganizeDraft['issues'] = [];
+  const issues: { code: string; severity: 'info' | 'warning' | 'error'; message: string }[] = [];
   const operations: MemoryOrganizeOperation[] = [];
 
   const text = instruction.trim();
@@ -180,6 +180,7 @@ export function planMemoryOrganizeLocally(
       operations: [],
       summary: '请输入整理指令',
       ready: false,
+      baseTime: Date.now(),
       issues: [{ code: 'instruction_empty', severity: 'error', message: 'Instruction is empty.' }],
     };
   }
@@ -231,16 +232,106 @@ export function planMemoryOrganizeLocally(
   }
 
   if (operations.length === 0) {
-    operations.push({ type: 'list_all', reason: '未识别到具体操作，罗列全部记忆供查看' });
-    issues.push({ code: 'unknown_instruction', severity: 'warning', message: '未识别到具体操作，默认罗列全部记忆' });
+    issues.push({ code: 'unknown_instruction', severity: 'warning', message: '未识别到具体操作，请描述你想怎么整理记忆' });
+  }
+
+  // Scope 保护：检查跨 scope 的破坏性操作
+  const scopeById = new Map(snapshots.map((s) => [s.id, s.scope]));
+  const destructiveOps = operations.filter((op) =>
+    ['delete', 'merge', 'clean_stale'].includes(op.type),
+  );
+  for (const op of destructiveOps) {
+    const ids = op.memoryIds ?? (op.memoryId !== undefined ? [op.memoryId] : []);
+    const scopes = new Set(ids.map((id) => scopeById.get(id)).filter(Boolean));
+    if (scopes.size > 1) {
+      issues.push({
+        code: 'cross_scope_operation',
+        severity: 'warning',
+        message: `检测到跨 scope 操作（${Array.from(scopes).join(' / ')}），请确认`,
+      });
+      break;
+    }
   }
 
   return {
     operations,
-    summary: `共 ${operations.length} 个操作`,
+    summary: operations.length === 0 ? '未识别到具体操作' : `共 ${operations.length} 个操作`,
     ready: !issues.some((i) => i.severity === 'error'),
     baseTime: Date.now(),
     issues,
+  };
+}
+
+/**
+ * 解析 LLM 输出的 JSON，验证合法性。
+ * 验证失败返回 null，调用方应回退到本地规则。
+ */
+export function parseLlmOutputAsDraft(llmOutput: string): MemoryOrganizeDraft | null {
+  try {
+    // 去掉可能的 markdown 代码块包裹
+    let jsonStr = llmOutput.trim();
+    if (jsonStr.startsWith('```json')) {
+      jsonStr = jsonStr.slice(7);
+    }
+    if (jsonStr.startsWith('```')) {
+      jsonStr = jsonStr.slice(3);
+    }
+    if (jsonStr.endsWith('```')) {
+      jsonStr = jsonStr.slice(0, -3);
+    }
+    jsonStr = jsonStr.trim();
+
+    const parsed = JSON.parse(jsonStr);
+
+    // 验证基本结构
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (!Array.isArray(parsed.operations)) return null;
+    if (typeof parsed.summary !== 'string') return null;
+
+    // 验证每条 operation
+    const validOps: MemoryOrganizeOperation[] = [];
+    for (const op of parsed.operations) {
+      if (!op || typeof op !== 'object') continue;
+      if (typeof op.type !== 'string') continue;
+      validOps.push(op as MemoryOrganizeOperation);
+    }
+
+    return {
+      operations: validOps,
+      summary: parsed.summary,
+      ready: parsed.ready !== false,
+      baseTime: Date.now(),
+      issues: Array.isArray(parsed.issues) ? parsed.issues : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 从 LLM 输出生成 draft，失败时回退到本地规则。
+ */
+export function organizeMemoriesFromLlm(
+  instruction: string,
+  memories: MemorySnapshot[],
+  llmOutput: string,
+): MemoryOrganizeDraft {
+  const llmDraft = parseLlmOutputAsDraft(llmOutput);
+  if (llmDraft) {
+    return llmDraft;
+  }
+  // 回退到本地规则
+  const localDraft = planMemoryOrganizeLocally(instruction, memories);
+  return {
+    ...localDraft,
+    issues: [
+      {
+        code: 'llm_output_invalid',
+        severity: 'warning',
+        message: 'LLM 输出不合法，已回退到本地规则',
+      },
+      ...localDraft.issues,
+    ],
   };
 }
 
@@ -282,8 +373,16 @@ export interface ApplyMemoryOrganizeDraftOptions {
   };
 }
 
+export interface MemoryOrganizeActionOutcome {
+  type: MemoryOrganizeOperationType;
+  memoryId?: number;
+  memoryIds?: number[];
+  ok: boolean;
+  error?: string;
+}
+
 export type ApplyMemoryOrganizeDraftResult =
-  | { ok: true; executed: number }
+  | { ok: true; outcomes: MemoryOrganizeActionOutcome[] }
   | { ok: false; error: string };
 
 export async function applyMemoryOrganizeDraft(
@@ -306,71 +405,105 @@ export async function applyMemoryOrganizeDraft(
     return { ok: false, error: 'Destructive operations require second confirmation.' };
   }
 
-  let executed = 0;
+  // Scope 保护：如果有跨 scope 操作且没有显式声明，拒绝执行
+  const hasCrossScopeIssue = draft.issues.some((i) => i.code === 'cross_scope_operation');
+  if (hasCrossScopeIssue && !options.destructiveConfirmed) {
+    return { ok: false, error: 'Cross-scope operations require explicit confirmation.' };
+  }
+
+  const outcomes: MemoryOrganizeActionOutcome[] = [];
   try {
     for (const op of draft.operations) {
-      switch (op.type) {
-        case 'list_all':
-          if (options.executor.listAll) await options.executor.listAll();
-          executed++;
-          break;
-        case 'delete':
-          if (op.memoryId !== undefined && options.executor.delete) {
-            await options.executor.delete(op.memoryId);
-            executed++;
-          }
-          break;
-        case 'archive':
-          if (op.memoryId !== undefined && options.executor.archive) {
-            await options.executor.archive(op.memoryId);
-            executed++;
-          }
-          break;
-        case 'pin':
-          if (op.memoryId !== undefined && options.executor.pin) {
-            await options.executor.pin(op.memoryId);
-            executed++;
-          }
-          break;
-        case 'unpin':
-          if (op.memoryId !== undefined && options.executor.unpin) {
-            await options.executor.unpin(op.memoryId);
-            executed++;
-          }
-          break;
-        case 'merge':
-          if (op.memoryIds && op.mergedContent && options.executor.merge) {
-            await options.executor.merge(op.memoryIds, op.mergedContent, op.tags);
-            executed++;
-          }
-          break;
-        case 'retitle':
-          if (op.memoryId !== undefined && op.newTitle && options.executor.retitle) {
-            await options.executor.retitle(op.memoryId, op.newTitle);
-            executed++;
-          }
-          break;
-        case 'retag':
-          if (op.memoryId !== undefined && op.newTags && options.executor.retag) {
-            await options.executor.retag(op.memoryId, op.newTags);
-            executed++;
-          }
-          break;
-        case 'compress':
-          if (op.memoryId !== undefined && op.compressedContent && options.executor.compress) {
-            await options.executor.compress(op.memoryId, op.compressedContent);
-            executed++;
-          }
-          break;
-        case 'clean_stale':
-          if (op.memoryIds && options.executor.cleanStale) {
-            await options.executor.cleanStale(op.memoryIds);
-            executed++;
-          }
-          break;
+      try {
+        switch (op.type) {
+          case 'list_all':
+            if (options.executor.listAll) await options.executor.listAll();
+            outcomes.push({ type: op.type, memoryId: op.memoryId, memoryIds: op.memoryIds, ok: true });
+            break;
+          case 'delete':
+            if (op.memoryId !== undefined && options.executor.delete) {
+              await options.executor.delete(op.memoryId);
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: true });
+            } else {
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: false, error: 'Missing executor.delete or memoryId' });
+            }
+            break;
+          case 'archive':
+            if (op.memoryId !== undefined && options.executor.archive) {
+              await options.executor.archive(op.memoryId);
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: true });
+            } else {
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: false, error: 'Missing executor.archive or memoryId' });
+            }
+            break;
+          case 'pin':
+            if (op.memoryId !== undefined && options.executor.pin) {
+              await options.executor.pin(op.memoryId);
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: true });
+            } else {
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: false, error: 'Missing executor.pin or memoryId' });
+            }
+            break;
+          case 'unpin':
+            if (op.memoryId !== undefined && options.executor.unpin) {
+              await options.executor.unpin(op.memoryId);
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: true });
+            } else {
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: false, error: 'Missing executor.unpin or memoryId' });
+            }
+            break;
+          case 'merge':
+            if (op.memoryIds && op.mergedContent && options.executor.merge) {
+              await options.executor.merge(op.memoryIds, op.mergedContent, op.tags);
+              outcomes.push({ type: op.type, memoryIds: op.memoryIds, ok: true });
+            } else {
+              outcomes.push({ type: op.type, memoryIds: op.memoryIds, ok: false, error: 'Missing executor.merge, memoryIds, or mergedContent' });
+            }
+            break;
+          case 'retitle':
+            if (op.memoryId !== undefined && op.newTitle && options.executor.retitle) {
+              await options.executor.retitle(op.memoryId, op.newTitle);
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: true });
+            } else {
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: false, error: 'Missing executor.retitle, memoryId, or newTitle' });
+            }
+            break;
+          case 'retag':
+            if (op.memoryId !== undefined && op.newTags && options.executor.retag) {
+              await options.executor.retag(op.memoryId, op.newTags);
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: true });
+            } else {
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: false, error: 'Missing executor.retag, memoryId, or newTags' });
+            }
+            break;
+          case 'compress':
+            if (op.memoryId !== undefined && op.compressedContent && options.executor.compress) {
+              await options.executor.compress(op.memoryId, op.compressedContent);
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: true });
+            } else {
+              outcomes.push({ type: op.type, memoryId: op.memoryId, ok: false, error: 'Missing executor.compress, memoryId, or compressedContent' });
+            }
+            break;
+          case 'clean_stale':
+            if (op.memoryIds && options.executor.cleanStale) {
+              await options.executor.cleanStale(op.memoryIds);
+              outcomes.push({ type: op.type, memoryIds: op.memoryIds, ok: true });
+            } else {
+              outcomes.push({ type: op.type, memoryIds: op.memoryIds, ok: false, error: 'Missing executor.cleanStale or memoryIds' });
+            }
+            break;
+        }
+      } catch (error) {
+        outcomes.push({
+          type: op.type,
+          memoryId: op.memoryId,
+          memoryIds: op.memoryIds,
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
-    return { ok: true, executed };
+    return { ok: true, outcomes };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }

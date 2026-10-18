@@ -12,7 +12,7 @@ import {
   decodeAutomationRunList,
 } from '../../../core/automation/storage-codec';
 import { validateAutomationSchedule } from '../../../core/automation/schedule';
-import { createAutomationFromNaturalLanguage } from '../../../core/automation/natural-language-create';
+import { createAutomationFromNaturalLanguage, type CreateAutomationDraftResult } from '../../../core/automation/natural-language-create';
 import type { SupportedLocale } from '../../../core/i18n';
 import { createRequestGenerationFence } from '../async-state';
 import PageIntro from '../components/PageIntro';
@@ -74,7 +74,7 @@ export default function AutomationPage() {
   const [showNLDialog, setShowNLDialog] = useState(false);
   const [nlInput, setNlInput] = useState('');
   const [nlLoading, setNlLoading] = useState(false);
-  const [nlDraft, setNlDraft] = useState<ReturnType<typeof createAutomationFromNaturalLanguage> extends Promise<infer T> ? T : null>(null);
+  const [nlDraft, setNlDraft] = useState<CreateAutomationDraftResult | null>(null);
   const loadFence = useRef(createRequestGenerationFence());
   const banner = useBanner();
   const { confirm, node: confirmNode } = useConfirm();
@@ -198,14 +198,14 @@ export default function AutomationPage() {
         { acceptFailure: true },
       );
       
-      if (result && 'ok' in result && !result.ok) {
-        banner.show('error', result.error);
+      if (result && 'ok' in (result as any) && !(result as any).ok) {
+        banner.show('error', (result as any).error);
         return;
       }
       
-      if (result && 'draft' in result) {
+      if (result && 'draft' in (result as any)) {
         // 直接填充到表单里
-        applyDraftWithDraft(result.draft as any);
+        applyDraftWithDraft((result as any).draft);
       }
     } catch (error) {
       banner.show('error', getRuntimeErrorMessage(error));

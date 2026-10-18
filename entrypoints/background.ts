@@ -5,10 +5,23 @@ import {
   saveMemory,
   updateMemory,
   deleteMemory,
+  archiveMemory,
+  unarchiveMemory,
   touchMemories,
   archiveStaleMemories,
 } from '../core/memory/store';
 import { filterMemoriesByProjectScope } from '../core/memory/scope';
+import {
+  organizeMemoriesFromNaturalLanguage as organizeMemoriesFromNaturalLanguageCore,
+  applyMemoryOrganizeDraft as applyMemoryOrganizeDraftCore,
+  buildMemorySnapshots,
+  organizeMemoriesFromLlm,
+  type MemoryOrganizeDraft,
+} from '../core/memory/natural-language-organize';
+import {
+  buildOrganizeSystemPrompt,
+  buildOrganizeUserPrompt,
+} from '../core/memory/organize-prompt';
 import {
   getAllSkillSources,
   getAllSkills,
@@ -430,8 +443,109 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         importMemoriesAtomically,
         updateMemory,
         deleteMemory,
+        archiveMemory,
+        unarchiveMemory,
         touchMemories,
         notifyCommittedStateUpdate,
+        organizeMemoriesFromNaturalLanguage: async (instruction: string) => {
+          try {
+            const memories = await getAllMemories();
+            const snapshots = buildMemorySnapshots(memories);
+
+            // 先尝试用 LLM 生成 draft
+            try {
+              const systemPrompt = buildOrganizeSystemPrompt();
+              const userPrompt = buildOrganizeUserPrompt(instruction, snapshots);
+              const fullPrompt = `${systemPrompt}\n\n${userPrompt}`;
+
+              // 用 loadOrRefreshClientHeaders 取 token（background 环境可用）
+              const clientHeaders = await loadOrRefreshClientHeaders();
+              if (!clientHeaders) {
+                throw new Error('未登录，无法使用自然语言整理');
+              }
+              const chatSessionId = await deepSeekAutomationClient.createChatSession(clientHeaders, {});
+              const powHeaders = await deepSeekAutomationClient.createPowHeaders(clientHeaders, {});
+              const turn = await deepSeekAutomationClient.submitPrompt({
+                chatSessionId,
+                parentMessageId: null,
+                modelType: null,
+                prompt: fullPrompt,
+                refFileIds: [],
+                thinkingEnabled: false,
+                searchEnabled: false,
+                clientHeaders,
+                powHeaders,
+              }, {});
+
+              // 用 LLM 输出生成 draft（失败时自动回退到本地规则）
+              const draft = organizeMemoriesFromLlm(instruction, snapshots, turn.assistantText);
+              return { ok: true as const, draft };
+            } catch (llmError) {
+              // LLM 失败，回退到本地规则
+              console.warn('[memory-organize] LLM 调用失败，回退到本地规则:', llmError);
+              const draft = organizeMemoriesFromNaturalLanguageCore({ instruction, memories: snapshots });
+              return {
+                ok: true as const,
+                draft: {
+                  ...draft,
+                  issues: [
+                    {
+                      code: 'llm_unavailable',
+                      severity: 'warning',
+                      message: 'LLM 不可用，已回退到本地规则',
+                    },
+                    ...draft.issues,
+                  ],
+                },
+              };
+            }
+          } catch (error) {
+            return { ok: false as const, error: error instanceof Error ? error.message : String(error) };
+          }
+        },
+        applyMemoryOrganizeDraft: async (
+          draft: MemoryOrganizeDraft,
+          options: { confirmed: boolean; destructiveConfirmed?: boolean },
+        ) => {
+          const executor = {
+            delete: async (id: number) => { await deleteMemory(id); },
+            archive: async (id: number) => { await archiveMemory(id); },
+            pin: async (id: number) => {
+              const memory = await getMemoryById(id);
+              if (memory) { memory.pinned = true; await updateMemory(memory); }
+            },
+            unpin: async (id: number) => {
+              const memory = await getMemoryById(id);
+              if (memory) { memory.pinned = false; await updateMemory(memory); }
+            },
+            merge: async (ids: number[], mergedContent: string, tags?: string[]) => {
+              if (ids.length === 0) return;
+              const firstId = ids[0]!;
+              const firstMemory = await getMemoryById(firstId);
+              if (!firstMemory) return;
+              firstMemory.content = mergedContent;
+              if (tags) { firstMemory.tags = tags; }
+              await updateMemory(firstMemory);
+              for (let i = 1; i < ids.length; i++) {
+                const otherId = ids[i]!;
+                if (otherId !== firstId) { await deleteMemory(otherId); }
+              }
+            },
+            retitle: async (id: number, newTitle: string) => {
+              const memory = await getMemoryById(id);
+              if (memory) { memory.name = newTitle; await updateMemory(memory); }
+            },
+            retag: async (id: number, newTags: string[]) => {
+              const memory = await getMemoryById(id);
+              if (memory) { memory.tags = newTags; await updateMemory(memory); }
+            },
+            compress: async (id: number, compressedContent: string) => {
+              const memory = await getMemoryById(id);
+              if (memory) { memory.content = compressedContent; await updateMemory(memory); }
+            },
+          };
+          return await applyMemoryOrganizeDraftCore(draft, { ...options, executor });
+        },
       },
       skill: {
         getLocale: () => currentBackgroundLocale,
@@ -773,6 +887,38 @@ export default defineBackground(() => {
     .catch(acknowledgeReportedSyncRecoveryFailure);
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // 前置处理：自动提取记忆消息
+    console.log('[memory-extractor] background 收到消息', { type: message?.type });
+    if (message && message.type === 'EXTRACT_MEMORY_FROM_CONVERSATION') {
+      console.log('[memory-extractor] 收到 EXTRACT_MEMORY_FROM_CONVERSATION 消息', message.payload);
+      const { chatSessionId, userMessage, assistantMessage } = message.payload;
+      // 异步调用 runExtractionHook，不等待结果
+      void (async () => {
+        try {
+          console.log('[memory-extractor] 开始调用 runExtractionHook');
+          const { runExtractionHook } = await import('../core/memory/extractor-hook');
+          const result = await runExtractionHook(
+            chatSessionId,
+            userMessage,
+            assistantMessage,
+            2, // turnCount（满足 minTurns=2 的门控）
+            null, // lastExtractionTurn（简化版）
+          );
+          console.log('[memory-extractor] 自动提取记忆完成', {
+            chatSessionId,
+            triggered: result.triggered,
+            reason: result.reason,
+            savedCount: result.savedCount,
+            skippedCount: result.skippedCount,
+          });
+        } catch (error) {
+          console.error('[memory-extractor] 自动提取记忆失败', error);
+        }
+      })();
+      sendResponse({ ok: true });
+      return false;
+    }
+
     let envelope: RuntimeMessageEnvelope | undefined;
     let context: RuntimeMessageContext;
     try {
@@ -819,6 +965,12 @@ export default defineBackground(() => {
       return false;
     }
 
+    // 简单的 PING 命令，不走 runtime 解码
+    if (message && message.type === 'PING') {
+      sendResponse({ ok: true, message: 'pong', sender: senderUrl });
+      return false;
+    }
+
     let envelope: RuntimeMessageEnvelope | undefined;
     try {
       envelope = decodeRuntimeMessageEnvelope(message);
@@ -828,13 +980,16 @@ export default defineBackground(() => {
     }
 
     // 构造 trusted context（外部页面调用，不走授权流程）
+    let senderOrigin = senderUrl;
+    try { senderOrigin = new URL(senderUrl).origin; } catch { /* keep raw */ }
     const context: RuntimeMessageContext = {
+      runtimeId: chrome.runtime.id,
+      surface: 'extension_context',
+      senderUrl,
+      senderOrigin,
+      documentSessionId: `external-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       tabId: undefined,
-      tabUrl: senderUrl,
-      origin: senderUrl,
-      kind: 'trusted',
-      trigger: 'external_bridge',
-    } as RuntimeMessageContext;
+    };
 
     ensureRecoveryReadyWithTimeout()
       .then(() => handleMessage(envelope, context))
@@ -845,6 +1000,9 @@ export default defineBackground(() => {
       }));
     return true;
   });
+
+  // DPP Bridge: native messaging 连接（用于 P3 记忆系统调试）
+  setupDppBridge();
 
   chrome.storage.onChanged.addListener((changes) => {
     if ('deepseek_pp_chat_enabled' in changes || DEEPSEEK_API_KEY_STORAGE_KEY in changes) {
@@ -1677,4 +1835,73 @@ function broadcastChatChunk(
     'chat_stream_notification_failed',
     reportBackgroundStartupError,
   );
+}
+
+// ========== DPP Bridge: native messaging ==========
+// 用于 P3 记忆系统调试：外部 HTTP 请求 → native messaging → runtime-command-registry
+
+function setupDppBridge() {
+  try {
+    const port = chrome.runtime.connectNative('com.deepseekpp.bridge');
+    
+    port.onMessage.addListener((msg) => {
+      // 收到来自 dpp-bridge.mjs 的请求
+      if (msg && msg.type === 'request' && msg.requestId && msg.commandType) {
+        // 构造 runtime 消息
+        const envelope = {
+          type: msg.commandType,
+          payload: msg.payload || {},
+        };
+        
+        // 构造 trusted context（native messaging 调用，不走授权流程）
+        const context: RuntimeMessageContext = {
+          runtimeId: chrome.runtime.id,
+          surface: 'extension_context',
+          senderUrl: 'native://dpp-bridge',
+          senderOrigin: 'native://dpp-bridge',
+          documentSessionId: `native-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          tabId: undefined,
+        };
+        
+        ensureRecoveryReadyWithTimeout()
+          .then(() => handleMessage(envelope, context))
+          .then((result) => {
+            port.postMessage({
+              type: 'response',
+              requestId: msg.requestId,
+              result,
+            });
+          })
+          .catch((error) => {
+            port.postMessage({
+              type: 'response',
+              requestId: msg.requestId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          });
+      }
+    });
+    
+    port.onDisconnect.addListener(() => {
+      const err = chrome.runtime.lastError?.message || '';
+      console.warn('[dpp-bridge] native port disconnected:', err);
+      // 只有不是配置错误（forbidden/not found）时才自动重连，避免无限刷报错
+      if (err.includes('forbidden') || err.includes('No such native host') || err.includes('not found')) {
+        console.log('[dpp-bridge] native host 未配置或被拒绝，停止自动重连');
+        return;
+      }
+      // 5 秒后重连（仅网络波动等临时错误）
+      setTimeout(() => {
+        try {
+          setupDppBridge();
+        } catch (e) {
+          console.error('[dpp-bridge] reconnect failed:', e);
+        }
+      }, 5000);
+    });
+    
+    console.log('[dpp-bridge] native port connected');
+  } catch (error) {
+    console.error('[dpp-bridge] connectNative failed:', error);
+  }
 }
