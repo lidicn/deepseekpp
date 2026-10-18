@@ -39,7 +39,7 @@ import {
 export interface PiToolBridgeInput {
   descriptors: readonly ToolDescriptor[];
   /** The existing grant-checking execution path. Never bypassed. */
-  executeTool: (call: ToolCall) => Promise<ToolExecutionRecord>;
+  executeTool: (call: ToolCall, signal?: AbortSignal) => Promise<ToolExecutionRecord>;
   /**
    * The extension-owned authorization binding for this run. Tool-call
    * sources must match the grant exactly (`requestId`, `chatSessionId`),
@@ -123,7 +123,7 @@ function createPiAgentTool(
     // JSON schemas without a typebox kind marker (no runtime typebox dep).
     parameters: descriptor.inputSchema as unknown as never,
     prepareArguments: (args) => args as never,
-    execute: async (toolCallId, params, _signal, _onUpdate): Promise<AgentToolResult<ToolResult>> => {
+    execute: async (toolCallId, params, signal, _onUpdate): Promise<AgentToolResult<ToolResult>> => {
       const record = await executeTool({
         id: toolCallId,
         name: descriptor.name,
@@ -135,7 +135,7 @@ function createPiAgentTool(
           requestId: callSource.requestId,
           chatSessionId: callSource.chatSessionId,
         },
-      });
+      }, signal);
 
       // M-URL 修复：图片 URL 的下载和上传已移到 loop-adapter.ts 中处理
       // （通过 background SW 执行，避免 content script 的 Mixed Content 限制）

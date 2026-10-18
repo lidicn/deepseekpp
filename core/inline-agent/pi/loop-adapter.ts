@@ -63,7 +63,7 @@ import { INLINE_AGENT_MAX_STEPS } from '../types';
 import { waitBetweenDeepSeekRequests } from '../step-control';
 
 export type PostFn = (type: string, data: unknown) => void;
-export type ExecuteToolFn = (call: ToolCall) => Promise<ToolExecutionRecord>;
+export type ExecuteToolFn = (call: ToolCall, signal?: AbortSignal) => Promise<ToolExecutionRecord>;
 
 const INLINE_AGENT_STREAM_EVENT_MAX_CHARS = 12000;
 const TRUNCATION_SUFFIX = '\n...[truncated]';

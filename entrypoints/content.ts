@@ -5818,7 +5818,17 @@ async function startInlineAgentLoop(
     if (terminalTask) terminalTasks.push(terminalTask);
   };
 
-  const executeTool = async (call: ToolCall): Promise<ToolExecutionRecord> => {
+  const executeTool = async (call: ToolCall, signal?: AbortSignal): Promise<ToolExecutionRecord> => {
+    if (signal?.aborted) {
+      return {
+        name: call.name,
+        result: {
+          ok: false,
+          summary: 'tool aborted before execution',
+          error: { code: 'tool_aborted', message: 'Aborted by user', retryable: false },
+        },
+      };
+    }
     const enrichedCall: ToolCall = ensureToolCallId({
       ...call,
       source: {
