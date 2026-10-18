@@ -1,7 +1,7 @@
 import type { OfficialApiChatConfig } from '../../core/chat/official-api-config-contract';
 import type { ChatLoopProvider, InterruptedChatLoop } from '../../core/chat/active-loop';
 // P0-3: 工具执行状态持久化 helper
-import { appendToolExecution, clearCurrentTool, setCurrentTool } from '../../core/chat/active-loop';
+import { appendToolExecution, clearCurrentTool, setCurrentTool, updateMarker } from '../../core/chat/active-loop';
 import type { ModelTurn, SubmitPromptInput } from '../../core/deepseek/automation-client-port';
 import { DeepSeekAuthError } from '../../core/deepseek/errors';
 import type { DeepSeekUploadedFile } from '../../core/deepseek/contracts';
@@ -268,6 +268,8 @@ export function createChatRuntimeService(
       assertTurnActive(turn);
 
       chatParentMessageId = result.responseMessageId;
+      // M1-2: 写 parentMessageId 到 marker
+      void updateMarker({ parentMessageId: chatParentMessageId }).catch(() => {});
       const fullText = accumulated || result.assistantText;
       if (!fullText) {
         emitChunk(turn, {
@@ -279,6 +281,11 @@ export function createChatRuntimeService(
       }
 
       const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
+      // M1-2: 写 calls 到 marker
+      void updateMarker({
+        calls: toolCalls,
+        position: { callIndex: 0, depth: step },
+      }).catch(() => {});
       if (toolCalls.length === 0) {
         // 报告 R3 修复：流被截断且无工具调用时自动续轮，而非静默 done:true。
         // 只有在 parentMessageId 有效时才能续轮（首次请求即截断时 responseMessageId 可能为 null）。
@@ -417,6 +424,11 @@ export function createChatRuntimeService(
         },
       ];
       const toolCalls = extractToolCalls(fullText, { descriptors: toolDescriptors });
+      // M1-2: 写 calls 到 marker
+      void updateMarker({
+        calls: toolCalls,
+        position: { callIndex: 0, depth: step },
+      }).catch(() => {});
       if (toolCalls.length === 0) {
         // 报告 R3 修复：official-API 路径 —— 截断且无工具时自动续轮。
         if (!result.finished) {
@@ -490,6 +502,19 @@ export function createChatRuntimeService(
       assertTurnActive(turn);
       const provider: ChatLoopProvider = apiKey ? 'official-api' : 'web';
       await dependencies.markChatLoopStarted(provider);
+      // M1-2: 扩展 marker 加 job 状态字段
+      await updateMarker({
+        schemaVersion: 1,
+        turnId: crypto.randomUUID(),
+        jobId: crypto.randomUUID(),
+        jobState: 'running',
+        calls: [],
+        position: { callIndex: 0, depth: 0 },
+        parentMessageId: null,
+        chatSessionId: chatSessionId ?? null,
+        attempt: 0,
+        resumeDeadline: Date.now() + 10 * 60 * 1000, // 10 min TTL
+      });
       // Audit fix #4: markerStarted MUST be set to true immediately after
       // markChatLoopStarted succeeds and BEFORE any assertTurnActive call.
       // If assertTurnActive throws while markerStarted is still false, the
@@ -520,6 +545,8 @@ export function createChatRuntimeService(
     } finally {
       if (markerStarted) {
         try {
+          // M1-2: 写终态 jobState
+          await updateMarker({ jobState: 'succeeded' });
           await dependencies.markChatLoopFinished();
         } catch (error) {
           dependencies.reportError('chat_loop_finish_failed', error);

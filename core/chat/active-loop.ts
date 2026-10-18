@@ -203,6 +203,19 @@ export async function clearCurrentTool(): Promise<void> {
   await chrome.storage.session.set({ [SESSION_STORAGE_KEY]: marker });
 }
 
+/** M1-2: 局部更新 marker 字段（整对象替换，revision++） */
+export async function updateMarker(patch: Partial<ActiveChatLoop>): Promise<void> {
+  const marker = await readMarker();
+  if (!marker) return;
+  const next: ActiveChatLoop = {
+    ...marker,
+    ...patch,
+    revision: (marker.revision ?? 1) + 1,
+    lastUpsertAt: Date.now(),
+  };
+  await chrome.storage.session.set({ [SESSION_STORAGE_KEY]: next });
+}
+
 export async function getActiveChatLoop(): Promise<ActiveChatLoop | null> {
   return readMarker();
 }
