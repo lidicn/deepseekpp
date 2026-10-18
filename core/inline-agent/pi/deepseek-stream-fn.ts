@@ -54,6 +54,58 @@ import type {
 
 const INLINE_AGENT_MAX_STEP_ATTEMPTS = 2;
 
+// P1-1: PoW challenge solving has its own bounded retry. The step-level
+// `submitWithRetry` below only retries once a request started (no chunk yet),
+// so a PoW solve failure (wasm load / challenge fetch) before the request is
+// not covered and previously died on the first failure.
+const POW_MAX_ATTEMPTS = 3;
+const POW_BACKOFF_MS = [300, 600, 900];
+
+function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(signal.reason ?? new DOMException('Aborted', 'AbortError'));
+      },
+      { once: true },
+    );
+  });
+}
+
+/**
+ * P1-1: Solve PoW headers with bounded retries (3 attempts, backoff 300/600/900ms).
+ * User/system abort aborts immediately without retrying; after the final failed
+ * attempt the original error propagates so the loop surfaces a fatal error.
+ */
+export async function solvePowWithRetry(
+  clientHeaders: Record<string, string>,
+  powWasmUrl: string | undefined,
+  signal?: AbortSignal,
+): Promise<Record<string, string>> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= POW_MAX_ATTEMPTS; attempt++) {
+    if (signal?.aborted) {
+      throw signal.reason ?? new DOMException('Aborted', 'AbortError');
+    }
+    try {
+      return await createPowHeaders(clientHeaders, powWasmUrl, signal);
+    } catch (err) {
+      lastError = err;
+      if (signal?.aborted) throw err;
+      if (attempt >= POW_MAX_ATTEMPTS) break;
+      await sleepWithSignal(POW_BACKOFF_MS[attempt - 1] ?? 900, signal);
+    }
+  }
+  throw lastError;
+}
+
 export interface DeepSeekTurnSubmitterOptions {
   powWasmUrl?: string;
 }
@@ -69,7 +121,8 @@ export function createDeepSeekTurnSubmitter(
 
   return async (request, callbacks, signal) => {
     const clientHeaders = createClientHeaders();
-    const powHeaders = await createPowHeaders(clientHeaders, powWasmUrl);
+    // P1-1: PoW solve has its own bounded retry; abort propagates immediately.
+    const powHeaders = await solvePowWithRetry(clientHeaders, powWasmUrl, signal);
     const input: SubmitPromptInput = {
       chatSessionId: request.chatSessionId,
       parentMessageId: request.parentMessageId,
