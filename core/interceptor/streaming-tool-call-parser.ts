@@ -131,7 +131,7 @@ class XmlStreamingToolCallParser implements StreamingToolCallParser {
       level: 'info',
       source: 'tool_call_parser',
       message: `Found tool tag: ${found.name}`,
-      details: `tag=${found.raw.slice(0, 200)} ctx=${text.slice(Math.max(0, found.startIndex - 50), found.startIndex + 100)}`,
+      details: `tag=${found.raw.slice(0, 200)} ctx=${text.slice(Math.max(0, found.index - 50), found.index + 100)}`,
     });
 
     const id = crypto.randomUUID();
