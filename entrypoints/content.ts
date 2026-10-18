@@ -1410,7 +1410,9 @@ async function dispatchMainWorldMessage(
           toolExecutions = [];
           toolBlockEl = null;
         }
-        void startInlineAgentIfNeeded(complete, completedExecutions);
+        startInlineAgentIfNeeded(complete, completedExecutions).catch((err) => {
+          console.error('[DPP] 续轮启动失败', err);
+        });
         schedulePetIdle();
 
         // 自动提取记忆：对话完成后发送消息给 background
