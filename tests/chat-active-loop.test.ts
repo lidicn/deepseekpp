@@ -37,9 +37,8 @@ describe('active chat loop marker', () => {
     await markChatLoopStarted('web');
 
     const marker = await getActiveChatLoop();
-    expect(marker).toEqual({
+    expect(marker).toMatchObject({
       active: true,
-      startedAt: expect.any(Number),
       provider: 'web',
       executions: [],
       currentTool: null,

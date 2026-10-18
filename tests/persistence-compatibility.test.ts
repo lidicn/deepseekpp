@@ -149,6 +149,7 @@ describe('persistence and sync compatibility contract', () => {
       1: '++id, type, name, pinned, createdAt, updatedAt, lastAccessedAt',
       2: '++id, type, name, pinned, createdAt, updatedAt, lastAccessedAt, syncId',
       3: '++id, type, name, pinned, createdAt, updatedAt, lastAccessedAt, syncId, scope, projectId',
+      4: '++id, type, name, pinned, archived, createdAt, updatedAt, lastAccessedAt, syncId, scope, projectId',
     });
 
     expect(migrateMemoryV1RecordToV2(MEMORY_V1_RECORD, MEMORY_V2_RECORD.syncId))

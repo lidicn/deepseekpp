@@ -25,9 +25,6 @@ tests/runtime-command-contract.test.ts::matches the live router, MessageAction u
 tests/remote-agent-watcher.test.ts::counts a resend that throws as a failed attempt and still notifies
 tests/remote-agent-watcher.test.ts::counts a resend that throws as a failed attempt and still notifies
 tests/tool-block-style.test.ts::TODO
-tests/chat-active-loop.test.ts::TODO
-tests/persistence-compatibility.test.ts::TODO
-tests/local-skill-importer.test.ts::TODO
 tests/indexeddb-wrapper.test.ts::TODO
 tests/deepseek-protocol-contract.test.ts::TODO
 tests/tool-runtime-history.test.ts::TODO

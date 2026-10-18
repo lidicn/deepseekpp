@@ -20,7 +20,6 @@ export const MEMORY_V2_RECORD = {
 export const MEMORY_V3_RECORD = {
   ...MEMORY_V2_RECORD,
   scope: 'global',
-  archived: false,
 } as const;
 
 export const MEMORY_V3_PROJECT_RECORD = {
