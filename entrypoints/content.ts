@@ -27,6 +27,7 @@ import {
   readTelemetrySetting,
   TELEMETRY_SETTING_STORAGE_KEY,
 } from "../core/debug/telemetry-gate";
+import { refactorTelemetry } from "../core/debug/refactor-telemetry";
 import { getDeepSeekApiKey } from "../core/chat/api-key";
 import { normalizePetConfig } from "../core/pet/config";
 import { pickPetLine, type PetState } from "../core/pet/lines";
@@ -91,6 +92,12 @@ import {
   shouldReloadInlineAgentNativeHistory,
   type InlineAgentModelBackend,
 } from "../core/inline-agent/native-history";
+import { shouldRenderNarration } from "../core/inline-agent/narration-dedup";
+import {
+  consumeNativeHistoryReload,
+  hasPendingNativeReload,
+  requestNativeHistoryReload,
+} from "../core/inline-agent/native-reload";
 import {
   INCOMPLETE_TOOL_CALL_ERROR_CODE,
   selectContinuableToolExecutions,
@@ -544,6 +551,10 @@ let inlineAgentContainer: HTMLElement | null = null;
 let inlineAgentCurrentStep: HTMLElement | null = null;
 let inlineAgentLoopId: string | null = null;
 let inlineAgentContainerObserver: MutationObserver | null = null;
+// H3：RESPONSE_COMPLETE / EXTRACT_MEMORY 按会话+请求幂等去重，避免同一完成事件在
+// 续轮/重发（completion、editMessage 反复）链路里被反复处理、反复发记忆提取。
+const memoryExtractSentKeys = new Set<string>();
+const MEMORY_EXTRACT_SENT_KEY_MAX = 256;
 let renderedToolCallCleanerFrame: number | null = null;
 let activeInlineAgentTrace: InlineAgentTraceRecord | null = null;
 let inlineAgentTraceWriteTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1401,6 +1412,45 @@ async function dispatchMainWorldMessage(
         }
         void startInlineAgentIfNeeded(complete, completedExecutions);
         schedulePetIdle();
+
+        // 自动提取记忆：对话完成后发送消息给 background
+        console.log('[memory-extractor] RESPONSE_COMPLETE 触发', {
+          chatSessionId: complete.chatSessionId,
+          originalPrompt: complete.originalPrompt?.slice(0, 50),
+          text: complete.text?.slice(0, 50),
+        });
+        if (complete.chatSessionId && complete.originalPrompt) {
+          // 同一 chatSessionId+requestId（无 requestId 时退化为会话+首句）只发一次。
+          const extractKey = complete.requestId
+            ? `${complete.chatSessionId}::${complete.requestId}`
+            : `${complete.chatSessionId}::${complete.originalPrompt.slice(0, 80)}`;
+          if (memoryExtractSentKeys.has(extractKey)) {
+            console.log('[memory-extractor] 已提取过，跳过重复完成事件', {
+              chatSessionId: complete.chatSessionId,
+              requestId: complete.requestId,
+            });
+          } else {
+            memoryExtractSentKeys.add(extractKey);
+            if (memoryExtractSentKeys.size > MEMORY_EXTRACT_SENT_KEY_MAX) {
+              memoryExtractSentKeys.clear();
+              memoryExtractSentKeys.add(extractKey);
+            }
+            console.log('[memory-extractor] 发送 EXTRACT_MEMORY_FROM_CONVERSATION 消息');
+            void sendRuntimeMessage({
+              type: "EXTRACT_MEMORY_FROM_CONVERSATION",
+              payload: {
+                chatSessionId: complete.chatSessionId,
+                userMessage: complete.originalPrompt,
+                assistantMessage: complete.text,
+              },
+            }).catch((error) => {
+              console.error('[memory-extractor] 发送消息失败', error);
+            });
+          }
+        } else {
+          console.log('[memory-extractor] 跳过：chatSessionId 或 originalPrompt 为空');
+        }
+
         break;
       }
       case "REQUEST_TERMINAL": {
@@ -1530,7 +1580,8 @@ function initConsoleLogPersistence(): void {
 const RELOAD_STATE_KEY = "dpp:native-history-reload-state";
 
 function reloadInlineAgentNativeHistory(): void {
-  // 无感刷新：保存用户状态（滚动位置、输入草稿），然后智能延迟刷新
+  // P0-1 惰性刷新：先保存用户状态（滚动位置、输入草稿）供刷新后恢复；
+  // 再写 pending 标记。页面可见时绝不主动硬刷新，推迟到下次发消息前或切后台。
   try {
     const textarea = getPromptTextarea();
     const state = {
@@ -1541,25 +1592,11 @@ function reloadInlineAgentNativeHistory(): void {
     sessionStorage.setItem(RELOAD_STATE_KEY, JSON.stringify(state));
   } catch { /* sessionStorage 不可用时忽略 */ }
 
-  // 页面已在后台 → 立即刷新（用户看不到）
-  if (document.hidden) {
-    window.location.reload();
-    return;
-  }
-
-  // 页面可见 → 等用户切走时刷新；30s 兜底
-  let refreshed = false;
-  const doReload = () => {
-    if (refreshed) return;
-    refreshed = true;
-    document.removeEventListener("visibilitychange", onVisibility);
-    window.location.reload();
-  };
-  const onVisibility = () => {
-    if (document.hidden) doReload();
-  };
-  document.addEventListener("visibilitychange", onVisibility);
-  setTimeout(doReload, 30_000);
+  requestNativeHistoryReload({
+    storage: sessionStorage,
+    isHidden: () => document.hidden,
+    reload: () => window.location.reload(),
+  });
 }
 
 /**
@@ -4962,6 +4999,15 @@ async function startInlineAgentIfNeeded(
     return;
   }
 
+  // M0 G2：此处已通过全部 guard、确认 loop 真正启动。用户主动 continue 优先记 user_continued，
+  // 否则记 model_requested（模型留了可续执行）。单一事件 + reason 分组，避免双计数。
+  refactorTelemetry.recordHarnessEvent({
+    type: 'continuation_triggered',
+    turnId: loopId,
+    reason: userAskedToContinue ? 'user_continued' : 'model_requested',
+    timestamp: Date.now(),
+  });
+
   console.log('[DPP-AUTO] starting inline agent loop', {
     loopId,
     requestId: complete.requestId,
@@ -5125,22 +5171,33 @@ function mountInlineAgentContainer(
   message: Element,
   container: HTMLElement,
 ): void {
+  // React 流式/续轮会高频改动 message 子树：
+  // 1) 用 rAF 把一帧内的多个 mutation 合并成一次执行，避免每个增量都全量扫描；
+  // 2) 只在容器脱离当前 host（被 React 重建/替换）时才重挂；
+  // 3) 不再因"容器后面有兄弟节点"就把容器抢挪到末尾——那会打乱 React vDOM 记录的
+  //    子节点顺序，下一帧 reconcile 时 removeChild 抛 NotFoundError，高频反复即渲染进程
+  //    无响应崩溃（详见 doc/设计/流式崩溃根因v3-确证版-20261016.md）。
+  let raf = 0;
   const placeContainer = () => {
+    raf = 0;
+    if (!container.isConnected) return;
+    // adopt / autoCollapse 均自带幂等标记，rAF 合并后每帧最多执行一次，
+    // 既保留"完成的 thinking 自动折叠"，又避免每个 mutation 都全树扫描。
     adoptMessageReasoningBlocks(message);
     const responseHost = getAssistantResponseHost(message);
     if (container.parentElement !== responseHost) {
       responseHost.appendChild(container);
-      return;
     }
-    if (container.nextSibling) {
-      responseHost.appendChild(container);
-    }
+  };
+  const schedulePlace = () => {
+    if (raf !== 0) return;
+    raf = requestAnimationFrame(placeContainer);
   };
 
   placeContainer();
 
   inlineAgentContainerObserver?.disconnect();
-  inlineAgentContainerObserver = new MutationObserver(placeContainer);
+  inlineAgentContainerObserver = new MutationObserver(schedulePlace);
   inlineAgentContainerObserver.observe(message, {
     childList: true,
     subtree: true,
@@ -6249,11 +6306,37 @@ async function handleAgentLoopComplete(
       ? { answer: displayFinalText, fromStep: false }
       : resolveInlineAgentAnswerText(displayFinalText, lastCompletedStepText);
     const finalText = resolvedAnswer.answer;
+
+    // 1) 先把 trace 落为 complete（修复：守卫之前先置 complete，否则守卫读 running 状态恒假）
+    completedTrace = updateActiveInlineAgentTrace(
+      (trace) => ({
+        ...trace,
+        status: "complete",
+        totalSteps: msg.totalSteps,
+        totalTools: msg.totalTools,
+        finalText:
+          clampText(finalText, INLINE_AGENT_FINAL_RENDER_MAX_CHARS) ?? "",
+      }),
+      { persist: false },
+    );
+
+    // M0 G2/深度：一次 inline agent run 收尾，记录最终深度与工具数（finalDepth=总步数）。
+    refactorTelemetry.recordHarnessEvent({
+      type: "turn_finished",
+      turnId: msg.loopId,
+      finalDepth: Math.max(0, Number(msg.totalSteps) || 0),
+      toolCallCount: Math.max(0, Number(msg.totalTools) || 0),
+      timestamp: Date.now(),
+    });
+
+    // 2) 用「已 complete」的 completedTrace 做去重判断
     // 该轮是否已提交到原生历史（web 后端 + 有 responseMessageId）。
     // 如果是，刷新后原生消息会渲染最终答案，扩展不应再渲染一份，否则重复。
-    const hasNativeTurn = !budgetPaused && activeInlineAgentTrace
-      ? isInlineAgentNativeHistoryBackedTrace(activeInlineAgentTrace)
+    const hasNativeTurn = !budgetPaused && completedTrace
+      ? isInlineAgentNativeHistoryBackedTrace(completedTrace)
       : false;
+
+    // 3) 再决定是否渲染扩展那份
     if (!hasNativeTurn) {
       if (
         lastCompletedStep &&
@@ -6278,17 +6361,7 @@ async function handleAgentLoopComplete(
       finalizePendingAgentToolEntries(stream);
     }
 
-    completedTrace = updateActiveInlineAgentTrace(
-      (trace) => ({
-        ...trace,
-        status: "complete",
-        totalSteps: msg.totalSteps,
-        totalTools: msg.totalTools,
-        finalText:
-          clampText(finalText, INLINE_AGENT_FINAL_RENDER_MAX_CHARS) ?? "",
-      }),
-      { persist: false },
-    );
+    // 4) 刷新判定保持用 completedTrace（本就是对的）
     if (completedTrace) {
       shouldReloadNativeHistory = shouldReloadInlineAgentNativeHistory({
         modelBackend,
@@ -6350,6 +6423,8 @@ function appendInlineAgentNarration(
   text: string,
   loopId: string,
 ): void {
+  // P0-2: 同一 loopId 的 narration 只渲染一次（模块级幂等守卫）。
+  if (!shouldRenderNarration(loopId)) return;
   const renderText = clampText(text, INLINE_AGENT_FINAL_RENDER_MAX_CHARS) ?? "";
   if (!renderText) return;
   const stream = getAgentConsoleBody(container);
@@ -7950,7 +8025,23 @@ async function waitForExternalToolPayloadWrites(call: ToolCall): Promise<void> {
   }
 }
 
+// M0 G1 外层包装：统一按最终结果记录工具调用成败，内层多出口控制流保持不动。
+// 埋点自身失败由 recordToolCall 内部门控/降级兜底，不阻断工具主链路。
 async function executeToolCall(
+  call: ToolCall,
+  authorizationId?: string,
+): Promise<ToolCardResult> {
+  try {
+    const result = await executeToolCallInner(call, authorizationId);
+    refactorTelemetry.recordToolCall(result.ok, result.error?.code);
+    return result;
+  } catch (error) {
+    refactorTelemetry.recordToolCall(false, "exception");
+    throw error;
+  }
+}
+
+async function executeToolCallInner(
   call: ToolCall,
   authorizationId?: string,
 ): Promise<ToolCardResult> {
@@ -9629,6 +9720,8 @@ function hasLikelyToolMarkerPrefix(text: string): boolean {
     text.includes("</python_") ||
     text.includes("<shell_") ||
     text.includes("</shell_") ||
+    text.includes("<local_") ||
+    text.includes("</local_") ||
     text.includes("<task_complete>") ||
     text.includes("</task_complete>")
   );
@@ -10908,13 +11001,36 @@ function applyBackground(config: BackgroundConfig | null) {
  * 用于自适应检测：如果新消息是当前浏览器刚发的，就跳过不重发
  */
 function setupLocalSendListener(): () => void {
+  // 读取当前活动输入框内容（textarea 或 contenteditable），用于判定是否真的在发送。
+  const readActiveInput = (): string => {
+    const ta = getPromptTextarea();
+    if (ta && ta.value.trim()) return ta.value;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active.isContentEditable) {
+      return active.textContent ?? "";
+    }
+    return "";
+  };
+
+  // P0-1：发送入口最前先消费待刷新的原生历史标记，命中则先刷新再返回，
+  // 避免在已完成任务的陈旧页面上继续提交导致链分叉。
+  const consumePendingReload = (): boolean => {
+    if (!hasPendingNativeReload(sessionStorage)) return false;
+    return consumeNativeHistoryReload({
+      storage: sessionStorage,
+      isHidden: () => document.hidden,
+      reload: () => window.location.reload(),
+    });
+  };
+
   // 监听 textarea 的 keydown 事件（Enter 键发送）
   const onKeyDown = (e: KeyboardEvent) => {
+    if (consumePendingReload()) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       const target = e.target as HTMLElement;
       if (target && (target.tagName === 'TEXTAREA' || target.isContentEditable)) {
-        const content = target.tagName === 'TEXTAREA' 
-          ? (target as HTMLTextAreaElement).value 
+        const content = target.tagName === 'TEXTAREA'
+          ? (target as HTMLTextAreaElement).value
           : target.textContent || '';
         if (content && content.trim()) {
           recordLocalSentMessage(content.trim());
@@ -10925,6 +11041,7 @@ function setupLocalSendListener(): () => void {
 
   // 也监听点击发送按钮的情况
   const onClick = (e: MouseEvent) => {
+    if (consumePendingReload()) return;
     const target = e.target as HTMLElement;
     if (target && target.closest('button')) {
       recordLocalSendFromActiveInput();
