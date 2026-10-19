@@ -63,7 +63,8 @@ describe('tool provider routing', () => {
     expect(executeMcpToolCall).toHaveBeenCalledWith(
       expect.objectContaining({ descriptorId: descriptor.id, provider: descriptor.provider }),
       descriptor,
-      {},
+      // R15 后路由层会注入真实 timeoutMs（McpToolExecutionOptions），不再是空对象。
+      expect.objectContaining({ timeoutMs: expect.any(Number) }),
     );
     expect(deleteMemory).not.toHaveBeenCalled();
   });
