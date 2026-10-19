@@ -1,4 +1,11 @@
-﻿import { describe, it, expect } from 'vitest';
+﻿import { describe, it, expect, vi } from 'vitest';
+
+// 测试环境跳过生产风控节流（2.5–6.5s 随机），避免 Phase B 续轮循环超过 5s 用例超时；
+// 生产节流逻辑（core/inline-agent/step-control）保持不变，不在此修改。
+vi.mock('../core/inline-agent/step-control', () => ({
+  waitBetweenDeepSeekRequests: vi.fn(async () => {}),
+}));
+
 import { runResumeToolLoop } from '../core/chat/resume-tool-loop';
 import type { ResumeToolLoopDeps } from '../core/chat/resume-tool-loop';
 import type { ActiveChatLoop } from '../core/chat/active-loop';
