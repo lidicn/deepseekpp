@@ -87,6 +87,16 @@ const LONG_RUNNING_TOOL_NAMES = new Set([
   'python_exec',
 ]);
 
+/**
+ * 第三件：交互型工具单独预算 10 分钟。
+ * 用户浏览目录（local_folder_pick）可能要几分钟，120 秒太短。
+ */
+const INTERACTIVE_TOOL_TIMEOUT_MS = 10 * 60_000;
+
+const INTERACTIVE_TOOL_NAMES = new Set([
+  'local_folder_pick',
+]);
+
 export interface RuntimeToolRuntime {
   getToolDescriptors(locale?: SupportedLocale): Promise<ToolDescriptor[]>;
   getAuthorizationDescriptors(locale?: SupportedLocale): Promise<ToolDescriptor[]>;
@@ -230,9 +240,16 @@ async function executeRuntimeToolCall(
   // timeout, then the 120s fallback. A provider's shorter internal timeout still
   // wins; this only prevents an unbounded hang when none is declared.
   // 第一件：长时工具（shell_exec/python_exec 等编译测试构建类）单独预算 15 分钟。
+  // 第三件：交互型工具（local_folder_pick 等）单独预算 10 分钟。
   // 注意：这里用 authorized.call.name，那时 resolvedCall 还没解析，不能用 resolvedCall.name。
-  const isLongRunning = LONG_RUNNING_TOOL_NAMES.has(authorized.call.name);
-  const fallbackTimeoutMs = isLongRunning ? LONG_RUNNING_TOOL_TIMEOUT_MS : DEFAULT_TOOL_TIMEOUT_MS;
+  const callName = authorized.call.name;
+  const isLongRunning = LONG_RUNNING_TOOL_NAMES.has(callName);
+  const isInteractive = INTERACTIVE_TOOL_NAMES.has(callName);
+  const fallbackTimeoutMs = isLongRunning
+    ? LONG_RUNNING_TOOL_TIMEOUT_MS
+    : isInteractive
+      ? INTERACTIVE_TOOL_TIMEOUT_MS
+      : DEFAULT_TOOL_TIMEOUT_MS;
   const effectiveTimeoutMs = options.timeoutMs
     ?? executionDescriptor.execution.timeoutMs
     ?? fallbackTimeoutMs;

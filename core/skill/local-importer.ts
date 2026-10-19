@@ -651,6 +651,12 @@ function parseLocalSkillHostBundle(output: JsonValue | undefined): LocalSkillHos
   };
 }
 
+/**
+ * 第三件：local_folder_pick 结果解析，区分三种结果：
+ * 1. 用户取消（output 文本含 cancelled）
+ * 2. 空路径（path 是空字符串）
+ * 3. 协议错误（其他格式不对的情况）
+ */
 function parseLocalFolderPickOutput(output: JsonValue | undefined): string {
   const value = output && typeof output === 'object' && !Array.isArray(output)
     ? output as Record<string, unknown>
@@ -658,9 +664,26 @@ function parseLocalFolderPickOutput(output: JsonValue | undefined): string {
   const data = value.data && typeof value.data === 'object' && !Array.isArray(value.data)
     ? value.data as Record<string, unknown>
     : value;
+
+  // 检查取消信号：content 文本里含 cancelled
+  const contentText = value.content && Array.isArray(value.content)
+    ? value.content.map((c: unknown) => typeof c === 'object' && c !== null && 'text' in c
+      ? String((c as Record<string, unknown>).text ?? '')
+      : '').join(' ')
+    : '';
+  if (/cancelled|canceled|User canceled/i.test(contentText)) {
+    throw new Error('FOLDER_PICK_CANCELLED');
+  }
+
   const path = data.path;
   if (typeof path !== 'string' || !path.trim()) {
-    throw new Error('Shell MCP local_folder_pick response is missing path');
+    // 第三件：区分空路径和协议错误
+    // 如果 structuredContent 存在但没有 path，是协议错误
+    if (value.structuredContent !== undefined || value.data !== undefined) {
+      throw new Error('FOLDER_PICK_INVALID_PROTOCOL: response is missing path');
+    }
+    // 否则是空路径（用户没选就确认）
+    throw new Error('FOLDER_PICK_EMPTY_PATH');
   }
   return path.trim();
 }
