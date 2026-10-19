@@ -1,52 +1,37 @@
-// M1-2c: resume-tool-loop — 续跑工具循环（Phase A/B/C）
-// Phase A: 零 LLM，直接执行剩余 calls
-// Phase B: 续轮（LLM 请求）
-// Phase C: 终态（发 done:true + clearMarker）
+﻿// M1-2c: resume-tool-loop — 续跑核心循环
+// Phase A: 执行剩余工具调用
+// Phase B: 发 LLM 请求续轮
+// H3: 续跑可用步数 = MAX_CHAT_TOOL_STEPS - (depth+1)
+// H1: 复用 markChatLoopFinished（不新造 clearMarker）
 
-import type { ToolCall, ToolExecutionRecord, ToolResult } from '../types';
-import type { ToolJob } from '../tool/job';
-import { transitionJob } from '../tool/job';
-import { MAX_CHAT_TOOL_STEPS, serializeToolExecutions } from './loop-contract';
 import type { ActiveChatLoop } from './active-loop';
-
-export interface ResumeStreamChunk {
-  text?: string;
-  reasoningText?: string;
-  done: boolean;
-  error?: string;
-  phase?: 'answer' | 'reasoning';
-}
+import type { ToolJob } from '../tool/job';
+import { MAX_CHAT_TOOL_STEPS, serializeToolExecutions } from './loop-contract';
+import type { ToolCall, ToolExecutionRecord } from '../types';
 
 export interface ResumeToolLoopDeps {
-  executeToolCall(call: ToolCall, signal: AbortSignal): Promise<ToolExecutionRecord>;
-  submitWebPrompt(input: {
-    chatSessionId: string;
-    parentMessageId: number;
-    prompt: string;
-    modelType?: string;
-    clientHeaders: Record<string, string>;
-    refFileIds: string[];
-    thinkingEnabled: boolean;
-    searchEnabled: boolean;
-  }, callbacks: {
-    onTextChunk?: (text: string, fullText: string) => void;
-    onReasoningChunk?: (text: string, full: string) => void;
-  }, signal: AbortSignal): Promise<{
+  // Phase A: 执行单个工具调用
+  executeToolCall(call: ToolCall): Promise<ToolExecutionRecord>;
+  // Phase B: 发 LLM 请求
+  submitContinuation(input: {
+    parentMessageId: string;
+    toolResults: string;
+    signal: AbortSignal;
+  }): Promise<{
+    responseMessageId: string | null;
     assistantText: string;
-    responseMessageId: number;
     finished: boolean;
-    reasoningText?: string;
+    toolCalls: ToolCall[];
   }>;
-  continueWithToolResults(toolResults: string): string;
-  maxToolStepsMessage(): string;
-  broadcastChunk(chunk: ResumeStreamChunk, excludeTabId?: number): boolean;
-  persistMarker(patch: Partial<ActiveChatLoop>): Promise<void>;
-  clearMarker(): Promise<void>;
-  getModelType(): Promise<string | null>;
-  loadClientHeaders(): Promise<Record<string, string> | null>;
+  // 广播 chunk 到侧面板
+  broadcastChunk(chunk: { type: string; [key: string]: unknown }): void;
+  // 终态清理（复用 markChatLoopFinished）
+  finalize(): Promise<void>;
+  // 写 marker
+  updateMarker(patch: Partial<ActiveChatLoop>): Promise<void>;
 }
 
-export interface ResumeLoopInput {
+export interface ResumeToolLoopPlan {
   job: ToolJob;
   snapshot: ActiveChatLoop;
   resumeIndex: number;
@@ -54,188 +39,110 @@ export interface ResumeLoopInput {
   synthesized?: ToolExecutionRecord;
 }
 
-export interface ResumeLoopOutcome {
-  terminalEmitted: boolean;
-  job: ToolJob;
-  success: boolean;
-  reason?: string;
-}
+export type ResumeToolLoopResult =
+  | { ok: true; terminalEmitted: boolean }
+  | { ok: false; reason: string };
 
-/**
- * 执行续跑工具循环
- */
 export async function runResumeToolLoop(
-  input: ResumeLoopInput,
+  plan: ResumeToolLoopPlan,
   deps: ResumeToolLoopDeps,
   signal: AbortSignal,
-): Promise<ResumeLoopOutcome> {
-  let job = input.job;
-  let executions = [...job.executions];
-  let terminalEmitted = false;
+): Promise<ResumeToolLoopResult> {
+  const { job, snapshot, resumeIndex, depth, synthesized } = plan;
 
-  // synthesized 记录（in-flight 工具结果未知）
-  if (input.synthesized) {
-    executions.push(input.synthesized);
-  }
-
-  // --- Phase A: 零 LLM，执行剩余 calls ---
-  const remainingCalls = job.calls.slice(input.resumeIndex);
-  for (let i = 0; i < remainingCalls.length; i++) {
-    if (signal.aborted) {
-      await deps.clearMarker();
-      return {
-        terminalEmitted: false,
-        job,
-        success: false,
-        reason: 'session_reset',
-      };
-    }
-    const call = remainingCalls[i];
-    try {
-      const record = await deps.executeToolCall(call, signal);
-      executions.push(record);
-      // 推进水位线
-      await deps.persistMarker({
-        position: { callIndex: input.resumeIndex + i + 1, depth: input.depth },
-      }).catch(() => {});
-    } catch (error) {
-      // 工具失败：记录失败结果，继续执行（与现网 runWebToolLoop 语义一致）
-      executions.push({
-        name: call.name,
-        result: {
-          ok: false,
-          summary: 'tool execution failed',
-          error: {
-            code: 'tool_execution_failed',
-            message: error instanceof Error ? error.message : String(error),
-            retryable: false,
-          },
-        },
-      });
-    }
-  }
-
-  // --- H3 修正：续跑可用步数 = MAX_CHAT_TOOL_STEPS - (depth + 1) ---
-  const remainingSteps = MAX_CHAT_TOOL_STEPS - (input.depth + 1);
+  // H3: 续跑可用步数 = MAX_CHAT_TOOL_STEPS - (depth+1)
+  const remainingSteps = MAX_CHAT_TOOL_STEPS - (depth + 1);
   if (remainingSteps <= 0) {
-    emitDone(deps, deps.maxToolStepsMessage(), undefined);
-    terminalEmitted = true;
-    job = transitionJob(job, 'failed');
-    await deps.clearMarker();
-    return finish(true, job, terminalEmitted, 'max_steps');
+    deps.broadcastChunk({
+      type: 'AGENT_LOOP_COMPLETED',
+      done: true,
+      reason: 'max_tool_steps_reached',
+    });
+    await deps.finalize();
+    return { ok: true, terminalEmitted: true };
   }
 
-  // --- m1 修正：refFileIds 非空即走 legacy ---
-  // marker 不含 refFileIds，Phase B 无法重建上下文 → 走 legacy
-  // （此判定在 gate 层已做，此处为防御）
-
-  // --- Phase B: 续轮 ---
-  const clientHeaders = await deps.loadClientHeaders();
-  if (!clientHeaders) {
-    emitDone(deps, '', 'missing_auth');
-    terminalEmitted = true;
-    job = transitionJob(job, 'failed');
-    await deps.clearMarker();
-    return finish(true, job, terminalEmitted, 'auth_missing');
+  let executions: ToolExecutionRecord[] = [...(job.executions ?? [])];
+  if (synthesized) {
+    executions.push(synthesized);
   }
 
-  const modelType = await deps.getModelType();
-  const parentMsgId = input.snapshot.parentMessageId;
-  if (parentMsgId === null || parentMsgId === undefined) {
-    emitDone(deps, '', 'no_parent_message');
-    terminalEmitted = true;
-    job = transitionJob(job, 'failed');
-    await deps.clearMarker();
-    return {
-      terminalEmitted,
-      job,
-      success: false,
-      reason: 'no_parent_message',
-    };
-  }
-  let currentParentMessageId: number = parentMsgId;
+  // Phase A: 执行剩余工具调用
+  let currentIndex = resumeIndex;
+  while (currentIndex < job.calls.length) {
+    if (signal.aborted) {
+      await deps.finalize();
+      return { ok: false, reason: 'aborted' };
+    }
 
-  let success = false;
+    const call = job.calls[currentIndex];
+    deps.broadcastChunk({
+      type: 'AGENT_TOOL_STARTED',
+      toolName: call.name,
+    });
+
+    const execution = await deps.executeToolCall(call);
+    executions.push(execution);
+
+    deps.broadcastChunk({
+      type: 'AGENT_TOOL_COMPLETED',
+      toolName: call.name,
+      ok: execution.result.ok,
+    });
+
+    currentIndex++;
+
+    // 写 marker（m5: revision CAS 由调用方保证）
+    await deps.updateMarker({
+      executions,
+      position: { callIndex: currentIndex, depth: depth },
+    }).catch(() => {});
+  }
+
+  // Phase B: 发 LLM 请求续轮
+  const toolResultsText = serializeToolExecutions(executions.slice(resumeIndex));
+
   for (let step = 0; step < remainingSteps; step++) {
     if (signal.aborted) {
-      break;
+      await deps.finalize();
+      return { ok: false, reason: 'aborted' };
     }
 
-    const continuationPrompt = deps.continueWithToolResults(
-      serializeToolExecutions(executions),
-    );
+    deps.broadcastChunk({
+      type: 'AGENT_TURN_STARTED',
+      turn: depth + step + 1,
+    });
 
-    const result = await deps.submitWebPrompt(
-      {
-        chatSessionId: input.snapshot.chatSessionId ?? '',
-        parentMessageId: currentParentMessageId,
-        prompt: continuationPrompt,
-        modelType: modelType ?? undefined,
-        clientHeaders,
-        refFileIds: [],
-        thinkingEnabled: false,
-        searchEnabled: false,
-      },
-      {
-        onTextChunk(text) {
-          deps.broadcastChunk({ text, done: false, phase: 'answer' });
-        },
-        onReasoningChunk(text) {
-          deps.broadcastChunk({ text: '', reasoningText: text, done: false, phase: 'reasoning' });
-        },
-      },
+    const result = await deps.submitContinuation({
+      parentMessageId: String(snapshot.parentMessageId ?? ''),
+      toolResults: toolResultsText,
       signal,
-    );
+    });
 
-    currentParentMessageId = result.responseMessageId;
-    const fullText = result.assistantText;
-    if (!fullText) {
-      emitDone(deps, '', result.finished ? undefined : 'stream_interrupted');
-      terminalEmitted = true;
-      success = result.finished;
-      break;
+    if (result.toolCalls.length === 0) {
+      // 无工具调用 → 完成
+      deps.broadcastChunk({
+        type: 'AGENT_LOOP_COMPLETED',
+        done: true,
+        text: result.assistantText,
+      });
+      await deps.finalize();
+      return { ok: true, terminalEmitted: true };
     }
 
-    // 提取 toolCalls（简化：直接用 executeChatTool 已有的 extractToolCalls）
-    // 此处复用 Phase A 的执行逻辑
-    // 简化版：如果 fullText 没有工具调用，就 done
-    // 实际实现需要 extractToolCalls，此处为骨架
-    emitDone(deps, fullText, undefined);
-    terminalEmitted = true;
-    success = true;
-    break;
-  }
-
-  if (!terminalEmitted) {
-    emitDone(deps, deps.maxToolStepsMessage(), undefined);
-    terminalEmitted = true;
-    success = false;
-  }
-
-  job = success ? transitionJob(job, 'succeeded') : transitionJob(job, 'failed');
-  await deps.clearMarker();
-
-  return finish(true, job, terminalEmitted, success ? 'completed' : 'failed');
-
-  function emitDone(d: ResumeToolLoopDeps, text: string, error: string | undefined) {
-    const ok = d.broadcastChunk({ text, done: true, error });
-    // m3 修正：广播失败时返回非 null，让 service 兜底发终态
-    if (!ok) {
-      terminalEmitted = false;
+    // 有工具调用 → 执行
+    for (const call of result.toolCalls) {
+      const execution = await deps.executeToolCall(call);
+      executions.push(execution);
     }
   }
 
-  function finish(
-    _success: boolean,
-    _job: ToolJob,
-    _terminalEmitted: boolean,
-    _reason?: string,
-  ): ResumeLoopOutcome {
-    return {
-      terminalEmitted: _terminalEmitted,
-      job: _job,
-      success: _success,
-      reason: _reason,
-    };
-  }
+  // 步数用完 → 强制完成
+  deps.broadcastChunk({
+    type: 'AGENT_LOOP_COMPLETED',
+    done: true,
+    reason: 'max_tool_steps_reached',
+  });
+  await deps.finalize();
+  return { ok: true, terminalEmitted: true };
 }
