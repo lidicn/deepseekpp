@@ -256,10 +256,15 @@ async function executeRuntimeToolCall(
       } else {
         resolvedCall = resolution.call;
         executionDescriptor = resolution.descriptor;
+        // 第二件：创建 AbortController，超时后真正 abort provider
+        const timeoutAbort = new AbortController();
+        const combinedSignal = options.signal
+          ? AbortSignal.any([options.signal, timeoutAbort.signal])
+          : timeoutAbort.signal;
         result = await withUnifiedTimeout(
           providerRegistry.execute(resolvedCall, executionDescriptor, {
             locale,
-            signal: options.signal,
+            signal: combinedSignal,
             timeoutMs: effectiveTimeoutMs,
             maxResultBytes: options.maxResultBytes,
             availableDescriptors: currentDescriptors,
@@ -268,14 +273,20 @@ async function executeRuntimeToolCall(
           effectiveTimeoutMs,
           resolvedCall,
           locale,
+          timeoutAbort,
         );
         providerCompleted = true;
       }
     } else {
+      // 第二件：创建 AbortController，超时后真正 abort provider
+      const timeoutAbort = new AbortController();
+      const combinedSignal = options.signal
+        ? AbortSignal.any([options.signal, timeoutAbort.signal])
+        : timeoutAbort.signal;
       result = await withUnifiedTimeout(
         providerRegistry.execute(resolvedCall, executionDescriptor, {
           locale,
-          signal: options.signal,
+          signal: combinedSignal,
           timeoutMs: effectiveTimeoutMs,
           maxResultBytes: options.maxResultBytes,
           availableDescriptors: currentDescriptors,
@@ -284,6 +295,7 @@ async function executeRuntimeToolCall(
         effectiveTimeoutMs,
         resolvedCall,
         locale,
+        timeoutAbort,
       );
       providerCompleted = true;
     }
@@ -621,16 +633,24 @@ function authorizationHintKey(code: string): AuthorizationHintKey {
  * T3-1: race the provider call against the unified fallback timeout. A timeout
  * resolves to a structured `tool_timeout` ToolResult instead of hanging forever;
  * provider rejections and aborts still propagate to the caller's catch.
+ *
+ * 第二件：超时时真正 abort provider——否则 15 分钟的长时工具超时后，
+ * host 侧命令还在跑，留下幽灵进程。
  */
 async function withUnifiedTimeout(
   providerCall: Promise<ToolResult>,
   timeoutMs: number,
   call: ToolCall,
   locale: SupportedLocale,
+  abortController?: AbortController,
 ): Promise<ToolResult> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeoutPromise = new Promise<ToolResult>((resolve) => {
-    timer = setTimeout(() => resolve(createToolTimeoutResult(call, locale, timeoutMs)), timeoutMs);
+    timer = setTimeout(() => {
+      // 第二件：超时真正 abort provider，不留幽灵进程
+      abortController?.abort();
+      resolve(createToolTimeoutResult(call, locale, timeoutMs));
+    }, timeoutMs);
   });
   try {
     return await Promise.race([providerCall, timeoutPromise]);
