@@ -64,3 +64,59 @@ export async function probeForkWithTimeout(
     clearTimeout(timeoutId);
   }
 }
+
+// ---- W31：续跑门控决策（纯函数） + 本地「上次确认 parentMessageId」记录骨架 ----
+
+export interface ResumeGateDecision {
+  /** 是否允许继续续跑。 */
+  allowed: boolean;
+  /** 决策原因：fork_detected 拒绝；tail_matches 放行；probe_unknown_allow 探测未知保守放行。 */
+  reason: string;
+}
+
+/**
+ * W31：把分叉评估结果转成续跑门控决策。
+ * - tail_moved（forked）→ 拒绝续跑（避免把用户对话搞成两条分叉），reason=fork_detected；
+ * - probe_failed / probe_timeout（unknown）→ 保守放行（探测不到服务端数据不应阻断），
+ *   仅留日志；调用方据此记录 fork_detected 或告警。
+ * - tail_matches → 放行。
+ * 纯函数，不打日志、不触碰存储。
+ */
+export function decideResumeAfterForkCheck(
+  result: ForkEvaluationResult,
+): ResumeGateDecision {
+  if (result.forked) {
+    return { allowed: false, reason: 'fork_detected' };
+  }
+  if (result.unknown) {
+    return { allowed: true, reason: 'probe_unknown_allow' };
+  }
+  return { allowed: true, reason: 'tail_matches' };
+}
+
+/**
+ * 本地「上次已确认 parentMessageId」记录。生产可换成 chrome.storage 注入实现；
+ * 雏形用内存 Map 立住接口（规格 W31 备选：只做本地 state 记录，不做服务端比对）。
+ */
+export interface ConfirmedParentStore {
+  get(sessionId: string): number | null;
+  set(sessionId: string, parentMessageId: number): void;
+  clear(sessionId: string): void;
+}
+
+/** 内存版确认记录器骨架（按 sessionId 维度）。 */
+export function createInMemoryConfirmedParentStore(): ConfirmedParentStore {
+  const map = new Map<string, number>();
+  return {
+    get(sessionId) {
+      const value = map.get(sessionId);
+      return value === undefined ? null : value;
+    },
+    set(sessionId, parentMessageId) {
+      map.set(sessionId, parentMessageId);
+    },
+    clear(sessionId) {
+      map.delete(sessionId);
+    },
+  };
+}
