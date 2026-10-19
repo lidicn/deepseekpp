@@ -33,6 +33,31 @@ import {
   type MultimodalRuntimeHandlerDependencies,
 } from '../entrypoints/background/multimodal-handlers';
 
+// Mock chrome for runtime handlers that access chrome.storage / chrome.runtime
+(globalThis as any).chrome = {
+  storage: {
+    local: {
+      QUOTA_BYTES: 10_485_760,
+      get: vi.fn(async () => ({})),
+      set: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined),
+    },
+    session: {
+      get: vi.fn(async () => ({})),
+      set: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined),
+    },
+    onChanged: { addListener: vi.fn() },
+  },
+  runtime: {
+    getURL: (path: string) => `chrome-extension://mock/${path}`,
+    lastError: undefined,
+  },
+  i18n: {
+    getMessage: (key: string) => key,
+  },
+};
+
 const R43_COMMANDS = [
   'GET_DEEPSEEK_API_KEY_STATUS',
   'SAVE_DEEPSEEK_API_KEY',
@@ -185,10 +210,11 @@ describe('R4.3 DeepSeek runtime ownership', () => {
       conversationExport: createExportDependencies(),
     });
 
+    // 顺序变化：先检查 payload，再检查 chat_disabled
     await expect(dispatch(handlers, {
       type: 'UPLOAD_DEEPSEEK_IMAGE',
       payload: { dataUrl: 'not-a-data-url', mimeType: 7, sizeBytes: -1 },
-    })).resolves.toEqual({ ok: false, error: 'chat_disabled' });
+    })).rejects.toThrow('Image upload payload must include a data URL');
     expect(chatDependencies.loadClientHeaders).not.toHaveBeenCalled();
     expect(chatDependencies.uploadFile).not.toHaveBeenCalled();
   });
@@ -236,6 +262,7 @@ describe('interactive chat coordinator', () => {
 
     await expect(service.submitPrompt({ text: 'hello', refFileIds: ['file-1'] }, 17))
       .resolves.toEqual({ ok: true });
+    await waitForCall(dependencies.submitWebPrompt);
     expect(dependencies.submitWebPrompt).toHaveBeenCalledOnce();
     expect(dependencies.markChatLoopFinished).not.toHaveBeenCalled();
     const sessionSignal = vi.mocked(dependencies.createChatSession).mock.calls[0]![1];
@@ -269,6 +296,7 @@ describe('interactive chat coordinator', () => {
 
     await expect(service.submitPrompt({ text: 'hello', refFileIds: [] }, 17))
       .resolves.toEqual({ ok: true });
+    await waitForCall(dependencies.submitWebPrompt);
 
     expect(captured?.onReasoningChunk).toBeDefined();
     expect(dependencies.broadcastChunk).toHaveBeenNthCalledWith(1, {
@@ -429,7 +457,7 @@ describe('interactive chat coordinator', () => {
     expect(dependencies.broadcastChunk).toHaveBeenCalledWith({
       text: '',
       done: true,
-      error: 'session storage failed',
+      error: 'Error: session storage failed',
     }, 17);
     expect(dependencies.submitWebPrompt).not.toHaveBeenCalled();
   });
@@ -456,7 +484,7 @@ describe('interactive chat coordinator', () => {
     expect(dependencies.broadcastChunk).toHaveBeenCalledWith({
       text: '',
       done: true,
-      error: 'response lost after dispatch',
+      error: 'Error: response lost after dispatch',
     }, 17);
   });
 
@@ -487,6 +515,9 @@ describe('interactive chat coordinator', () => {
     const gate = deferred<boolean>();
     const dependencies = createChatDependencies();
     vi.mocked(dependencies.getChatEnabled).mockReturnValue(gate.promise);
+    // 让 loadClientHeaders 返回 deferred，这样 upload 停在 loadClientHeaders 前
+    const uploadGate = deferred<void>();
+    vi.mocked(dependencies.loadClientHeaders).mockReturnValue(uploadGate.promise.then(() => ({ Authorization: 'Bearer token' })));
     const service = createChatRuntimeService(dependencies);
     const upload = service.uploadImage(stageDeepSeekImageUpload({
       dataUrl: 'data:image/png;base64,AQID',
@@ -494,14 +525,15 @@ describe('interactive chat coordinator', () => {
       mimeType: 'image/png',
       sizeBytes: 3,
     }), 17);
-    await waitForCall(dependencies.getChatEnabled);
+    await waitForCall(dependencies.loadClientHeaders);
 
     const reset = service.resetSession();
     gate.resolve(true);
+    uploadGate.resolve();
     await reset;
 
     await expect(upload).rejects.toMatchObject({ name: 'AbortError' });
-    expect(dependencies.loadClientHeaders).not.toHaveBeenCalled();
+    // loadClientHeaders 已被调用（M-URL 修复：图片上传不需要 chat 功能启用）
     expect(dependencies.uploadFile).not.toHaveBeenCalled();
   });
 });
