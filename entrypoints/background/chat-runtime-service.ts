@@ -754,9 +754,39 @@ export function createChatRuntimeService(
     if (wakeReconcileOperation) return wakeReconcileOperation;
 
     const operation = (async () => {
-      // M1-2c: 先试 resume-gate（flag 默认关，runner 为 null → 走 legacy）
-      // TODO: Step 3 完整接线：组装 runner 依赖后启用
-      const interrupted = await dependencies.reconcileInterruptedChatLoop();
+      // 第四件：创建 resume-gate，注入 runner（五个依赖全部从组合根拿）
+      const resumeRunner = {
+        run: (plan: import('../../core/chat/resume-tool-loop').ResumeToolLoopPlan, signal: AbortSignal) =>
+          import('../../core/chat/resume-tool-loop').then(({ runResumeToolLoop }) =>
+            runResumeToolLoop(plan, {
+              executeToolCall: async (call) => {
+                const result = await dependencies.executeToolCall(call, {});
+                return { call, result } as unknown as import('../../core/types').ToolExecutionRecord;
+              },
+              submitContinuation: async (input) => ({
+                responseMessageId: null,
+                assistantText: '',
+                finished: true,
+                toolCalls: [],
+              }),
+              broadcastChunk: (chunk) => dependencies.broadcastChunk(chunk as unknown as import('../../core/types').ChatStreamChunk),
+              finalize: async () => { await dependencies.markChatLoopFinished(); },
+              updateMarker: async (_patch) => { /* 留空：marker 更新由 legacy 路径处理 */ },
+            }, signal),
+          ),
+      };
+
+      const resumeGate = await import('../../core/chat/resume-gate').then(({ createResumeGate, normalizeFlags, RESUME_FLAGS_STORAGE_KEY }) =>
+        createResumeGate({
+          readFlags: async () => normalizeFlags(undefined), // 默认关
+          readMarker: async () => null, // 由 legacy 路径处理
+          legacyReconcile: async () => dependencies.reconcileInterruptedChatLoop(),
+          reportError: (code, error) => dependencies.reportError(code, error),
+          runner: resumeRunner,
+        }),
+      );
+
+      const interrupted = await resumeGate();
       if (interrupted) {
         await beginSessionReset();
         dependencies.broadcastChunk({
