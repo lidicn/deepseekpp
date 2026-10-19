@@ -1,7 +1,20 @@
 import type { OfficialApiChatConfig } from '../../core/chat/official-api-config-contract';
 import type { ChatLoopProvider, InterruptedChatLoop } from '../../core/chat/active-loop';
 // P0-3: 工具执行状态持久化 helper
-import { appendToolExecution, clearCurrentTool, setCurrentTool, updateMarker } from '../../core/chat/active-loop';
+import {
+  appendToolExecution,
+  clearCurrentTool,
+  getActiveChatLoop,
+  setCurrentTool,
+  updateMarker,
+} from '../../core/chat/active-loop';
+import { createResumeGate, normalizeFlags, RESUME_FLAGS_STORAGE_KEY } from '../../core/chat/resume-gate';
+import {
+  runResumeToolLoop,
+  type ResumeToolLoopDeps,
+  type ResumeToolLoopPlan,
+} from '../../core/chat/resume-tool-loop';
+import { waitBetweenDeepSeekRequests } from '../../core/inline-agent/step-control';
 import type { ModelTurn, SubmitPromptInput } from '../../core/deepseek/automation-client-port';
 import { DeepSeekAuthError } from '../../core/deepseek/errors';
 import type { DeepSeekUploadedFile } from '../../core/deepseek/contracts';
@@ -201,22 +214,7 @@ export function createChatRuntimeService(
       if (!rawResult.ok && rawResult.error?.details?.externalOutcome === 'ambiguous') {
         throw new Error(rawResult.error.message || rawResult.detail || rawResult.summary);
       }
-      result = {
-        name: rawResult.name ?? call.name,
-        provider: rawResult.provider ?? call.provider,
-        descriptorId: rawResult.descriptorId ?? call.descriptorId,
-        result: {
-          ok: rawResult.ok,
-          name: rawResult.name,
-          provider: rawResult.provider,
-          descriptorId: rawResult.descriptorId,
-          summary: rawResult.summary,
-          detail: rawResult.detail,
-          output: rawResult.output,
-          truncated: rawResult.truncated,
-          error: rawResult.error,
-        },
-      };
+      result = buildExecutionRecord(call, rawResult);
     } finally {
       // P0-3: 清除当前工具标记 + 追加到历史
       void clearCurrentTool().catch(() => {});
@@ -754,37 +752,98 @@ export function createChatRuntimeService(
     if (wakeReconcileOperation) return wakeReconcileOperation;
 
     const operation = (async () => {
-      // 第四件：创建 resume-gate，注入 runner（五个依赖全部从组合根拿）
-      const resumeRunner = {
-        run: (plan: import('../../core/chat/resume-tool-loop').ResumeToolLoopPlan, signal: AbortSignal) =>
-          import('../../core/chat/resume-tool-loop').then(({ runResumeToolLoop }) =>
-            runResumeToolLoop(plan, {
-              executeToolCall: async (call) => {
-                const result = await dependencies.executeToolCall(call, {});
-                return { call, result } as unknown as import('../../core/types').ToolExecutionRecord;
+      // 续跑：先捕获当前 active loop marker（提供 chatSessionId 等续轮上下文），
+      // 再创建 gate。controller 同时供工具执行与续轮请求共享中断信号。
+      const resumeSnapshot = await getActiveChatLoop().catch(() => null);
+      const resumeController = new AbortController();
+
+      const resumeDeps: ResumeToolLoopDeps = {
+        executeToolCall: async (call) => {
+          const rawResult = await dependencies.executeToolCall(call, {
+            signal: resumeController.signal,
+          });
+          return buildExecutionRecord(call, rawResult);
+        },
+        submitContinuation: async ({ parentMessageId, toolResults, signal }) => {
+          // 风控间隔：2.5–6.5s 随机，abort 时立即放行（loop 内另有一道）
+          await waitBetweenDeepSeekRequests(signal);
+
+          const headers = await dependencies.loadClientHeaders();
+          if (!headers) throw new Error('resume_missing_client_headers');
+          const modelType = await dependencies.getModelType();
+          const continuationPrompt = dependencies.continueWithToolResults(toolResults);
+          const { enabledDescriptors } = await dependencies.buildPrompt({
+            prompt: continuationPrompt,
+            isFirstMessage: false,
+            messageCount: 1,
+          });
+          const powHeaders = await dependencies.createPowHeaders(headers, signal);
+
+          let accumulated = '';
+          const modelTurn = await dependencies.submitWebPrompt(
+            {
+              chatSessionId: resumeSnapshot?.chatSessionId ?? '',
+              parentMessageId,
+              modelType,
+              prompt: continuationPrompt,
+              refFileIds: [],
+              thinkingEnabled: false,
+              searchEnabled: false,
+              clientHeaders: headers,
+              powHeaders,
+            },
+            {
+              onTextChunk: (_newText, fullText) => {
+                accumulated = fullText;
               },
-              submitContinuation: async (input) => ({
-                responseMessageId: null,
-                assistantText: '',
-                finished: true,
-                toolCalls: [],
-              }),
-              broadcastChunk: (chunk) => dependencies.broadcastChunk(chunk as unknown as import('../../core/types').ChatStreamChunk),
-              finalize: async () => { await dependencies.markChatLoopFinished(); },
-              updateMarker: async (_patch) => { /* 留空：marker 更新由 legacy 路径处理 */ },
-            }, signal),
-          ),
+            },
+            signal,
+          );
+
+          const assistantText = accumulated || modelTurn.assistantText;
+          return {
+            responseMessageId: modelTurn.responseMessageId == null
+              ? null
+              : String(modelTurn.responseMessageId),
+            assistantText,
+            finished: modelTurn.finished,
+            toolCalls: extractToolCalls(assistantText, { descriptors: enabledDescriptors }),
+          };
+        },
+        broadcastChunk: (chunk: { type: string; [key: string]: unknown }) => {
+          dependencies.broadcastChunk({
+            text: typeof chunk.text === 'string' ? chunk.text : '',
+            done: chunk.done === true,
+            phase: 'answer',
+          });
+        },
+        finalize: async () => {
+          await dependencies.markChatLoopFinished();
+        },
+        updateMarker: (patch) => updateMarker(patch),
       };
 
-      const resumeGate = await import('../../core/chat/resume-gate').then(({ createResumeGate, normalizeFlags, RESUME_FLAGS_STORAGE_KEY }) =>
-        createResumeGate({
-          readFlags: async () => normalizeFlags(undefined), // 默认关
-          readMarker: async () => null, // 由 legacy 路径处理
-          legacyReconcile: async () => dependencies.reconcileInterruptedChatLoop(),
-          reportError: (code, error) => dependencies.reportError(code, error),
-          runner: resumeRunner,
-        }),
-      );
+      const resumeRunner = {
+        run: (plan: ResumeToolLoopPlan, signal: AbortSignal) =>
+          runResumeToolLoop(plan, resumeDeps, signal),
+      };
+
+      const resumeGate = await createResumeGate({
+        readFlags: async () => {
+          try {
+            const raw = await chrome.storage.session.get(RESUME_FLAGS_STORAGE_KEY) as Record<string, unknown>;
+            return normalizeFlags(raw[RESUME_FLAGS_STORAGE_KEY]);
+          } catch (error) {
+            dependencies.reportError('resume_flags_read_failed', error);
+            return normalizeFlags(undefined);
+          }
+        },
+        readMarker: () => getActiveChatLoop(),
+        legacyReconcile: async () => dependencies.reconcileInterruptedChatLoop(),
+        reportError: (code, error) => dependencies.reportError(code, error),
+        runner: resumeRunner,
+        abortController: resumeController,
+      });
 
       const interrupted = await resumeGate();
       if (interrupted) {
@@ -834,4 +893,27 @@ function assertSignalActive(signal: AbortSignal): void {
   if (!signal.aborted) return;
   if (signal.reason instanceof Error) throw signal.reason;
   throw new DOMException('Chat operation was cancelled.', 'AbortError');
+}
+
+/**
+ * 把 runtime 返回的 ToolResult 映射成持久化用的 ToolExecutionRecord。
+ * 纯函数：正常工具循环与续跑（resume）共用，禁止 `as unknown as` 强转。
+ */
+function buildExecutionRecord(call: ToolCall, rawResult: ToolResult): ToolExecutionRecord {
+  return {
+    name: rawResult.name ?? call.name,
+    provider: rawResult.provider ?? call.provider,
+    descriptorId: rawResult.descriptorId ?? call.descriptorId,
+    result: {
+      ok: rawResult.ok,
+      name: rawResult.name,
+      provider: rawResult.provider,
+      descriptorId: rawResult.descriptorId,
+      summary: rawResult.summary,
+      detail: rawResult.detail,
+      output: rawResult.output,
+      truncated: rawResult.truncated,
+      error: rawResult.error,
+    },
+  };
 }
