@@ -21,7 +21,12 @@
  */
 
 import { isTelemetryCaptureEnabled } from "./telemetry-gate";
-import { g2UserInterventionRate, type HarnessEvent } from "./harness-events";
+import {
+  buildLastTurnSummary,
+  g2UserInterventionRate,
+  type HarnessEvent,
+  type LastTurnSummary,
+} from "./harness-events";
 import { diagnosticLogBuffer } from "../diagnostics/log-buffer";
 
 export interface RequestMetrics {
@@ -140,6 +145,11 @@ class RefactorTelemetry {
   private loopDepthHistogram: Record<number, number> = {};
   // M0 G1：最近 7 天工具调用成败分桶（本地日期键）。
   private toolCallByDay: Record<string, ToolCallDayBucket> = {};
+
+  // R10：仅内存保留「最近一个 turnId」的旁路事件，供 lastTurn() 聚合；不持久化、不进 G1/G2。
+  private recentTurnEvents: HarnessEvent[] = [];
+  private recentTurnId: string | null = null;
+  private static readonly RECENT_TURN_EVENT_LIMIT = 200;
 
   constructor() {
     this.loadFromStorage();
@@ -298,6 +308,16 @@ class RefactorTelemetry {
   recordHarnessEvent(event: HarnessEvent): void {
     if (!isTelemetryCaptureEnabled()) return;
     try {
+      // R10: 旁路保留最近一个 turnId 的事件（仅内存，不影响 G1/G2 聚合与持久化）。
+      if (this.recentTurnId !== event.turnId) {
+        this.recentTurnId = event.turnId;
+        this.recentTurnEvents = [];
+      }
+      this.recentTurnEvents.push(event);
+      if (this.recentTurnEvents.length > RefactorTelemetry.RECENT_TURN_EVENT_LIMIT) {
+        this.recentTurnEvents.shift();
+      }
+
       if (event.type === "continuation_triggered") {
         if (event.reason === "user_continued") {
           this.userContinuedCount++;
@@ -313,6 +333,15 @@ class RefactorTelemetry {
     } catch (error) {
       console.warn("[DPP-DEBUG] recordHarnessEvent degraded:", error);
     }
+  }
+
+  /**
+   * R10：返回「刚刚这一轮」的聚合快照（turnId/steps/tools/sseFrameCount/
+   * stopReason/finished/durationMs/errors）。W29 trace 未落地前，sseFrameCount、
+   * stopReason、无配对的 durationMs 为 null，由 buildLastTurnSummary 诚实留空。
+   */
+  lastTurn(): LastTurnSummary {
+    return buildLastTurnSummary(this.recentTurnEvents);
   }
 
   dump(): DebugDump {
@@ -340,6 +369,8 @@ class RefactorTelemetry {
     this.userContinuedCount = 0;
     this.loopDepthHistogram = {};
     this.toolCallByDay = {};
+    this.recentTurnEvents = [];
+    this.recentTurnId = null;
     try {
       window.localStorage.removeItem(STORAGE_KEY);
     } catch {}
@@ -587,6 +618,7 @@ export function mountDebugToWindow(): void {
     dump: () => refactorTelemetry.dump(),
     reset: () => refactorTelemetry.reset(),
     summary: () => refactorTelemetry.summary(),
+    lastTurn: () => refactorTelemetry.lastTurn(),
     logs: () => diagnosticLogBuffer.snapshot(),
     full: () => ({ ...refactorTelemetry.dump(), logs: diagnosticLogBuffer.snapshot() }),
     clearLogs: () => diagnosticLogBuffer.clear(),

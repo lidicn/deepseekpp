@@ -154,3 +154,95 @@ export function countToolCallResults(
   }
   return { success, failure };
 }
+
+/**
+ * R10：最近一轮（单个 turnId）的聚合快照，供 `__DPP_DEBUG__.lastTurn()`。
+ * W29 trace 未落地前，sseFrameCount / stopReason / durationMs 无可靠来源，
+ * 诚实留 null，不伪造。
+ */
+export interface LastTurnSummary {
+  turnId: string | null;
+  /** turn_finished.finalDepth（总步数）；未收尾为 null。 */
+  steps: number | null;
+  /** 该轮实际执行过的工具名（保序去重）。 */
+  tools: string[];
+  /** SSE 帧计数：无来源，恒为 null（待 W29）。 */
+  sseFrameCount: number | null;
+  /** 收尾原因：无来源，恒为 null（待 W29）。 */
+  stopReason: string | null;
+  /** 是否收到 turn_finished。 */
+  finished: boolean;
+  /** 首事件到 turn_finished 的耗时；无配对则 null。 */
+  durationMs: number | null;
+  /** 该轮失败工具调用（工具名 + errorType）。 */
+  errors: string[];
+}
+
+const EMPTY_LAST_TURN: LastTurnSummary = {
+  turnId: null,
+  steps: null,
+  tools: [],
+  sseFrameCount: null,
+  stopReason: null,
+  finished: false,
+  durationMs: null,
+  errors: [],
+};
+
+/**
+ * R10：从单个 turn 的事件流聚合出 lastTurn 快照。
+ * 选取规则：以最后一个 turn_finished 的 turnId 为准；若无收尾事件，取最后一条事件的 turnId。
+ * 纯函数，不修改入参，不触碰存储。
+ */
+export function buildLastTurnSummary(
+  events: readonly HarnessEvent[],
+): LastTurnSummary {
+  if (events.length === 0) return { ...EMPTY_LAST_TURN };
+
+  let finishedIndex = -1;
+  for (let i = events.length - 1; i >= 0; i--) {
+    if (events[i].type === 'turn_finished') {
+      finishedIndex = i;
+      break;
+    }
+  }
+  const anchor = finishedIndex >= 0 ? events[finishedIndex] : events[events.length - 1];
+  const turnId = anchor.type === 'turn_finished' || anchor.type === 'tool_call_start'
+    || anchor.type === 'tool_call_end' || anchor.type === 'loop_depth_incremented'
+    || anchor.type === 'continuation_triggered'
+    ? anchor.turnId
+    : null;
+
+  const mine = events.filter((e) => e.turnId === turnId);
+  const tools: string[] = [];
+  const errors: string[] = [];
+  let steps: number | null = null;
+  let finished = false;
+  let firstTs: number | null = null;
+  let finishedTs: number | null = null;
+
+  for (const event of mine) {
+    if (firstTs === null) firstTs = event.timestamp;
+    if (event.type === 'tool_call_end') {
+      if (!tools.includes(event.toolName)) tools.push(event.toolName);
+      if (!event.success) {
+        errors.push(event.errorType ? `${event.toolName} (${event.errorType})` : event.toolName);
+      }
+    } else if (event.type === 'turn_finished') {
+      finished = true;
+      steps = event.finalDepth;
+      finishedTs = event.timestamp;
+    }
+  }
+
+  return {
+    turnId,
+    steps,
+    tools,
+    sseFrameCount: null,
+    stopReason: null,
+    finished,
+    durationMs: finishedTs !== null && firstTs !== null ? finishedTs - firstTs : null,
+    errors,
+  };
+}
