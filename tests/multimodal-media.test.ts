@@ -30,11 +30,11 @@ describe('multimodal media request helpers', () => {
     })).toThrow(/inline video limit/);
   });
 
-  it('rejects sparse media arrays at the receiving boundary', () => {
-    expect(() => normalizeMultimodalMediaAnalyzeRequest({
+  it('rejects sparse media arrays at the receiving boundary', async () => {
+    await expect(normalizeMultimodalMediaAnalyzeRequest({
       prompt: 'inspect',
       media: new Array(1),
-    })).toThrow('media[0] must be provided');
+    })).rejects.toThrow('media[0] must be provided');
   });
 
   it('injects MCP media analysis results before the user prompt', () => {

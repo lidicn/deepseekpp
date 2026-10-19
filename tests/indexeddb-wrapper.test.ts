@@ -295,7 +295,8 @@ describe('IndexedDb thin wrapper', () => {
     });
 
     expect(await memories.get(id)).toMatchObject({ name: 'updated', extra: { keep: true } });
-    expect(await memories.update(999, { name: 'missing' })).toBe(0);
+    // DPP-086: update 不存在的 key 时 reject，不是 resolve(0)
+    await expect(memories.update(999, { name: 'missing' })).rejects.toThrow('record with key 999 does not exist');
     expect(await memories.get(999)).toBeUndefined();
   });
 
