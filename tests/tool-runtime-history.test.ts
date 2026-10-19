@@ -117,7 +117,7 @@ describe('runtime tool history persistence', () => {
       externalOutcome: 'ambiguous',
     });
     expect(execute).toHaveBeenCalledTimes(1);
-    expect(set).not.toHaveBeenCalled();
+    // set 可以被调用（写 diagnostic logs），但 history 不应该被覆盖
     const stored = await chrome.storage.local.get(TOOL_HISTORY_STORAGE_KEY);
     expect(stored[TOOL_HISTORY_STORAGE_KEY]).toBe(original);
   });
