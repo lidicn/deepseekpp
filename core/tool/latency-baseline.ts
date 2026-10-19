@@ -16,7 +16,9 @@ export function createLatencyBaseline(windowSize = 50) {
     stats(): LatencyStats {
       if (history.length === 0) return { p50: 0, p95: 0, count: 0 };
       const sorted = [...history].sort((a, b) => a - b);
-      const p50 = sorted[Math.floor(sorted.length * 0.5)] ?? 0;
+      // p50 取下中位数（lower median）：偶数样本取第 (len-1)/2 向下取整位，
+      // 延迟基线常规做法；避免原 floor(len*0.5) 在偶数长度上取到上中位数。
+      const p50 = sorted[Math.floor((sorted.length - 1) * 0.5)] ?? 0;
       const p95 = sorted[Math.floor(sorted.length * 0.95)] ?? 0;
       return { p50, p95, count: sorted.length };
     },
