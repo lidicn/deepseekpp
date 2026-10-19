@@ -55,12 +55,14 @@ describe('Memory historical IndexedDB compatibility', () => {
     await db.open();
     expect(await memories.toArray()).toEqual([{
       ...MEMORY_V3_RECORD,
+      archived: false,
       futureRecordField: MEMORY_V1_ADDITIVE_RECORD.futureRecordField,
     }]);
     db.close();
     await db.open();
     expect(await memories.toArray()).toEqual([{
       ...MEMORY_V3_RECORD,
+      archived: false,
       futureRecordField: MEMORY_V1_ADDITIVE_RECORD.futureRecordField,
     }]);
 
@@ -71,6 +73,7 @@ describe('Memory historical IndexedDB compatibility', () => {
     await db.open();
     expect(await memories.toArray()).toEqual([{
       ...MEMORY_V3_RECORD,
+      archived: false,
       futureRecordField: MEMORY_V2_ADDITIVE_RECORD.futureRecordField,
     }]);
     await memories.add({
@@ -83,6 +86,7 @@ describe('Memory historical IndexedDB compatibility', () => {
     expect(await memories.orderBy('id').toArray()).toEqual([
       {
         ...MEMORY_V3_RECORD,
+        archived: false,
         futureRecordField: MEMORY_V2_ADDITIVE_RECORD.futureRecordField,
       },
       MEMORY_V3_PROJECT_ADDITIVE_RECORD,

@@ -1,13 +1,12 @@
 # 测试失败基线（P0-3）
 # 日期：2026-10-19（更新）
 # 来源：vitest run 全量
-# 总数：10 文件 / 13 用例（从 44 降到 13）
+# 总数：9 文件 / 12 用例（从 44 降到 12）
 # 用途：CI 只检查"有没有新增 failed"，不阻塞已知红
 # 修复一个就从这里删一行，不要新增这里的条目
 
 tests/deepseek-protocol-contract.test.ts
 tests/inline-agent-event-protocol-golden.test.ts
-tests/memory-indexeddb-compatibility.test.ts
 tests/persistence-burst-budget.test.ts
 tests/pi-loop-official-api.test.ts::executes tools through the bridge and continues the loop
 tests/pi-loop-official-api.test.ts::gives the same XML tool index a distinct authorization identity in each model turn
