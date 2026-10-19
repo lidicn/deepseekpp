@@ -1,0 +1,7 @@
+{
+  "function": "extractToolCalls",
+  "inputBytes": 10248,
+  "samples": 50,
+  "medianMs": 0.004,
+  "updatedAt": "2026-10-19T19:03:02.041Z"
+}
