@@ -97,11 +97,11 @@ class XmlStreamingToolCallParser implements StreamingToolCallParser {
     if (this.current && !this.current.failed) {
       event.failed.push(this.createIncompleteCall(this.current, this.pendingSuppressed));
     }
-    // R2-F5: pendingNormal is only non-empty when the stream was cut mid-way
-    // through an opening tool tag (consumeNormalText keeps the partial tail).
-    // Log a warning instead of silently discarding it, matching the
-    // streaming-tool-text accumulator which flushes pendingNormal into visible
-    // text rather than dropping it.
+    // R2-F5 / R20: pendingNormal is only non-empty when the stream was cut
+    // mid-way through an opening tool tag. This is a tool tag fragment (e.g.
+    // "<sample_to") that should NOT be shown to the user — it is discarded
+    // here (unlike streaming-tool-text which flushes visible text tail).
+    // The warning is a diagnostic trace, not a user-visible message.
     if (this.pendingNormal) {
       console.warn(
         '[StreamingToolCallParser] flush: discarding partial opening tool tag',

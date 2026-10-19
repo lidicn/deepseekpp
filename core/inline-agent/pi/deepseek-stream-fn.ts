@@ -7,7 +7,7 @@
  *    that mirrors the original loop's turn semantics exactly: client headers +
  *    PoW headers created once per turn, a bounded single retry that is only
  *    allowed when no text chunk was received (retrying after streamed content
- *    could fork the conversation chain), and the 120s step timeout. The
+ *    could fork the conversation chain), and the 300s step timeout. The
  *    original loop's implementation is replaced by this module in Issue A3;
  *    until then the two copies share the extracted `step-control` helpers.
  *
@@ -112,7 +112,7 @@ export interface DeepSeekTurnSubmitterOptions {
 
 /**
  * Builds the turn submitter: one turn = one PoW solve + bounded no-chunk
- * retry + 120s step timeout, mirroring the original `submitAgentTurn`.
+ * retry + 300s step timeout, mirroring the original `submitAgentTurn`.
  */
 export function createDeepSeekTurnSubmitter(
   options: DeepSeekTurnSubmitterOptions = {},

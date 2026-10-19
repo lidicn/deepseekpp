@@ -29,5 +29,6 @@ export function migrateMemoryV2RecordToV3(memory: PersistedMemoryRecord): Persis
 }
 
 export function migrateMemoryV3RecordToV4(memory: PersistedMemoryRecord): PersistedMemoryRecord {
-  return { ...memory, archived: false };
+  // Preserve user's archived state; only default to false when absent (v3 records).
+  return { ...memory, archived: memory.archived ?? false };
 }

@@ -21,7 +21,13 @@ const TRACE_BUDGET_RATIO = 0.20;
 function getTraceBudgetBytes(): number {
   // chrome.storage.local.QUOTA_BYTES is 10 MB (10,485,760) for unpacked/packed
   // extensions; fall back to that constant if the runtime does not expose it.
-  const quota = (chrome.storage.local.QUOTA_BYTES as number | undefined) ?? 10_485_760;
+  // Guard against `chrome is not defined` in non-privileged contexts (jsdom tests,
+  // SW not yet ready window) — trace persistence is best-effort and must not
+  // throw ReferenceError into the agent loop.
+  if (typeof chrome === 'undefined' || !chrome.storage?.local?.QUOTA_BYTES) {
+    return Math.floor(10_485_760 * TRACE_BUDGET_RATIO);
+  }
+  const quota = chrome.storage.local.QUOTA_BYTES as number;
   return Math.floor(quota * TRACE_BUDGET_RATIO);
 }
 

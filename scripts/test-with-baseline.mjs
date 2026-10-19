@@ -54,10 +54,12 @@ console.log(`[baseline] 本次 failed: ${failed.size} 条`);
 // 找新增
 const newFailed = [];
 for (const f of failed) {
-  // 宽松匹配：用例名包含在基线里
+  // F1 fix: skip ::TODO placeholders (they match everything via includes(''))
+  // and use exact file::test name matching instead of loose includes.
   let known = false;
   for (const b of baseline) {
-    if (b.endsWith(f) || f.includes(b.split('::').pop() || '')) {
+    if (b.endsWith('::TODO') || b.endsWith('::')) continue;
+    if (b === f || f.startsWith(b + '::')) {
       known = true;
       break;
     }

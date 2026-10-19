@@ -14,6 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createArtifactToolDescriptors } from '../core/artifact';
+import { createMemoryToolDescriptors } from '../core/tool/memory';
 import type { InlineAgentStartPayload } from '../core/inline-agent/types';
 import type { ToolExecutionRecord } from '../core/types';
 
@@ -82,7 +83,10 @@ function createPayload(overrides: Partial<InlineAgentStartPayload> = {}): Inline
       thinkingEnabled: false,
       refFileIds: [],
     },
-    toolDescriptors: createArtifactToolDescriptors('en'),
+    toolDescriptors: [
+      ...createArtifactToolDescriptors('en'),
+      ...createMemoryToolDescriptors('en'),
+    ],
     modelBackend: 'official-api',
     ...overrides,
   };

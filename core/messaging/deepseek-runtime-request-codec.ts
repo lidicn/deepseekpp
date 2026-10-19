@@ -107,8 +107,9 @@ export const DEEPSEEK_RUNTIME_PAYLOAD_DECODERS: DeepSeekRuntimePayloadDecoderMap
     };
   },
   UPLOAD_DEEPSEEK_IMAGE(value) {
-    // Preserve the released chat-disabled precedence and avoid allocating the
-    // decoded image body until the feature gate has passed in the handler.
+    // Stage the upload payload without allocating the decoded image body.
+    // The chat-disabled gate was intentionally removed (commit d76c207);
+    // uploads are allowed for web users without an API key.
     return stageDeepSeekImageUpload(value);
   },
   SAVE_OFFICIAL_API_CHAT_CONFIG(value) {

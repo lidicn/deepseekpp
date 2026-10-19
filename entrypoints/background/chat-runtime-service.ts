@@ -502,6 +502,11 @@ export function createChatRuntimeService(
       assertTurnActive(turn);
       const provider: ChatLoopProvider = apiKey ? 'official-api' : 'web';
       await dependencies.markChatLoopStarted(provider);
+      // B4 fix: markerStarted MUST be set immediately after markChatLoopStarted
+      // succeeds, BEFORE any updateMarker / assertTurnActive call that may throw.
+      // If an exception lands here, the finally block must still release the
+      // keepalive refcount acquired by markChatLoopStarted above.
+      markerStarted = true;
       // M1-2: 扩展 marker 加 job 状态字段
       await updateMarker({
         schemaVersion: 1,
@@ -515,12 +520,6 @@ export function createChatRuntimeService(
         attempt: 0,
         resumeDeadline: Date.now() + 10 * 60 * 1000, // 10 min TTL
       });
-      // Audit fix #4: markerStarted MUST be set to true immediately after
-      // markChatLoopStarted succeeds and BEFORE any assertTurnActive call.
-      // If assertTurnActive throws while markerStarted is still false, the
-      // finally block skips markChatLoopFinished and the keepalive refcount
-      // + alarm leak permanently.
-      markerStarted = true;
       assertTurnActive(turn);
 
       if (apiKey) {
