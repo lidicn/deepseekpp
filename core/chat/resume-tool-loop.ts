@@ -8,13 +8,14 @@ import type { ActiveChatLoop } from './active-loop';
 import type { ToolJob } from '../tool/job';
 import { MAX_CHAT_TOOL_STEPS, serializeToolExecutions } from './loop-contract';
 import type { ToolCall, ToolExecutionRecord } from '../types';
+import { waitBetweenDeepSeekRequests } from '../inline-agent/step-control';
 
 export interface ResumeToolLoopDeps {
   // Phase A: 执行单个工具调用
   executeToolCall(call: ToolCall): Promise<ToolExecutionRecord>;
   // Phase B: 发 LLM 请求
   submitContinuation(input: {
-    parentMessageId: string;
+    parentMessageId: number | null;
     toolResults: string;
     signal: AbortSignal;
   }): Promise<{
@@ -113,8 +114,12 @@ export async function runResumeToolLoop(
       turn: depth + step + 1,
     });
 
+    // 第四件：submitContinuation 前必须 await waitBetweenDeepSeekRequests
+    // （2500-6500ms 随机，风控防线不可省）
+    await waitBetweenDeepSeekRequests(signal);
+
     const result = await deps.submitContinuation({
-      parentMessageId: String(snapshot.parentMessageId ?? ''),
+      parentMessageId: snapshot.parentMessageId ?? null,
       toolResults: toolResultsText,
       signal,
     });

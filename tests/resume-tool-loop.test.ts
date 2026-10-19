@@ -143,7 +143,7 @@ describe('runResumeToolLoop', () => {
   });
 
   it('步数用完 → 强制完成', async () => {
-    const submitContinuation = async (_input: { parentMessageId: string; toolResults: string; signal: AbortSignal }) => ({
+    const submitContinuation = async (_input: { parentMessageId: number | null; toolResults: string; signal: AbortSignal }) => ({
       responseMessageId: '67890',
       assistantText: 'continue',
       finished: false,
