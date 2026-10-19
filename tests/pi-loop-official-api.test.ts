@@ -45,7 +45,28 @@ vi.mock('../core/chat/official-api-config', () => ({
 
 const { runInlineAgentLoop } = await import('../core/inline-agent/loop');
 
-const TOOL_CALL_TEXT = '<artifact_create>{"filename":"a.txt","content":"ok"}</artifact_create>';
+// Mock chrome for runInlineAgentLoop internals
+(globalThis as any).chrome = {
+  storage: {
+    local: {
+      QUOTA_BYTES: 10_485_760,
+      get: vi.fn(async () => ({})),
+      set: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined),
+    },
+    session: {
+      get: vi.fn(async () => ({})),
+      set: vi.fn(async () => undefined),
+      remove: vi.fn(async () => undefined),
+    },
+  },
+  runtime: {
+    getURL: (path: string) => `chrome-extension://mock/${path}`,
+    lastError: undefined,
+  },
+};
+
+const TOOL_CALL_TEXT = '<memory_save>{"content":"test memory"}</memory_save>';
 
 function createPayload(overrides: Partial<InlineAgentStartPayload> = {}): InlineAgentStartPayload {
   return {
@@ -146,7 +167,7 @@ describe('runInlineAgentLoop with official-api backend', () => {
     await vi.advanceTimersByTimeAsync(7_000);
     const { events } = await loopPromise;
 
-    expect(executed).toEqual(['artifact_create']);
+    expect(executed).toEqual(['memory_save']);
     expect(events.some((e) => e.type === 'AGENT_TOOL_DETECTED')).toBe(true);
     const complete = events.find((e) => e.type === 'AGENT_LOOP_COMPLETE');
     expect(complete?.finalText).toBe('Created a.txt.');
@@ -203,8 +224,8 @@ describe('runInlineAgentLoop with official-api backend', () => {
       });
 
     const loopPromise = runLoop(createPayload(), async () => ({
-      name: 'artifact_create',
-      provider: { kind: 'local', id: 'artifact', displayName: 'Artifact', transport: 'in_process' },
+      name: 'memory_save',
+      provider: { kind: 'local', id: 'memory', displayName: 'Memory', transport: 'in_process' },
       result: { ok: true, summary: 'created' },
     }));
     // Advance through the released request pacing (2.5–6.5s per request).
@@ -220,7 +241,7 @@ describe('runInlineAgentLoop with official-api backend', () => {
     expect(secondMessages[0]).toEqual({ role: 'user', content: 'Create a file with content ok.' });
     expect(secondMessages[1]).toEqual({ role: 'assistant', content: TOOL_CALL_TEXT });
     expect(secondMessages[2].role).toBe('user');
-    expect(secondMessages[2].content).toContain('artifact_create_result');
+    expect(secondMessages[2].content).toContain('memory_save_result');
     // Tool result content carries the execution summary (bridge result text).
     expect(secondMessages[2].content).toContain('created');
     // Reasoning hand-back only when present.
