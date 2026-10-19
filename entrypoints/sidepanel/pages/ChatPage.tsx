@@ -28,6 +28,7 @@ import { normalizeImageMimeType } from '../../../core/trusted-directory/scan';
 import type { ChatMessage as ChatMessageType, ModelType } from '../../../core/types';
 import AtFilePanel, { type AtAttachmentStatus } from '../components/AtFilePanel';
 import ChatMessage from '../components/ChatMessage';
+import StepTimeline from '../components/StepTimeline';
 import ToolRunPanel from '../components/ToolRunPanel';
 import { StatusMessage, useConfirm } from '../components/settings/feedback-primitives';
 import { createRequestGenerationFence } from '../async-state';
@@ -760,6 +761,7 @@ export default function ChatPage() {
           />
         ))}
 
+        <StepTimeline runs={toolRuns} />
         <ToolRunPanel runs={toolRuns} />
 
         {error && (

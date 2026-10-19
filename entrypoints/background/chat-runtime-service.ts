@@ -46,6 +46,8 @@ import { MAX_CHAT_TOOL_STEPS, serializeToolExecutions } from '../../core/chat/lo
 export interface ToolRunEvent {
   phase: 'start' | 'end';
   name: string;
+  /** 工具所在的工具循环轮次（0 起），供 R09 步骤时间线分组。 */
+  step?: number;
   /** start 时刻的 Date.now()，用于 start/end 配对与计时。 */
   startedAt?: number;
   /** 仅 end：工具是否成功。 */
@@ -215,6 +217,7 @@ export function createChatRuntimeService(
   const executeChatTool = async (
     turn: ActiveChatTurn,
     call: ToolCall,
+    step?: number,
     excludeTabId?: number,
   ): Promise<ToolExecutionRecord> => {
     assertTurnActive(turn);
@@ -227,7 +230,7 @@ export function createChatRuntimeService(
     emitChunk(turn, {
       text: '',
       done: false,
-      toolEvent: { phase: 'start', name: call.name, startedAt },
+      toolEvent: { phase: 'start', name: call.name, step, startedAt },
     }, excludeTabId);
 
     let result: ToolExecutionRecord;
@@ -257,6 +260,7 @@ export function createChatRuntimeService(
         toolEvent: {
           phase: 'end',
           name: call.name,
+          step,
           startedAt,
           ok,
           durationMs: Date.now() - startedAt,
@@ -350,7 +354,7 @@ export function createChatRuntimeService(
       }
 
       const executions: ToolExecutionRecord[] = [];
-      for (const call of toolCalls) executions.push(await executeChatTool(turn, call, excludeTabId));
+      for (const call of toolCalls) executions.push(await executeChatTool(turn, call, step, excludeTabId));
       const continuationPrompt = dependencies.continueWithToolResults(
         serializeToolExecutions(executions),
       );
@@ -494,7 +498,7 @@ export function createChatRuntimeService(
       }
 
       const executions: ToolExecutionRecord[] = [];
-      for (const call of toolCalls) executions.push(await executeChatTool(turn, call, excludeTabId));
+      for (const call of toolCalls) executions.push(await executeChatTool(turn, call, step, excludeTabId));
       currentMessages = [
         ...currentMessages,
         {

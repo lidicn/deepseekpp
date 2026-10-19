@@ -1,8 +1,10 @@
 import React, { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import StepTimeline from '../entrypoints/sidepanel/components/StepTimeline';
 import ToolRunPanel from '../entrypoints/sidepanel/components/ToolRunPanel';
 import {
+  buildStepTimeline,
   formatToolDuration,
   reduceToolRuns,
   type ToolRunRecord,
@@ -60,6 +62,32 @@ describe('R08 reduceToolRuns event folding', () => {
     expect(formatToolDuration(1200)).toBe('1.2s');
     expect(formatToolDuration(undefined)).toBe('…');
   });
+
+  it('buildStepTimeline groups by step and sums settled durations', () => {
+    const runs: ToolRunRecord[] = [
+      { name: 'shell_exec', step: 0, startedAt: 1, ok: true, durationMs: 1100 },
+      { name: 'local_file_read', step: 1, startedAt: 2, ok: true, durationMs: 200 },
+      { name: 'local_file_write', step: 1, startedAt: 3, ok: false, durationMs: 300 },
+    ];
+    const groups = buildStepTimeline(runs);
+    expect(groups).toHaveLength(2);
+    expect(groups[0].step).toBe(0);
+    expect(groups[0].tools).toHaveLength(1);
+    expect(groups[0].totalMs).toBe(1100);
+    expect(groups[1].step).toBe(1);
+    expect(groups[1].tools).toHaveLength(2);
+    expect(groups[1].totalMs).toBe(500);
+  });
+
+  it('buildStepTimeline flattens records without step into one null group', () => {
+    const groups = buildStepTimeline([
+      { name: 'sample_tool', startedAt: 1, ok: true, durationMs: 50 },
+      { name: 'shell_exec', startedAt: 2, ok: true, durationMs: 70 },
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].step).toBeNull();
+    expect(groups[0].tools).toHaveLength(2);
+  });
 });
 
 describe('R08 ToolRunPanel renders the tool name', () => {
@@ -108,5 +136,31 @@ describe('R08 ToolRunPanel renders the tool name', () => {
       root?.render(React.createElement(ToolRunPanel, { runs: [] }));
     });
     expect(container.querySelector('[data-testid="tool-run-panel"]')).toBeNull();
+  });
+
+  it('R09 StepTimeline renders grouped step title and tool name', () => {
+    const runs: ToolRunRecord[] = [
+      { name: 'shell_exec', step: 0, startedAt: 1, ok: true, durationMs: 1100 },
+      { name: 'local_file_read', step: 1, startedAt: 2, ok: true, durationMs: 200 },
+    ];
+    act(() => {
+      root?.render(React.createElement(StepTimeline, { runs }));
+    });
+    expect(container.querySelector('[data-testid="step-timeline"]')).not.toBeNull();
+    expect(container.textContent).toContain('step 1');
+    expect(container.textContent).toContain('step 2');
+    expect(container.textContent).toContain('shell_exec');
+    expect(container.textContent).toContain('local_file_read');
+  });
+
+  it('R09 StepTimeline flattens to 工具序列 when step is absent', () => {
+    const runs: ToolRunRecord[] = [
+      { name: 'sample_tool', startedAt: 1, ok: true, durationMs: 50 },
+    ];
+    act(() => {
+      root?.render(React.createElement(StepTimeline, { runs }));
+    });
+    expect(container.textContent).toContain('工具序列');
+    expect(container.querySelector('[data-step="flat"]')).not.toBeNull();
   });
 });

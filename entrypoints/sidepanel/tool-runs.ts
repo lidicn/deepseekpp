@@ -10,6 +10,8 @@
 export interface ToolRunEvent {
   phase: 'start' | 'end';
   name: string;
+  /** 工具所在的工具循环轮次（0 起），供 R09 步骤时间线分组。 */
+  step?: number;
   /** start 时刻的 Date.now()，用于 start/end 配对。 */
   startedAt?: number;
   /** 仅 end：工具是否成功；undefined 表示仍在运行。 */
@@ -22,11 +24,21 @@ export interface ToolRunEvent {
 
 export interface ToolRunRecord {
   name: string;
+  step?: number;
   startedAt: number;
   /** undefined = 运行中；true/false = 已结算。 */
   ok?: boolean;
   durationMs?: number;
   summary?: string;
+}
+
+/** R09：一个步骤（工具循环轮次）内的工具集合，纯文本时间线分组单元。 */
+export interface StepTimelineGroup {
+  /** 轮次号（0 起）；无 step 信息（旧事件/平铺）时为 null。 */
+  step: number | null;
+  tools: ToolRunRecord[];
+  /** 组内已结算工具耗时之和（毫秒）。 */
+  totalMs: number;
 }
 
 export function isToolRunActive(run: ToolRunRecord): boolean {
@@ -43,7 +55,7 @@ export function reduceToolRuns(
   const startedAt = event.startedAt ?? Date.now();
 
   if (event.phase === 'start') {
-    return [...prev, { name: event.name, startedAt }];
+    return [...prev, { name: event.name, step: event.step, startedAt }];
   }
 
   const pendingIndex = prev.findIndex(
@@ -52,6 +64,7 @@ export function reduceToolRuns(
 
   const settled: ToolRunRecord = {
     name: event.name,
+    step: event.step,
     startedAt,
     ok: event.ok ?? false,
     durationMs: event.durationMs,
@@ -65,9 +78,32 @@ export function reduceToolRuns(
 
   return [
     ...prev.slice(0, pendingIndex),
-    { ...prev[pendingIndex], ...settled },
+    { ...prev[pendingIndex], ...settled, step: settled.step ?? prev[pendingIndex].step },
     ...prev.slice(pendingIndex + 1),
   ];
+}
+
+/**
+ * R09：把工具记录按 step（工具循环轮次）分组，供纯文本步骤时间线渲染。
+ * 无 step 信息的记录归到同一平铺组（step=null），保持出现顺序。
+ */
+export function buildStepTimeline(
+  runs: readonly ToolRunRecord[],
+): StepTimelineGroup[] {
+  const groups = new Map<number, StepTimelineGroup>();
+  const order: number[] = [];
+  for (const run of runs) {
+    const key = run.step ?? -1;
+    let group = groups.get(key);
+    if (!group) {
+      group = { step: run.step ?? null, tools: [], totalMs: 0 };
+      groups.set(key, group);
+      order.push(key);
+    }
+    group.tools.push(run);
+    if (typeof run.durationMs === 'number') group.totalMs += run.durationMs;
+  }
+  return order.map((key) => groups.get(key) as StepTimelineGroup);
 }
 
 /** 毫秒格式化为简短耗时文本（如 1.2s / 340ms），供面板展示。 */
