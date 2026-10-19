@@ -488,6 +488,41 @@ describe('interactive chat coordinator', () => {
     }, 17);
   });
 
+  it('R08 broadcasts start and end toolEvent around a successful tool call', async () => {
+    const dependencies = createChatDependencies();
+    vi.mocked(dependencies.buildPrompt).mockResolvedValue({
+      augmented: 'use tool',
+      enabledDescriptors: [toolDescriptor()],
+    });
+    vi.mocked(dependencies.submitWebPrompt)
+      .mockResolvedValueOnce(modelTurn('<sample_tool>{"value":"once"}</sample_tool>', 101))
+      .mockResolvedValue(modelTurn('final answer', 102));
+    vi.mocked(dependencies.executeToolCall).mockResolvedValue({
+      ok: true,
+      name: 'sample_tool',
+      summary: 'ran successfully',
+    });
+    const service = createChatRuntimeService(dependencies);
+
+    await service.submitPrompt({ text: 'use tool', refFileIds: [] }, 17);
+    await waitForCall(dependencies.executeToolCall);
+    await waitForCall(dependencies.markChatLoopFinished);
+
+    const calls = vi.mocked(dependencies.broadcastChunk).mock.calls;
+    const start = calls.find(([chunk]) => chunk.toolEvent?.phase === 'start');
+    const end = calls.find(([chunk]) => chunk.toolEvent?.phase === 'end');
+    expect(start).toBeDefined();
+    expect(start![0].toolEvent).toMatchObject({ phase: 'start', name: 'sample_tool' });
+    expect(end).toBeDefined();
+    expect(end![0].toolEvent).toMatchObject({
+      phase: 'end',
+      name: 'sample_tool',
+      ok: true,
+      summary: 'ran successfully',
+    });
+    expect(typeof end![0].toolEvent!.durationMs).toBe('number');
+  });
+
   it('aborts upload PoW/network work and waits for settlement on session reset', async () => {
     const dependencies = createChatDependencies();
     let uploadSignal: AbortSignal | undefined;

@@ -39,12 +39,30 @@ import type { ToolExecutionRecord } from '../../core/types';
 
 import { MAX_CHAT_TOOL_STEPS, serializeToolExecutions } from '../../core/chat/loop-contract';
 
+/**
+ * R08：工具运行事件，随 CHAT_STREAM_CHUNK 广播给侧边栏工具面板。
+ * start 在工具派发前发出；end 在结算后发出（成功/失败都发）。
+ */
+export interface ToolRunEvent {
+  phase: 'start' | 'end';
+  name: string;
+  /** start 时刻的 Date.now()，用于 start/end 配对与计时。 */
+  startedAt?: number;
+  /** 仅 end：工具是否成功。 */
+  ok?: boolean;
+  /** 仅 end：本次执行耗时。 */
+  durationMs?: number;
+  /** 仅 end：截断到 200 字的结果摘要。 */
+  summary?: string;
+}
+
 export interface ChatStreamChunk {
   text: string;
   done: boolean;
   error?: string;
   reasoningText?: string;
   phase?: 'reasoning' | 'answer';
+  toolEvent?: ToolRunEvent;
 }
 
 export interface ChatPromptBuildRequest {
@@ -197,13 +215,24 @@ export function createChatRuntimeService(
   const executeChatTool = async (
     turn: ActiveChatTurn,
     call: ToolCall,
+    excludeTabId?: number,
   ): Promise<ToolExecutionRecord> => {
     assertTurnActive(turn);
 
     // P0-3: 持久化当前工具执行状态（fire-and-forget，失败不阻塞）
     void setCurrentTool(call.name).catch(() => {});
 
+    // R08: 派发前广播 start，让侧边栏工具面板先显示"运行中"。
+    const startedAt = Date.now();
+    emitChunk(turn, {
+      text: '',
+      done: false,
+      toolEvent: { phase: 'start', name: call.name, startedAt },
+    }, excludeTabId);
+
     let result: ToolExecutionRecord;
+    let ok = false;
+    let summary = '';
     try {
       const rawResult = await dependencies.executeToolCall(call, {
         signal: turn.controller.signal,
@@ -212,12 +241,28 @@ export function createChatRuntimeService(
       });
       assertTurnActive(turn);
       if (!rawResult.ok && rawResult.error?.details?.externalOutcome === 'ambiguous') {
-        throw new Error(rawResult.error.message || rawResult.detail || rawResult.summary);
+        summary = rawResult.error.message || rawResult.detail || rawResult.summary;
+        throw new Error(summary);
       }
       result = buildExecutionRecord(call, rawResult);
+      ok = result.result.ok;
+      summary = result.result.summary ?? '';
     } finally {
       // P0-3: 清除当前工具标记 + 追加到历史
       void clearCurrentTool().catch(() => {});
+      // R08: 成功/失败都在结算后广播 end（finally 保证不遗漏）。
+      emitChunk(turn, {
+        text: '',
+        done: false,
+        toolEvent: {
+          phase: 'end',
+          name: call.name,
+          startedAt,
+          ok,
+          durationMs: Date.now() - startedAt,
+          summary: summary.slice(0, 200),
+        },
+      }, excludeTabId);
       // 注意：即使工具失败，也记录失败结果（让 reconcile 能看到"执行过但失败了"）
     }
 
@@ -305,7 +350,7 @@ export function createChatRuntimeService(
       }
 
       const executions: ToolExecutionRecord[] = [];
-      for (const call of toolCalls) executions.push(await executeChatTool(turn, call));
+      for (const call of toolCalls) executions.push(await executeChatTool(turn, call, excludeTabId));
       const continuationPrompt = dependencies.continueWithToolResults(
         serializeToolExecutions(executions),
       );
@@ -449,7 +494,7 @@ export function createChatRuntimeService(
       }
 
       const executions: ToolExecutionRecord[] = [];
-      for (const call of toolCalls) executions.push(await executeChatTool(turn, call));
+      for (const call of toolCalls) executions.push(await executeChatTool(turn, call, excludeTabId));
       currentMessages = [
         ...currentMessages,
         {

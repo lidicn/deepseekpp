@@ -28,6 +28,7 @@ import { normalizeImageMimeType } from '../../../core/trusted-directory/scan';
 import type { ChatMessage as ChatMessageType, ModelType } from '../../../core/types';
 import AtFilePanel, { type AtAttachmentStatus } from '../components/AtFilePanel';
 import ChatMessage from '../components/ChatMessage';
+import ToolRunPanel from '../components/ToolRunPanel';
 import { StatusMessage, useConfirm } from '../components/settings/feedback-primitives';
 import { createRequestGenerationFence } from '../async-state';
 import { shouldSubmitChatComposer } from '../chat-composer';
@@ -40,6 +41,11 @@ import {
   type ChatProvider,
 } from '../controllers/chat-controller';
 import { consumePendingText, onPendingText } from '../pending-text';
+import {
+  reduceToolRuns,
+  type ToolRunEvent,
+  type ToolRunRecord,
+} from '../tool-runs';
 import { useI18n } from '../i18n';
 import { getTrustedDirectorySession, type TrustedDirectorySession, type TrustedDirectorySessionFile } from '../trusted-directory';
 import { getRuntimeErrorMessage } from '../runtime-response';
@@ -52,6 +58,7 @@ interface ChatStreamMessage extends Partial<ChatAuthStatus> {
   phase?: 'reasoning' | 'answer';
   done?: boolean;
   error?: string;
+  toolEvent?: ToolRunEvent;
 }
 
 type VisionImageUploadStatus = 'uploading' | 'ready' | 'error';
@@ -105,6 +112,7 @@ export default function ChatPage() {
   const [trustedSession] = useState<TrustedDirectorySession | null>(() => getTrustedDirectorySession());
   const [atTrigger, setAtTrigger] = useState<{ active: boolean; query: string }>({ active: false, query: '' });
   const [msgSeq, setMsgSeq] = useState(0);
+  const [toolRuns, setToolRuns] = useState<ToolRunRecord[]>([]);
   const { confirm, node: confirmNode } = useConfirm();
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -258,6 +266,12 @@ export default function ChatPage() {
       // 会话代际检查：如果 epoch 已经变了（newSession 被调用过），丢弃所有旧流 chunk
       if (sessionEpochRef.current !== currentStreamEpochRef.current) return;
 
+      // R08: 工具运行事件（start/end）归并进本地工具面板，不参与文本拼接。
+      if (msg.toolEvent) {
+        const toolEvent = msg.toolEvent;
+        setToolRuns((prev) => reduceToolRuns(prev, toolEvent));
+      }
+
       if (msg.error) {
         setError(msg.error);
         setIsStreaming(false);
@@ -360,6 +374,7 @@ export default function ChatPage() {
     sessionEpochRef.current++;
     messagesRef.current = [];
     setMessages([]);
+    setToolRuns([]);
     setError(null);
     setIsStreaming(false);
     setInputText('');
@@ -744,6 +759,8 @@ export default function ChatPage() {
             onRichContentRendered={scrollMessagesToBottom}
           />
         ))}
+
+        <ToolRunPanel runs={toolRuns} />
 
         {error && (
           <div className="ds-chat-error-wrap">

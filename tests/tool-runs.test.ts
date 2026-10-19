@@ -1,0 +1,112 @@
+import React, { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import ToolRunPanel from '../entrypoints/sidepanel/components/ToolRunPanel';
+import {
+  formatToolDuration,
+  reduceToolRuns,
+  type ToolRunRecord,
+} from '../entrypoints/sidepanel/tool-runs';
+
+describe('R08 reduceToolRuns event folding', () => {
+  it('appends an active record on start and settles it on matching end', () => {
+    let runs: ToolRunRecord[] = [];
+    runs = reduceToolRuns(runs, { phase: 'start', name: 'shell_exec', startedAt: 1000 });
+    expect(runs).toHaveLength(1);
+    expect(runs[0].name).toBe('shell_exec');
+    expect(runs[0].ok).toBeUndefined();
+
+    runs = reduceToolRuns(runs, {
+      phase: 'end',
+      name: 'shell_exec',
+      startedAt: 1000,
+      ok: true,
+      durationMs: 1200,
+      summary: 'done'.repeat(1),
+    });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ ok: true, durationMs: 1200, summary: 'done' });
+  });
+
+  it('marks failure when end carries ok=false and keeps the message', () => {
+    let runs: ToolRunRecord[] = [];
+    runs = reduceToolRuns(runs, { phase: 'start', name: 'local_file_read', startedAt: 5 });
+    runs = reduceToolRuns(runs, {
+      phase: 'end',
+      name: 'local_file_read',
+      startedAt: 5,
+      ok: false,
+      durationMs: 80,
+      summary: 'file not found',
+    });
+    expect(runs[0]).toMatchObject({ ok: false, summary: 'file not found' });
+  });
+
+  it('registers a late end without a matching start instead of dropping it', () => {
+    const runs = reduceToolRuns([], {
+      phase: 'end',
+      name: 'sample_tool',
+      startedAt: 42,
+      ok: false,
+      durationMs: 30,
+      summary: 'resume settlement',
+    });
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ name: 'sample_tool', ok: false });
+  });
+
+  it('formats sub-second and multi-second durations', () => {
+    expect(formatToolDuration(340)).toBe('340ms');
+    expect(formatToolDuration(1200)).toBe('1.2s');
+    expect(formatToolDuration(undefined)).toBe('…');
+  });
+});
+
+describe('R08 ToolRunPanel renders the tool name', () => {
+  let container: HTMLDivElement;
+  let root: Root | null;
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement('div');
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root?.unmount());
+    container.remove();
+  });
+
+  it('renders the settled tool name, success mark and duration', () => {
+    const runs: ToolRunRecord[] = [
+      { name: 'shell_exec', startedAt: 1, ok: true, durationMs: 1200, summary: 'ok' },
+    ];
+    act(() => {
+      root?.render(React.createElement(ToolRunPanel, { runs }));
+    });
+    const card = container.querySelector('[data-tool-name="shell_exec"]');
+    expect(card).not.toBeNull();
+    expect(container.textContent).toContain('shell_exec');
+    expect(container.textContent).toContain('1.2s');
+    expect(card?.getAttribute('data-tool-status')).toBe('succeeded');
+  });
+
+  it('shows an active (running) record expanded with running status', () => {
+    const runs: ToolRunRecord[] = [{ name: 'python_exec', startedAt: 9 }];
+    act(() => {
+      root?.render(React.createElement(ToolRunPanel, { runs }));
+    });
+    const card = container.querySelector('[data-tool-name="python_exec"]');
+    expect(card).not.toBeNull();
+    expect(card?.getAttribute('data-tool-status')).toBe('running');
+    expect((card as HTMLDetailsElement).open).toBe(true);
+  });
+
+  it('renders nothing when there are no runs', () => {
+    act(() => {
+      root?.render(React.createElement(ToolRunPanel, { runs: [] }));
+    });
+    expect(container.querySelector('[data-testid="tool-run-panel"]')).toBeNull();
+  });
+});
