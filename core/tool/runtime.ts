@@ -97,6 +97,22 @@ const INTERACTIVE_TOOL_NAMES = new Set([
   'local_folder_pick',
 ]);
 
+/** R04: 超时 ToolResult 的错误码（由 createToolTimeoutResult 产生）。 */
+export const TOOL_TIMEOUT_ERROR_CODE = 'tool_timeout';
+
+/**
+ * R04: 交互型工具（local_folder_pick 等）超时后，判定是否额外落一条 abandoned
+ * 诊断。T39 已在超时真正 abort provider，这里只决定是否记可见记录，供后续识别
+ * "弹框超时 / host 疑似污染"。host 强制重连需要 host 层注册表钩子，core/tool 层
+ * 不具备，污染重连动作留待 host 层补，此处不伪造。
+ */
+export function shouldLogInteractiveAbandon(input: {
+  isInteractive: boolean;
+  errorCode?: string;
+}): boolean {
+  return input.isInteractive && input.errorCode === TOOL_TIMEOUT_ERROR_CODE;
+}
+
 export interface RuntimeToolRuntime {
   getToolDescriptors(locale?: SupportedLocale): Promise<ToolDescriptor[]>;
   getAuthorizationDescriptors(locale?: SupportedLocale): Promise<ToolDescriptor[]>;
@@ -337,6 +353,17 @@ async function executeRuntimeToolCall(
     result = createProviderExecutionErrorResult(resolvedCall, error);
   }
   clearTimeout(stalledTimer);
+  // R04: 交互型工具超时（T39 已 abort provider）额外记 abandoned 诊断，供识别弹框
+  // 超时 / host 疑似污染；host 强制重连需 host 层注册表钩子，留待 host 层补。
+  if (shouldLogInteractiveAbandon({ isInteractive, errorCode: result.error?.code })) {
+    const provider = resolvedCall.provider;
+    diagnosticLogBuffer.record({
+      level: 'warn',
+      source: 'tool-runtime',
+      message: 'interactive_tool_abandoned',
+      details: `tool=${resolvedCall.name} provider=${provider?.kind ?? 'unknown'}/${provider?.id ?? 'unknown'} descriptor=${resolvedCall.descriptorId ?? 'unknown'} timeoutMs=${effectiveTimeoutMs}`,
+    });
+  }
   await completeAuthorizationAfterProvider(authorized.reservation, result);
   try {
     await appendRuntimeToolHistory(resolvedCall, result, authorized.trigger);
