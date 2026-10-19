@@ -1,5 +1,6 @@
 import type { OfficialApiChatConfig } from '../../core/chat/official-api-config-contract';
 import type { ChatLoopProvider, InterruptedChatLoop } from '../../core/chat/active-loop';
+import { evaluateBudgetForText, type BudgetState } from '../../core/chat/context-budget';
 // P0-3: 工具执行状态持久化 helper
 import {
   appendToolExecution,
@@ -65,6 +66,8 @@ export interface ChatStreamChunk {
   reasoningText?: string;
   phase?: 'reasoning' | 'answer';
   toolEvent?: ToolRunEvent;
+  /** R06：本地粗估上下文预算档位（ok/warn/critical + remaining），UI 据此显隐提示条。 */
+  budget?: BudgetState;
 }
 
 export interface ChatPromptBuildRequest {
@@ -291,6 +294,13 @@ export function createChatRuntimeService(
         turn.controller.signal,
       );
       assertTurnActive(turn);
+      // R06: web 路径历史在服务端，本地只能粗估当前 prompt + 本轮已生成文本（非全量，见账本决策）。
+      const budgetText = `${currentInput.prompt ?? ''}\n${accumulated}`;
+      emitChunk(
+        turn,
+        { text: '', done: false, phase: 'answer', budget: evaluateBudgetForText(budgetText) },
+        excludeTabId,
+      );
       const result = await dependencies.submitWebPrompt({
         ...currentInput,
         powHeaders,
@@ -428,6 +438,15 @@ export function createChatRuntimeService(
       assertTurnActive(turn);
       let accumulated = '';
       let reasoningAccumulated = '';
+      // R06: official 路径持有本地完整消息数组，按其全文粗估预算并随流广播档位。
+      const budgetText = currentMessages
+        .map((m) => m.content ?? '')
+        .join('\n');
+      emitChunk(
+        turn,
+        { text: '', done: false, phase: 'answer', budget: evaluateBudgetForText(budgetText) },
+        excludeTabId,
+      );
       const result = await dependencies.submitOfficialPrompt({
         ...input,
         messages: currentMessages,

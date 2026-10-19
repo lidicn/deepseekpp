@@ -47,6 +47,7 @@ import {
   type ToolRunEvent,
   type ToolRunRecord,
 } from '../tool-runs';
+import type { BudgetState } from '../../../core/chat/context-budget';
 import { useI18n } from '../i18n';
 import { getTrustedDirectorySession, type TrustedDirectorySession, type TrustedDirectorySessionFile } from '../trusted-directory';
 import { getRuntimeErrorMessage } from '../runtime-response';
@@ -60,6 +61,7 @@ interface ChatStreamMessage extends Partial<ChatAuthStatus> {
   done?: boolean;
   error?: string;
   toolEvent?: ToolRunEvent;
+  budget?: BudgetState;
 }
 
 type VisionImageUploadStatus = 'uploading' | 'ready' | 'error';
@@ -114,6 +116,7 @@ export default function ChatPage() {
   const [atTrigger, setAtTrigger] = useState<{ active: boolean; query: string }>({ active: false, query: '' });
   const [msgSeq, setMsgSeq] = useState(0);
   const [toolRuns, setToolRuns] = useState<ToolRunRecord[]>([]);
+  const [budget, setBudget] = useState<BudgetState | null>(null);
   const { confirm, node: confirmNode } = useConfirm();
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -273,6 +276,11 @@ export default function ChatPage() {
         setToolRuns((prev) => reduceToolRuns(prev, toolEvent));
       }
 
+      // R06: 本地粗估预算档位，仅 warn/critical 由 UI 显红/黄条。
+      if (msg.budget) {
+        setBudget(msg.budget);
+      }
+
       if (msg.error) {
         setError(msg.error);
         setIsStreaming(false);
@@ -376,6 +384,7 @@ export default function ChatPage() {
     messagesRef.current = [];
     setMessages([]);
     setToolRuns([]);
+    setBudget(null);
     setError(null);
     setIsStreaming(false);
     setInputText('');
@@ -781,6 +790,16 @@ export default function ChatPage() {
       </div>
 
       <footer className="ds-chat-composer-wrap">
+        {/* R06: ok 不显示；warn 黄条、critical 红条，提示用户新建对话（本地粗估）。 */}
+        {budget && budget.level !== 'ok' && (
+          <div style={{ marginBottom: 6 }}>
+            <StatusMessage tone={budget.level === 'critical' ? 'error' : 'warning'}>
+              {budget.level === 'critical'
+                ? `上下文接近建议上限（本地粗估约剩 ${budget.remaining} token），建议新建对话以避免中断。`
+                : `上下文偏长（本地粗估约剩 ${budget.remaining} token），接近建议长度。`}
+            </StatusMessage>
+          </div>
+        )}
         <div className="ds-chat-composer">
           <input
             ref={fileInputRef}
