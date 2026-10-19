@@ -39,6 +39,14 @@ export interface TypedRuntimeCommandContracts
     request: { type: 'WHATS_NEW_DISMISSED' };
     response: { ok: true };
   };
+  GET_DIAGNOSTIC_SNAPSHOT: {
+    request: { type: 'GET_DIAGNOSTIC_SNAPSHOT' };
+    response: {
+      timestamp: number;
+      logs: Array<{ ts: number; level: string; source: string; message: string; details?: string }>;
+      version: string;
+    };
+  };
 }
 
 export type TypedRuntimeCommandType = keyof TypedRuntimeCommandContracts;

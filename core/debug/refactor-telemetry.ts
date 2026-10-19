@@ -22,6 +22,7 @@
 
 import { isTelemetryCaptureEnabled } from "./telemetry-gate";
 import { g2UserInterventionRate, type HarnessEvent } from "./harness-events";
+import { getDiagnosticLogBuffer } from "../diagnostics/log-buffer";
 
 export interface RequestMetrics {
   timestamp: number;
@@ -119,6 +120,7 @@ function longestCommonPrefixBytes(a: string, b: string): number {
 class RefactorTelemetry {
   private requests: RequestMetrics[] = [];
   private truncations: TruncationMetrics[] = [];
+  private suspiciousTruncationCount = 0;
   private startedAt = Date.now();
   private lastPromptText: string | null = null;
   private prefixConsistencyRates: number[] = [];
@@ -223,6 +225,11 @@ class RefactorTelemetry {
         `(limit=${metrics.limit}B, marker=${metrics.markerPresent})`,
       );
     }
+  }
+
+  recordSuspiciousTruncation(): void {
+    if (!isTelemetryCaptureEnabled()) return;
+    this.suspiciousTruncationCount++;
   }
 
   // v1.17 新增：工具调用结果记录
@@ -422,6 +429,7 @@ class RefactorTelemetry {
       modelVisibleTruncations,
       storageTruncations,
       truncationsByLayer,
+      suspiciousTruncationCount: this.suspiciousTruncationCount,
       avgToolsBytes,
       avgPayloadBytes,
       avgPromptBytes,
@@ -579,6 +587,9 @@ export function mountDebugToWindow(): void {
     dump: () => refactorTelemetry.dump(),
     reset: () => refactorTelemetry.reset(),
     summary: () => refactorTelemetry.summary(),
+    logs: () => getDiagnosticLogBuffer()?.snapshot() ?? [],
+    full: () => ({ ...refactorTelemetry.dump(), logs: getDiagnosticLogBuffer()?.snapshot() ?? [] }),
+    clearLogs: () => getDiagnosticLogBuffer()?.clear(),
     export: async () => {
       const report = JSON.stringify(refactorTelemetry.summary(), null, 2);
       try {

@@ -8,6 +8,7 @@ import {
   isStreamFinishedFromParsed,
   type SSEEvent,
 } from './stream-codec';
+import { getDiagnosticLogBuffer } from '../diagnostics/log-buffer';
 import {
   createResponseTokenSpeedTracker,
   type ResponseTokenSpeedPayload,
@@ -668,6 +669,12 @@ async function readCompletionStreamWithCallbacks(
       console.warn('[DPP-stream] byte stream ended without explicit finished frame (suspicious truncation)', {
         assistantTextLength: summary.assistantText.length,
         responseMessageId: summary.responseMessageId,
+      });
+      getDiagnosticLogBuffer()?.record({
+        level: 'warn',
+        source: 'deepseek-stream',
+        message: 'suspicious_truncation',
+        details: `len=${summary.assistantText.length} msg=${summary.responseMessageId ?? 'n/a'}`,
       });
     }
   } finally {
