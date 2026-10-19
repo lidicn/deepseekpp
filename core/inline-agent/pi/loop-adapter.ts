@@ -566,7 +566,11 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
           // These tools are outside the conversation chain — refuse to execute
           // them (tests 249/278). canRunTools()'s first-turn exemption only
           // applies when the turn actually produces a chained message id.
+          // B9 fix: official-api backend has no page chain (session.parentMessageId
+          // stays null), so this guard must be web-only — otherwise every turn
+          // throws and tool execution is completely blocked.
           if (
+            backend === 'web' &&
             parentMessageIdAtTurnStart !== null &&
             parentMessageIdAtTurnStart === session.parentMessageId
           ) {

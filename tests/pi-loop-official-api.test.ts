@@ -67,7 +67,7 @@ const { runInlineAgentLoop } = await import('../core/inline-agent/loop');
   },
 };
 
-const TOOL_CALL_TEXT = '<memory_save>{"content":"test memory"}</memory_save>';
+const TOOL_CALL_TEXT = '<memory_save>{"type":"topic","name":"test","content":"test memory","tags":["test"]}</memory_save>';
 
 function createPayload(overrides: Partial<InlineAgentStartPayload> = {}): InlineAgentStartPayload {
   return {
