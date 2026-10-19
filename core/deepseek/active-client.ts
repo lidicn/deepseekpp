@@ -81,6 +81,31 @@ const COMPLETION_PATH = DEEPSEEK_WEB_ROUTES.completion;
  * answers are silently truncated at the 2-minute mark (audit issue #1).
  */
 const WEB_COMPLETION_STREAM_DEADLINE_MS = 300_000;
+
+/** R05 心跳判定结果：是否记一次停滞，以及更新后的「已记录时间」。 */
+export interface StreamStallDecision {
+  stalled: boolean;
+  nextLoggedAt: number;
+}
+
+/**
+ * R05 流式心跳纯判定（零 IO，可单测）：
+ * - 距 lastFrameAt 未超 warnMs → 未停滞，不记；
+ * - 已停滞但距上次记录未超 warnMs → 去重，不重复刷屏；
+ * - 否则记一次，nextLoggedAt=now。
+ * 只做可见化，不主动断开（避免误杀长思考）。
+ */
+export function evaluateStreamStall(
+  now: number,
+  lastFrameAt: number,
+  lastLoggedAt: number,
+  warnMs: number,
+): StreamStallDecision {
+  if (now - lastFrameAt <= warnMs) return { stalled: false, nextLoggedAt: lastLoggedAt };
+  if (now - lastLoggedAt <= warnMs) return { stalled: false, nextLoggedAt: lastLoggedAt };
+  return { stalled: true, nextLoggedAt: now };
+}
+
 export { DEEPSEEK_FILE_FETCH_PATH, DEEPSEEK_FILE_UPLOAD_PATH } from './contracts';
 export { DEEPSEEK_IMAGE_UPLOAD_MAX_BYTES } from './upload-limits';
 const DEFAULT_APP_VERSION = '2.0.0';
@@ -604,6 +629,27 @@ async function readCompletionStreamWithCallbacks(
   // was always false there, causing every mid-response interruption to be
   // upgraded to a fatal error instead of a recoverable partial completion.
   let receivedAnyVisibleChunk = false;
+
+  // R05: 流式心跳——30s 无 SSE 帧记一次 stream_stall（只可见化、不断开，避免误杀长思考）。
+  // 10s 轮询一次；同一停滞只记一次，恢复到帧后重新计。finally 清理定时器。
+  const STALL_WARN_MS = 30_000;
+  const STALL_POLL_MS = 10_000;
+  let lastFrameAt = Date.now();
+  let lastStallLoggedAt = 0;
+  const stallTimer = setInterval(() => {
+    const now = Date.now();
+    const decision = evaluateStreamStall(now, lastFrameAt, lastStallLoggedAt, STALL_WARN_MS);
+    if (decision.stalled) {
+      lastStallLoggedAt = decision.nextLoggedAt;
+      diagnosticLogBuffer.record({
+        level: 'warn',
+        source: 'stream',
+        message: 'stream_stall',
+        details: `no_frame_ms=${now - lastFrameAt} text_len=${summary.assistantText.length}`,
+      });
+    }
+  }, STALL_POLL_MS);
+
   try {
     while (true) {
       let done = false;
@@ -640,6 +686,7 @@ async function readCompletionStreamWithCallbacks(
         throw readerErr;
       }
       if (done) break;
+      lastFrameAt = Date.now();
 
       const newText = consumeDeepSeekSseEvents(decoder.push(value!), summary, {
         retainAssistantText,
@@ -678,6 +725,7 @@ async function readCompletionStreamWithCallbacks(
       });
     }
   } finally {
+    clearInterval(stallTimer);
     speedTracker?.finish();
     if (streamAbortedMidResponse) {
       try { await reader.cancel(); } catch { /* ignore cleanup errors */ }
