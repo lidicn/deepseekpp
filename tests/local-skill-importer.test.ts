@@ -90,7 +90,9 @@ afterEach(() => {
 
 describe('local Skill importer', () => {
   it('picks local Skill folders through Shell MCP', async () => {
-    vi.mocked(executeMcpToolCall).mockResolvedValueOnce(createFolderPickToolResult());
+    vi.mocked(executeMcpToolCall)
+      .mockResolvedValueOnce(createShellStatusWarmupResult())
+      .mockResolvedValueOnce(createFolderPickToolResult());
 
     await expect(pickLocalSkillFolder('/Users/me/.codex/skills')).resolves.toBe('/Users/me/.codex/skills/demo');
     expect(executeMcpToolCall).toHaveBeenCalledWith(expect.objectContaining({
@@ -105,7 +107,9 @@ describe('local Skill importer', () => {
 
   it('adds local file tools to older Shell allowlists before picking folders', async () => {
     vi.mocked(getAllMcpServers).mockResolvedValueOnce([createShellServer(['shell_status', 'python_status'])]);
-    vi.mocked(executeMcpToolCall).mockResolvedValueOnce(createFolderPickToolResult());
+    vi.mocked(executeMcpToolCall)
+      .mockResolvedValueOnce(createShellStatusWarmupResult())
+      .mockResolvedValueOnce(createFolderPickToolResult());
 
     await expect(pickLocalSkillFolder()).resolves.toBe('/Users/me/.codex/skills/demo');
     expect(updateMcpServer).toHaveBeenCalledWith('shell-local', {
@@ -125,6 +129,7 @@ describe('local Skill importer', () => {
 
   it('refreshes Shell discovery once when the folder picker cache is stale', async () => {
     vi.mocked(executeMcpToolCall)
+      .mockResolvedValueOnce(createShellStatusWarmupResult())
       .mockResolvedValueOnce({
         ok: false,
         summary: 'MCP tool unavailable',
@@ -140,21 +145,24 @@ describe('local Skill importer', () => {
 
     await expect(pickLocalSkillFolder()).resolves.toBe('/Users/me/.codex/skills/demo');
     expect(refreshMcpServerDiscovery).toHaveBeenCalledWith('shell-local');
-    expect(executeMcpToolCall).toHaveBeenCalledTimes(2);
+    // R03 预热 1 次 + folder_pick 首次 not_found + 重试成功 = 3 次。
+    expect(executeMcpToolCall).toHaveBeenCalledTimes(3);
   });
 
   it('explains legacy Windows folder picker failures as stale Shell Native Host installs', async () => {
-    vi.mocked(executeMcpToolCall).mockResolvedValueOnce({
-      ok: false,
-      summary: 'MCP tool failed',
-      detail: 'Command failed: powershell.exe -NoProfile -STA -Command Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {}; Choose a local Skill folder Choose : CommandNotFoundException',
-      name: 'local_folder_pick',
-      error: {
-        code: 'mcp_tool_failed',
-        message: 'Command failed: powershell.exe -NoProfile -STA -Command Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; Choose a local Skill folder Choose : CommandNotFoundException',
-        retryable: false,
-      },
-    });
+    vi.mocked(executeMcpToolCall)
+      .mockResolvedValueOnce(createShellStatusWarmupResult())
+      .mockResolvedValueOnce({
+        ok: false,
+        summary: 'MCP tool failed',
+        detail: 'Command failed: powershell.exe -NoProfile -STA -Command Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; if ($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {}; Choose a local Skill folder Choose : CommandNotFoundException',
+        name: 'local_folder_pick',
+        error: {
+          code: 'mcp_tool_failed',
+          message: 'Command failed: powershell.exe -NoProfile -STA -Command Add-Type -AssemblyName System.Windows.Forms; $dialog = New-Object System.Windows.Forms.FolderBrowserDialog; Choose a local Skill folder Choose : CommandNotFoundException',
+          retryable: false,
+        },
+      });
 
     const pick = pickLocalSkillFolder();
     await expect(pick).rejects.toThrow('copy the generated install command');
@@ -581,6 +589,19 @@ function createShellServer(toolNames: string[]): McpServerConfig {
     lastError: null,
     createdAt: 1,
     updatedAt: 1,
+  };
+}
+
+// R03: pickLocalSkillFolder 先发起一次 shell_status 预热；该响应当首个 once 返回，
+// 不消费 folder_pick 的结果队列。
+function createShellStatusWarmupResult(): ToolResult {
+  return {
+    ok: true,
+    summary: 'MCP tool executed',
+    output: {
+      ok: true,
+      data: { platform: 'win32' },
+    },
   };
 }
 

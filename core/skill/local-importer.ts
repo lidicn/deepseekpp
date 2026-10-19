@@ -117,6 +117,14 @@ export async function pickLocalSkillFolder(
 ): Promise<string> {
   if (!deps) throw new Error('Local Skill importer runtime executor is required.');
   const server = await getShellMcpServer();
+  // R03 预热：先轻量 shell_status 触发 native host 冷启动（spawn + 握手 + discovery），
+  // 避免真正的 folder pick 撞冷启动而"框没弹出来"。预热失败/工具缺失一律吞掉，
+  // 不阻断主流程——主调用本身仍会照常失败并给出结构化错误。
+  try {
+    await executeShellMcpTool(server, 'shell_status', {}, deps);
+  } catch {
+    // 预热失败不阻断主流程。
+  }
   const result = await executeShellMcpTool(server, 'local_folder_pick', {
     title: 'Choose a local Skill folder',
     ...(defaultPath ? { defaultPath } : {}),
@@ -572,7 +580,7 @@ async function getOnDemandResourceIssue(
 
 async function executeShellMcpTool(
   server: McpServerConfig,
-  name: 'local_skill_preview' | 'local_folder_pick',
+  name: 'local_skill_preview' | 'local_folder_pick' | 'shell_status',
   payload: Record<string, unknown>,
   deps: LocalSkillImporterDeps,
 ): Promise<ToolResult> {
