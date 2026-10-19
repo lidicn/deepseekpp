@@ -25,5 +25,10 @@ export function createDiagnosticsRuntimeHandlers(
         entries: diagnosticLogBuffer.snapshot(),
       };
     }),
+    definePayloadlessRuntimeCommandHandler('GET_DIAGNOSTIC_SNAPSHOT', async () => ({
+      timestamp: Date.now(),
+      logs: diagnosticLogBuffer.snapshot().map((entry) => ({ ...entry })),
+      version: dependencies.getVersion(),
+    })),
   ]);
 }
