@@ -8,7 +8,7 @@ import {
   isStreamFinishedFromParsed,
   type SSEEvent,
 } from './stream-codec';
-import { getDiagnosticLogBuffer } from '../diagnostics/log-buffer';
+import { diagnosticLogBuffer } from '../diagnostics/log-buffer';
 import {
   createResponseTokenSpeedTracker,
   type ResponseTokenSpeedPayload,
@@ -670,7 +670,7 @@ async function readCompletionStreamWithCallbacks(
         assistantTextLength: summary.assistantText.length,
         responseMessageId: summary.responseMessageId,
       });
-      getDiagnosticLogBuffer()?.record({
+      diagnosticLogBuffer.record({
         level: 'warn',
         source: 'deepseek-stream',
         message: 'suspicious_truncation',

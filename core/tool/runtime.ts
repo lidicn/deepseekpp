@@ -73,6 +73,20 @@ export interface RuntimeToolRuntimeOptions {
  */
 const DEFAULT_TOOL_TIMEOUT_MS = 120_000;
 
+/**
+ * 编译/测试/构建/脚本类工具单独预算 15 分钟。
+ * 这些工具（shell_exec 跑测试、python_exec 跑脚本）正常就需要几分钟，
+ * 120 秒会在 host 侧命令还在跑时就被判超时返回 tool_timeout。
+ */
+const LONG_RUNNING_TOOL_TIMEOUT_MS = 15 * 60_000;
+
+const LONG_RUNNING_TOOL_NAMES = new Set([
+  'shell_exec',
+  'shell_session_exec',
+  'shell_session_begin',
+  'python_exec',
+]);
+
 export interface RuntimeToolRuntime {
   getToolDescriptors(locale?: SupportedLocale): Promise<ToolDescriptor[]>;
   getAuthorizationDescriptors(locale?: SupportedLocale): Promise<ToolDescriptor[]>;
@@ -215,9 +229,13 @@ async function executeRuntimeToolCall(
   // T3-1: effective outer timeout = caller override, then the descriptor's own
   // timeout, then the 120s fallback. A provider's shorter internal timeout still
   // wins; this only prevents an unbounded hang when none is declared.
+  // 第一件：长时工具（shell_exec/python_exec 等编译测试构建类）单独预算 15 分钟。
+  // 注意：这里用 authorized.call.name，那时 resolvedCall 还没解析，不能用 resolvedCall.name。
+  const isLongRunning = LONG_RUNNING_TOOL_NAMES.has(authorized.call.name);
+  const fallbackTimeoutMs = isLongRunning ? LONG_RUNNING_TOOL_TIMEOUT_MS : DEFAULT_TOOL_TIMEOUT_MS;
   const effectiveTimeoutMs = options.timeoutMs
     ?? executionDescriptor.execution.timeoutMs
-    ?? DEFAULT_TOOL_TIMEOUT_MS;
+    ?? fallbackTimeoutMs;
   try {
     resolvedCall = await resolveToolCallPayload(
       authorized.call,
@@ -242,7 +260,7 @@ async function executeRuntimeToolCall(
           providerRegistry.execute(resolvedCall, executionDescriptor, {
             locale,
             signal: options.signal,
-            timeoutMs: options.timeoutMs,
+            timeoutMs: effectiveTimeoutMs,
             maxResultBytes: options.maxResultBytes,
             availableDescriptors: currentDescriptors,
             capabilityScope: createRuntimeCapabilityScope(context, authorized.call),
@@ -258,7 +276,7 @@ async function executeRuntimeToolCall(
         providerRegistry.execute(resolvedCall, executionDescriptor, {
           locale,
           signal: options.signal,
-          timeoutMs: options.timeoutMs,
+          timeoutMs: effectiveTimeoutMs,
           maxResultBytes: options.maxResultBytes,
           availableDescriptors: currentDescriptors,
           capabilityScope: createRuntimeCapabilityScope(context, authorized.call),

@@ -22,7 +22,7 @@
 
 import { isTelemetryCaptureEnabled } from "./telemetry-gate";
 import { g2UserInterventionRate, type HarnessEvent } from "./harness-events";
-import { getDiagnosticLogBuffer } from "../diagnostics/log-buffer";
+import { diagnosticLogBuffer } from "../diagnostics/log-buffer";
 
 export interface RequestMetrics {
   timestamp: number;
@@ -587,9 +587,9 @@ export function mountDebugToWindow(): void {
     dump: () => refactorTelemetry.dump(),
     reset: () => refactorTelemetry.reset(),
     summary: () => refactorTelemetry.summary(),
-    logs: () => getDiagnosticLogBuffer()?.snapshot() ?? [],
-    full: () => ({ ...refactorTelemetry.dump(), logs: getDiagnosticLogBuffer()?.snapshot() ?? [] }),
-    clearLogs: () => getDiagnosticLogBuffer()?.clear(),
+    logs: () => diagnosticLogBuffer.snapshot(),
+    full: () => ({ ...refactorTelemetry.dump(), logs: diagnosticLogBuffer.snapshot() }),
+    clearLogs: () => diagnosticLogBuffer.clear(),
     export: async () => {
       const report = JSON.stringify(refactorTelemetry.summary(), null, 2);
       try {
