@@ -16,6 +16,7 @@ import { buildPromptAugmentation } from '../core/prompt';
 import {
   createMemoryToolDescriptors,
   createToolInvocationCatalog,
+  DEFAULT_TOOL_DESCRIPTORS,
   getToolCloseTag,
   getToolOpenTag,
 } from '../core/tool';
@@ -288,6 +289,33 @@ describe('inline-agent output compatibility contract', () => {
     ]);
     expect(INLINE_AGENT_CONTINUATION_PLACEHOLDER).toBe('\u2063\u2064\u2063');
     expect(INLINE_AGENT_CONTINUATION_PLACEHOLDER).not.toMatch(/[\p{L}\p{N}]/u);
+  });
+});
+
+// W30：默认工具目录快照。只冻结与「有哪些工具 / 叫什么 / 要什么参数」相关的
+// 稳定字段，不含 title/description 文案（i18n 润色不应让快照失败）；按
+// invocationName 排序后落 golden，新增/改名/改签名工具会被捕获。
+describe('default tool catalog snapshot (W30)', () => {
+  it('freezes the sorted static default tool catalog', () => {
+    const rows = DEFAULT_TOOL_DESCRIPTORS.map((d) => ({
+      invocationName: d.invocationName,
+      name: d.name,
+      provider: {
+        kind: d.provider.kind,
+        id: d.provider.id,
+        transport: d.provider.transport,
+      },
+      params: Object.keys(d.inputSchema.properties ?? {}).sort(),
+      required: [...(d.inputSchema.required ?? [])].sort(),
+      risk: d.execution.risk,
+      enabled: d.execution.enabled,
+    }));
+    rows.sort((a, b) => a.invocationName.localeCompare(b.invocationName));
+
+    expectUtf8Golden('tools/default-catalog.json', JSON.stringify({
+      count: rows.length,
+      tools: rows,
+    }, null, 2));
   });
 });
 

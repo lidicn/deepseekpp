@@ -1,0 +1,158 @@
+{
+  "count": 8,
+  "tools": [
+    {
+      "invocationName": "memory_archive",
+      "name": "memory_archive",
+      "provider": {
+        "kind": "local",
+        "id": "memory",
+        "transport": "in_process"
+      },
+      "params": [
+        "id"
+      ],
+      "required": [
+        "id"
+      ],
+      "risk": "low",
+      "enabled": true
+    },
+    {
+      "invocationName": "memory_delete",
+      "name": "memory_delete",
+      "provider": {
+        "kind": "local",
+        "id": "memory",
+        "transport": "in_process"
+      },
+      "params": [
+        "id"
+      ],
+      "required": [
+        "id"
+      ],
+      "risk": "medium",
+      "enabled": true
+    },
+    {
+      "invocationName": "memory_save",
+      "name": "memory_save",
+      "provider": {
+        "kind": "local",
+        "id": "memory",
+        "transport": "in_process"
+      },
+      "params": [
+        "content",
+        "name",
+        "tags",
+        "type"
+      ],
+      "required": [
+        "content",
+        "name",
+        "tags",
+        "type"
+      ],
+      "risk": "low",
+      "enabled": true
+    },
+    {
+      "invocationName": "memory_search",
+      "name": "memory_search",
+      "provider": {
+        "kind": "local",
+        "id": "memory",
+        "transport": "in_process"
+      },
+      "params": [
+        "includeArchived",
+        "query",
+        "topK"
+      ],
+      "required": [
+        "query"
+      ],
+      "risk": "low",
+      "enabled": true
+    },
+    {
+      "invocationName": "memory_unarchive",
+      "name": "memory_unarchive",
+      "provider": {
+        "kind": "local",
+        "id": "memory",
+        "transport": "in_process"
+      },
+      "params": [
+        "id"
+      ],
+      "required": [
+        "id"
+      ],
+      "risk": "low",
+      "enabled": true
+    },
+    {
+      "invocationName": "memory_update",
+      "name": "memory_update",
+      "provider": {
+        "kind": "local",
+        "id": "memory",
+        "transport": "in_process"
+      },
+      "params": [
+        "content",
+        "id",
+        "name",
+        "tags",
+        "type"
+      ],
+      "required": [
+        "content",
+        "id",
+        "name",
+        "tags",
+        "type"
+      ],
+      "risk": "medium",
+      "enabled": true
+    },
+    {
+      "invocationName": "web_fetch",
+      "name": "web_fetch",
+      "provider": {
+        "kind": "local",
+        "id": "web",
+        "transport": "in_process"
+      },
+      "params": [
+        "url"
+      ],
+      "required": [
+        "url"
+      ],
+      "risk": "medium",
+      "enabled": true
+    },
+    {
+      "invocationName": "web_search",
+      "name": "web_search",
+      "provider": {
+        "kind": "local",
+        "id": "web",
+        "transport": "in_process"
+      },
+      "params": [
+        "query",
+        "topK"
+      ],
+      "required": [
+        "query"
+      ],
+      "risk": "low",
+      "enabled": true
+    }
+  ]
+}
