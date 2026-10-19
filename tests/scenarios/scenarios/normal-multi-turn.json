@@ -1,0 +1,26 @@
+{
+  "name": "normal-multi-turn",
+  "description": "场景1：正常多轮（2 轮，无工具调用，每轮正常 finished）。雏形阶段为声明式本地场景，不接真实模型/网络。",
+  "turns": [
+    {
+      "kind": "assistant",
+      "finished": true,
+      "toolCalls": [],
+      "text": "第一轮回答：已收到问题并给出结论。",
+      "eofNoFinish": false
+    },
+    {
+      "kind": "assistant",
+      "finished": true,
+      "toolCalls": [],
+      "text": "第二轮回答：补充说明后正常收尾。",
+      "eofNoFinish": false
+    }
+  ],
+  "expect": {
+    "turnCount": 2,
+    "toolCallCount": 0,
+    "allFinished": true,
+    "endedCleanly": true
+  }
+}

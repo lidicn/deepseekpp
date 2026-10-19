@@ -1,0 +1,26 @@
+{
+  "name": "stream-interrupted",
+  "description": "场景3：流中断（第 2 轮 EOF 但无 FINISHED）。雏形阶段为声明式本地场景，标记 eofNoFinish，供框架校验 endedCleanly=false；真实 SSE 接入留后续。",
+  "turns": [
+    {
+      "kind": "assistant",
+      "finished": true,
+      "toolCalls": [],
+      "text": "第一轮正常完成。",
+      "eofNoFinish": false
+    },
+    {
+      "kind": "assistant",
+      "finished": false,
+      "toolCalls": [],
+      "text": "第二轮说到一半流断开。",
+      "eofNoFinish": true
+    }
+  ],
+  "expect": {
+    "turnCount": 2,
+    "toolCallCount": 0,
+    "allFinished": false,
+    "endedCleanly": false
+  }
+}
