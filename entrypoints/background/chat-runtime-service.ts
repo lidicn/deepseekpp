@@ -754,6 +754,8 @@ export function createChatRuntimeService(
     if (wakeReconcileOperation) return wakeReconcileOperation;
 
     const operation = (async () => {
+      // M1-2c: 先试 resume-gate（flag 默认关，runner 为 null → 走 legacy）
+      // TODO: Step 3 完整接线：组装 runner 依赖后启用
       const interrupted = await dependencies.reconcileInterruptedChatLoop();
       if (interrupted) {
         await beginSessionReset();

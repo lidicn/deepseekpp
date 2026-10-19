@@ -1,8 +1,9 @@
 // M1-2c: resume-gate — feature flag + reconcile 接入点
 // 原则：flag 默认关；任何不确定都委托 legacy reconcile
 
-import type { ActiveChatLoop } from './active-loop';
-import type { InterruptedChatLoop } from './active-loop';
+import type { ActiveChatLoop, InterruptedChatLoop } from './active-loop';
+import type { ResumeToolLoopPlan, ResumeToolLoopResult } from './resume-tool-loop';
+import { rebuildJobFromMarker, resolveResumeIndex } from './resume-runner';
 
 export const RESUME_FLAGS_STORAGE_KEY = 'deepseek_pp_resume_flags';
 
@@ -45,10 +46,12 @@ export interface ResumeGateDeps {
   readMarker(): Promise<ActiveChatLoop | null>;
   legacyReconcile(): Promise<InterruptedChatLoop | null>;
   reportError(code: string, error: unknown): void;
-  // runner 由组合根注入，本模块只定义接口
+  // runner 由组合根注入
   runner: {
-    run(plan: unknown, signal: AbortSignal): Promise<{ terminalEmitted: boolean }>;
+    run(plan: ResumeToolLoopPlan, signal: AbortSignal): Promise<ResumeToolLoopResult>;
   } | null;
+  // 取消信号
+  abortController?: AbortController;
 }
 
 export async function createResumeGate(deps: ResumeGateDeps): Promise<() => Promise<InterruptedChatLoop | null>> {
@@ -87,8 +90,40 @@ export async function createResumeGate(deps: ResumeGateDeps): Promise<() => Prom
       return deps.legacyReconcile();
     }
 
-    // TODO: M1-2c 完整接入 runner.run(plan)
-    // 目前先走 legacy，等 resume-runner 实现完成后再接
+    // 重建 Job + 解析游标
+    const rebuildResult = rebuildJobFromMarker(snapshot, Date.now());
+    if (!rebuildResult.ok) {
+      deps.reportError('resume_rebuild_failed', new Error(rebuildResult.reason));
+      return deps.legacyReconcile();
+    }
+
+    const cursorResult = resolveResumeIndex(rebuildResult.job, snapshot);
+    if (!cursorResult.ok) {
+      deps.reportError('resume_cursor_failed', new Error(cursorResult.reason));
+      return deps.legacyReconcile();
+    }
+
+    // 组装 plan
+    const plan: ResumeToolLoopPlan = {
+      job: rebuildResult.job,
+      snapshot: rebuildResult.snapshot,
+      resumeIndex: cursorResult.cursor.resumeIndex,
+      depth: cursorResult.cursor.depth,
+      synthesized: cursorResult.cursor.synthesized,
+    };
+
+    // 跑 runner
+    const controller = deps.abortController ?? new AbortController();
+    try {
+      const result = await deps.runner.run(plan, controller.signal);
+      if (result.ok) {
+        return null; // 续跑成功，不需要 legacy
+      }
+      deps.reportError('resume_runner_failed', new Error(result.reason));
+    } catch (error) {
+      deps.reportError('resume_runner_threw', error);
+    }
+
     return deps.legacyReconcile();
   };
 }
