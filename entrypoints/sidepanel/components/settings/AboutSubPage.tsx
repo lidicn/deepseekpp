@@ -1,9 +1,38 @@
+import { useState } from 'react';
 import { useI18n } from '../../i18n';
 import { SettingsSection } from './primitives';
+import { sidepanelRuntimeClient } from '../../runtime-client';
 import type { SettingsState } from '../../controllers/useSettingsController';
+
+type CopyDiagnosticsState = 'idle' | 'copying' | 'copied' | 'failed';
 
 export default function AboutSubPage({ state }: { state: SettingsState }) {
   const { t } = useI18n();
+  const [copyState, setCopyState] = useState<CopyDiagnosticsState>('idle');
+
+  const copyDiagnostics = async () => {
+    if (copyState === 'copying') return;
+    setCopyState('copying');
+    try {
+      const snapshot = await sidepanelRuntimeClient.request({
+        type: 'GET_DIAGNOSTIC_SNAPSHOT',
+      });
+      await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
+      setCopyState('copied');
+    } catch {
+      setCopyState('failed');
+    } finally {
+      // 短暂反馈后复位按钮文案。
+      setTimeout(() => setCopyState('idle'), 2000);
+    }
+  };
+
+  const buttonLabel = copyState === 'copied'
+    ? t('sidepanel.settings.diagnosticsCopied')
+    : copyState === 'failed'
+      ? t('sidepanel.settings.copyDiagnosticsFailed')
+      : t('sidepanel.settings.copyDiagnostics');
+
   return (
     <div className="space-y-5">
       <SettingsSection
@@ -26,18 +55,29 @@ export default function AboutSubPage({ state }: { state: SettingsState }) {
             </div>
           </div>
         </div>
-        <a
-          href="https://github.com/zhu1090093659/deepseek-pp"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 text-[11px] mt-1 transition-colors hover:opacity-80"
-          style={{ color: 'var(--ds-text-secondary)' }}
-        >
-          <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-          </svg>
-          GitHub
-        </a>
+        <div className="flex items-center gap-3 mt-1.5">
+          <a
+            href="https://github.com/zhu1090093659/deepseek-pp"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1.5 text-[11px] transition-colors hover:opacity-80"
+            style={{ color: 'var(--ds-text-secondary)' }}
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
+            </svg>
+            GitHub
+          </a>
+          <button
+            type="button"
+            onClick={copyDiagnostics}
+            disabled={copyState === 'copying'}
+            className="flex items-center gap-1.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-50"
+            style={{ color: 'var(--ds-text-secondary)' }}
+          >
+            {buttonLabel}
+          </button>
+        </div>
       </SettingsSection>
     </div>
   );

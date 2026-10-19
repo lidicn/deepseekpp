@@ -478,6 +478,9 @@ export const sidepanel = {
     },
     aboutSection: 'About',
     aboutTagline: 'Agentic memory and Skill system',
+    copyDiagnostics: 'Copy diagnostics',
+    diagnosticsCopied: 'Copied',
+    copyDiagnosticsFailed: 'Copy failed, please retry',
   },
   promptControls: {
     title: 'Prompt controls',

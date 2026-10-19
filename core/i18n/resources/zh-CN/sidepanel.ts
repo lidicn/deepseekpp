@@ -478,6 +478,9 @@ export const sidepanel = {
     },
     aboutSection: '关于',
     aboutTagline: 'Agentic 记忆与 Skill 系统',
+    copyDiagnostics: '复制诊断信息',
+    diagnosticsCopied: '已复制',
+    copyDiagnosticsFailed: '复制失败，请重试',
   },
   promptControls: {
     title: '提示词控制',
