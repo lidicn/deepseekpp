@@ -5,6 +5,12 @@ import type { ToolExecutionRecord } from '../types';
 
 export const MAX_CHAT_TOOL_STEPS = 20;
 
+/**
+ * R07：无工具截断续轮（auto-continue）的单次上限。区别于 MAX_CHAT_TOOL_STEPS
+ * （含工具轮的外层步数），本上限只约束「流截断且无工具」的空转续轮，避免无限烧配额。
+ */
+export const MAX_AUTO_CONTINUE = 3;
+
 export const SIDEBAR_TOOL_RESULT_DETAIL_MAX = 4000;
 export const SIDEBAR_TOOL_RESULT_OUTPUT_MAX = 8000;
 export const SIDEBAR_TOOL_RESULT_ERROR_MAX = 400;

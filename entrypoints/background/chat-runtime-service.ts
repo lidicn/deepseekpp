@@ -38,7 +38,11 @@ import type {
 } from '../../core/tool/types';
 import type { ToolExecutionRecord } from '../../core/types';
 
-import { MAX_CHAT_TOOL_STEPS, serializeToolExecutions } from '../../core/chat/loop-contract';
+import {
+  MAX_AUTO_CONTINUE,
+  MAX_CHAT_TOOL_STEPS,
+  serializeToolExecutions,
+} from '../../core/chat/loop-contract';
 
 /**
  * R08：工具运行事件，随 CHAT_STREAM_CHUNK 广播给侧边栏工具面板。
@@ -285,6 +289,8 @@ export function createChatRuntimeService(
     excludeTabId?: number,
   ): Promise<void> => {
     let currentInput = input;
+    // R07: 无工具截断续轮单独计数，区别于含工具的 step，超限即停（防空转烧配额）。
+    let autoContinues = 0;
 
     for (let step = 0; step < MAX_CHAT_TOOL_STEPS; step++) {
       assertTurnActive(turn);
@@ -295,12 +301,15 @@ export function createChatRuntimeService(
       );
       assertTurnActive(turn);
       // R06: web 路径历史在服务端，本地只能粗估当前 prompt + 本轮已生成文本（非全量，见账本决策）。
-      const budgetText = `${currentInput.prompt ?? ''}\n${accumulated}`;
-      emitChunk(
-        turn,
-        { text: '', done: false, phase: 'answer', budget: evaluateBudgetForText(budgetText) },
-        excludeTabId,
-      );
+      // 仅 warn/critical 才广播，ok 不发 chunk，避免插队污染既有流顺序与取消判定。
+      const webBudget = evaluateBudgetForText(`${currentInput.prompt ?? ''}\n${accumulated}`);
+      if (webBudget.level !== 'ok') {
+        emitChunk(
+          turn,
+          { text: '', done: false, phase: 'answer', budget: webBudget },
+          excludeTabId,
+        );
+      }
       const result = await dependencies.submitWebPrompt({
         ...currentInput,
         powHeaders,
@@ -347,7 +356,18 @@ export function createChatRuntimeService(
         // 报告 R3 修复：流被截断且无工具调用时自动续轮，而非静默 done:true。
         // 只有在 parentMessageId 有效时才能续轮（首次请求即截断时 responseMessageId 可能为 null）。
         if (!result.finished && chatParentMessageId != null) {
-          console.log('[chat-runtime] truncated stream without tool calls, auto-continuing', { step });
+          // R07: 续轮次数超限 → 明确广播 exhausted，不再空转。
+          if (autoContinues >= MAX_AUTO_CONTINUE) {
+            console.log('[chat-runtime] auto-continue exhausted', { step, autoContinues });
+            emitChunk(turn, {
+              text: fullText,
+              done: true,
+              error: 'auto_continue_exhausted',
+            }, excludeTabId);
+            return;
+          }
+          autoContinues++;
+          console.log('[chat-runtime] truncated stream without tool calls, auto-continuing', { step, autoContinues });
           currentInput = {
             ...currentInput,
             prompt: dependencies.continueWithToolResults('(stream interrupted, no new tool results — please continue completing your answer)'),
@@ -433,20 +453,24 @@ export function createChatRuntimeService(
     excludeTabId?: number,
   ): Promise<OfficialDeepSeekMessage[]> => {
     let currentMessages = [...input.messages];
+    // R07: 无工具截断续轮单独计数，超限即停。
+    let autoContinues = 0;
 
     for (let step = 0; step < MAX_CHAT_TOOL_STEPS; step++) {
       assertTurnActive(turn);
       let accumulated = '';
       let reasoningAccumulated = '';
-      // R06: official 路径持有本地完整消息数组，按其全文粗估预算并随流广播档位。
-      const budgetText = currentMessages
-        .map((m) => m.content ?? '')
-        .join('\n');
-      emitChunk(
-        turn,
-        { text: '', done: false, phase: 'answer', budget: evaluateBudgetForText(budgetText) },
-        excludeTabId,
+      // R06: official 路径持有本地完整消息数组，按其全文粗估预算；仅 warn/critical 广播，ok 不发。
+      const officialBudget = evaluateBudgetForText(
+        currentMessages.map((m) => m.content ?? '').join('\n'),
       );
+      if (officialBudget.level !== 'ok') {
+        emitChunk(
+          turn,
+          { text: '', done: false, phase: 'answer', budget: officialBudget },
+          excludeTabId,
+        );
+      }
       const result = await dependencies.submitOfficialPrompt({
         ...input,
         messages: currentMessages,
@@ -497,8 +521,19 @@ export function createChatRuntimeService(
       }).catch(() => {});
       if (toolCalls.length === 0) {
         // 报告 R3 修复：official-API 路径 —— 截断且无工具时自动续轮。
+        // R07：续轮次数超限 → 明确广播 exhausted，不再空转。
         if (!result.finished) {
-          console.log('[chat-runtime] official-api truncated stream without tool calls, auto-continuing', { step });
+          if (autoContinues >= MAX_AUTO_CONTINUE) {
+            console.log('[chat-runtime] official auto-continue exhausted', { step, autoContinues });
+            emitChunk(turn, {
+              text: '',
+              done: true,
+              error: 'auto_continue_exhausted',
+            }, excludeTabId);
+            return currentMessages;
+          }
+          autoContinues++;
+          console.log('[chat-runtime] official-api truncated stream without tool calls, auto-continuing', { step, autoContinues });
           currentMessages = [
             ...currentMessages,
             {

@@ -11,6 +11,7 @@ import {
   type RuntimeCommandHandler,
 } from '../core/messaging/runtime-command-registry';
 import type { ModelTurn } from '../core/deepseek/automation-client-port';
+import { MAX_AUTO_CONTINUE } from '../core/chat/loop-contract';
 import type { ConversationExport, ConversationExportRequest } from '../core/export/types';
 import type { ToolDescriptor, ToolResult } from '../core/tool/types';
 import {
@@ -521,6 +522,40 @@ describe('interactive chat coordinator', () => {
       summary: 'ran successfully',
     });
     expect(typeof end![0].toolEvent!.durationMs).toBe('number');
+  });
+
+  it('R07 stops after MAX_AUTO_CONTINUE truncated continuations and broadcasts auto_continue_exhausted', async () => {
+    const dependencies = createChatDependencies();
+    vi.mocked(dependencies.buildPrompt).mockResolvedValue({
+      augmented: 'continue writing',
+      enabledDescriptors: [toolDescriptor()],
+    });
+    // 每一轮都：未完成(finished:false)、无工具、带 responseMessageId → 触发无工具截断续轮。
+    vi.mocked(dependencies.submitWebPrompt).mockImplementation((_input, callbacks) => {
+      callbacks.onTextChunk?.('partial answer', 'partial answer');
+      return Promise.resolve({
+        assistantText: 'partial answer',
+        responseMessageId: 101,
+        requestMessageId: 100,
+        finished: false,
+      } satisfies ModelTurn);
+    });
+    const service = createChatRuntimeService(dependencies);
+
+    await service.submitPrompt({ text: 'continue writing', refFileIds: [] }, 17);
+    // 第 1..MAX_AUTO_CONTINUE 轮续轮，第 MAX_AUTO_CONTINUE+1 轮拿到结果后超限停止。
+    await waitForCalls(dependencies.submitWebPrompt, MAX_AUTO_CONTINUE + 1);
+    await waitForCall(dependencies.markChatLoopFinished);
+
+    expect(dependencies.submitWebPrompt).toHaveBeenCalledTimes(MAX_AUTO_CONTINUE + 1);
+    const exhausted = vi.mocked(dependencies.broadcastChunk).mock.calls
+      .find(([chunk]) => chunk.error === 'auto_continue_exhausted');
+    expect(exhausted).toBeDefined();
+    expect(exhausted![0]).toMatchObject({
+      text: 'partial answer',
+      done: true,
+      error: 'auto_continue_exhausted',
+    });
   });
 
   it('aborts upload PoW/network work and waits for settlement on session reset', async () => {
