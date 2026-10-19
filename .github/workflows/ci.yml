@@ -45,5 +45,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check for zero-byte source files
+        run: |
+          # Audit P0-1: core source files must never be 0 bytes (installer.mjs regression).
+          # Find all tracked files that are empty and fail if any exist.
+          EMPTY_FILES=$(find . -type f -size 0 -not -path './.git/*' -not -path './node_modules/*' -not -path './dist/*' || true)
+          if [ -n "$EMPTY_FILES" ]; then
+            echo "::error::Found zero-byte files (must not be empty):"
+            echo "$EMPTY_FILES"
+            exit 1
+          fi
+          echo "No zero-byte files found."
+
       - name: Run quality gates
         run: npm run ci:quality
