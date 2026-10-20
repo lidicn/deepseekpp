@@ -1,13 +1,9 @@
 # 测试失败基线（P0-3）
 # 日期：2026-10-20（更新）
 # 来源：vitest run 全量
-# 总数：5 文件（2026-10-20 第二轮；G8b、deepseek-protocol-contract abort透传、
-# background-automation-wake-alarm、bundled-skill-compatibility 转绿后移除）
+# 总数：1 文件（2026-10-20 第二轮档4；memory-indexeddb-compatibility、remote-agent-watcher、
+# runtime-command-contract、tool-block-style 转绿后移除）
 # 用途：CI 只检查"有没有新增 failed"，不阻塞已知红
 # 修复一个就从这里删一行，不要新增这里的条目
 
-tests/memory-indexeddb-compatibility.test.ts
 tests/persistence-burst-budget.test.ts
-tests/remote-agent-watcher.test.ts
-tests/runtime-command-contract.test.ts
-tests/tool-block-style.test.ts
