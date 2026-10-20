@@ -24,6 +24,23 @@ import {
 
 const indexedDbFactory = new IDBFactory();
 
+// v1 records have no syncId; the v1→v2 migration assigns a fresh random one.
+// That value is intentionally non-deterministic, so compare every field except
+// syncId and only assert the assigned value is a well-formed UUID (the locked
+// fixed uuid from the old globalThis.crypto.randomUUID mock no longer applies).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function expectRowWithoutRandomSync(
+  rows: unknown[],
+  expected: Record<string, unknown>,
+): void {
+  expect(rows).toHaveLength(1);
+  const { syncId: _gotSyncId, ...rest } = rows[0] as Record<string, unknown>;
+  expect(typeof _gotSyncId === 'string' && UUID_RE.test(_gotSyncId)).toBe(true);
+  const { syncId: _expectedSyncId, ...expectedRest } = expected;
+  expect(rest).toEqual(expectedRest);
+}
+
 beforeAll(() => {
   vi.stubGlobal('indexedDB', indexedDbFactory);
   vi.stubGlobal('IDBKeyRange', IDBKeyRange);
@@ -53,18 +70,18 @@ describe('Memory historical IndexedDB compatibility', () => {
     const memories = db.table(MEMORY_TABLE_NAME);
 
     await db.open();
-    expect(await memories.toArray()).toEqual([{
+    expectRowWithoutRandomSync(await memories.toArray(), {
       ...MEMORY_V3_RECORD,
       archived: false,
       futureRecordField: MEMORY_V1_ADDITIVE_RECORD.futureRecordField,
-    }]);
+    });
     db.close();
     await db.open();
-    expect(await memories.toArray()).toEqual([{
+    expectRowWithoutRandomSync(await memories.toArray(), {
       ...MEMORY_V3_RECORD,
       archived: false,
       futureRecordField: MEMORY_V1_ADDITIVE_RECORD.futureRecordField,
-    }]);
+    });
 
     db.close();
     await deleteIndexedDb(MEMORY_DATABASE_NAME);
