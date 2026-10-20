@@ -46,6 +46,25 @@ const pathAllowlist = new Map([
   ['scripts/detect-flaky.mjs', 'developer CLI that reports flaky-test rounds to the console; never bundled and renders no user-facing UI'],
   ['scripts/perf-baseline.mjs', 'developer CLI that prints perf-baseline comparisons and warnings; never bundled and renders no user-facing UI'],
   ['scripts/test-with-baseline.mjs', 'CI gate script that prints baseline comparison results to the workflow log; never bundled and renders no user-facing UI'],
+  // 2026-10-20: 存量 i18n 债分类（第一批）。以下文件是纯内部面：LLM 提示词、
+  // 中文输入解析用的正则、console 调试日志、工具描述符元数据、启动自检诊断。
+  // 它们不渲染产品界面文案；对应的用户可见文案都在 locale 资源里。
+  ['core/chat/context-budget.ts', 'CJK code-point range used for token estimation; not display text'],
+  ['core/diagnostics/boot-health.ts', 'boot self-check record text consumed by the developer diagnostics surface; product UI copy is locale-backed'],
+  ['core/flags/flags.ts', 'feature-flag registry metadata surfaced only in flag introspection, not in product UI'],
+  ['core/inline-agent/pi/loop-adapter.ts', 'inline-agent console traces for image materialization; every user-facing agent notice comes from the inlineAgent locale resources'],
+  ['core/inline-agent/prompt.ts', 'zh-CN completion-marker regex used to detect finished answers in Chinese model output; not display text'],
+  ['core/instance/identity.ts', 'internal invariant error for an unknown instance context'],
+  ['core/memory/digest.ts', 'memory digest section labels fed to the LLM prompt; not rendered in product UI'],
+  ['core/memory/extractor.ts', 'zh-CN keyword regexes used to classify Chinese conversation content; not display text'],
+  ['core/memory/l2-injector.ts', 'L2 memory injection prefix embedded into the model prompt'],
+  ['core/memory/memory-search-tool.ts', 'memory_search tool descriptor and model-facing result text; the sidepanel memory UI is locale-backed'],
+  ['core/memory/organize-prompt.ts', 'natural-language memory organize prompt builder'],
+  ['core/tool/memory.ts', 'memory tool descriptors mirror the tool contract and are consumed by the model; sidepanel memory UI is locale-backed'],
+  ['core/remote-agent/watcher.ts', 'remote agent watcher internal diagnostics'],
+  ['core/tool/runtime.ts', 'tool runtime internal diagnostics recorded to the diagnostic log buffer'],
+  ['core/trace/report.ts', 'execution trace report internal diagnostics'],
+  ['entrypoints/background/chat-runtime-service.ts', 'background chat runtime internal diagnostics'],
 ]);
 
 const lineAllowlist = [
