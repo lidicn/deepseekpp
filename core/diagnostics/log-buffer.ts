@@ -41,6 +41,13 @@ export function createDiagnosticLogBuffer(
   let entries: DiagnosticLogEntry[] = [];
   let totalBytes = 0;
   let storageWritePending = false;
+  /**
+   * 真机修正（2026-10-20）：restore() 是异步的，修复前 persist() 不等它，
+   * 导致 SW 重启时「boot_ms 一条」先落盘，覆盖掉存储里的 300 条历史——
+   * 恰好在最需要诊断的时候（崩溃/重启后）丢掉全部线索。
+   * 现在：恢复完成前不写存储，恢复后把「恢复的历史 + 启动期间新记的」合并再写。
+   */
+  let restored = false;
 
   const entrySize = (entry: DiagnosticLogEntry): number =>
     JSON.stringify(entry).length;
@@ -56,6 +63,8 @@ export function createDiagnosticLogBuffer(
 
   /** Write-behind persist: schedule a single microtask to flush recent entries. */
   const persist = (): void => {
+    // 恢复完成前绝不写，避免用近乎空的缓冲覆盖历史。
+    if (!restored) return;
     if (storageWritePending) return;
     storageWritePending = true;
     queueMicrotask(() => {
@@ -69,18 +78,26 @@ export function createDiagnosticLogBuffer(
     });
   };
 
-  /** Restore from chrome.storage.local on startup. */
+  /** Restore from chrome.storage.local on startup, then flush whatever we buffered. */
   const restore = (): void => {
     try {
       void chrome.storage.local.get(STORAGE_KEY).then((data) => {
         const saved = data?.[STORAGE_KEY];
         if (Array.isArray(saved) && saved.length > 0) {
-          entries = saved;
-          totalBytes = saved.reduce((sum, e) => sum + entrySize(e), 0);
+          // 保留启动期间已经记录的事件，拼在历史之后。
+          entries = [...saved, ...entries];
+          totalBytes = entries.reduce((sum, e) => sum + entrySize(e), 0);
+          evict();
         }
+      }).catch(() => {
+        // 读取失败：保留内存中已有内容，允许后续写入。
+      }).finally(() => {
+        restored = true;
+        if (entries.length > 0) persist();
       });
     } catch {
       // Storage unavailable; start empty.
+      restored = true;
     }
   };
 

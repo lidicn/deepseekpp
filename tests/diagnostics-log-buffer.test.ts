@@ -50,4 +50,48 @@ describe('diagnostic log buffer', () => {
       expect(JSON.stringify(entry)).not.toContain('secret');
     }
   });
+
+  it('restores persisted history before writing, so a service-worker restart does not wipe the trail', async () => {
+    const saved = [
+      { ts: 1, level: 'info', source: 'tool-runtime', message: 'old-1' },
+      { ts: 2, level: 'info', source: 'tool-runtime', message: 'old-2' },
+    ];
+    const setCalls: Array<Record<string, unknown>> = [];
+    let releaseGet: (value: unknown) => void = () => {};
+    const pendingGet = new Promise((resolve) => { releaseGet = resolve; });
+
+    const originalChrome = (globalThis as { chrome?: unknown }).chrome;
+    (globalThis as { chrome?: unknown }).chrome = {
+      storage: {
+        local: {
+          get: () => pendingGet,
+          set: (value: Record<string, unknown>) => { setCalls.push(value); return Promise.resolve(); },
+          remove: () => Promise.resolve(),
+        },
+      },
+    };
+
+    try {
+      const buffer = createDiagnosticLogBuffer(100, 1024 * 1024);
+      // 恢复尚未完成时立刻记录（真实场景：SW 启动即写 boot_ms）
+      buffer.record({ level: 'info', source: 'boot', message: 'boot_ms' });
+
+      // 恢复完成前不得落盘，否则会用「仅一条」覆盖历史
+      expect(setCalls).toHaveLength(0);
+
+      releaseGet({ dpp_diagnostic_logs: saved });
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+
+      // 内存中应为「历史 + 启动期间新记的」
+      expect(buffer.snapshot().map((entry) => entry.message)).toEqual(['old-1', 'old-2', 'boot_ms']);
+
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+      expect(setCalls.length).toBeGreaterThan(0);
+      const written = setCalls[setCalls.length - 1];
+      const persisted = (written?.dpp_diagnostic_logs ?? []) as Array<{ message: string }>;
+      expect(persisted.map((entry) => entry.message)).toEqual(['old-1', 'old-2', 'boot_ms']);
+    } finally {
+      (globalThis as { chrome?: unknown }).chrome = originalChrome;
+    }
+  });
 });
