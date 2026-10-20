@@ -263,6 +263,7 @@ import {
 } from '../core/messaging/runtime-boundary';
 import { requiresCurrentToolAuthorizationSubject } from '../core/messaging/tool-runtime-contracts';
 import { createRuntimeCommandRegistry } from '../core/messaging/runtime-command-registry';
+import { diagnosticLogBuffer } from '../core/diagnostics/log-buffer';
 import { createBootstrapRuntimeHandlers } from './background/bootstrap-handlers';
 import { createDiagnosticsRuntimeHandlers } from './background/diagnostics-handlers';
 import { createTrackedLocalStateMutationRunner } from './background/local-state-mutation-runner';
@@ -854,6 +855,7 @@ type ActionApi = {
 };
 
 export default defineBackground(() => {
+  const BOOT_T0 = performance.now();
   console.log('[DeepSeek++] background service worker starting');
   void syncLocalRecoveryBarrier.ensureReady().catch(acknowledgeReportedSyncRecoveryFailure);
   enableSidePanelActionClick();
@@ -897,6 +899,14 @@ export default defineBackground(() => {
     .then(() => scanDueAutomationsFromWake()
       .catch((error) => reportBackgroundStartupError('automation_startup_scan_failed', error)))
     .catch(acknowledgeReportedSyncRecoveryFailure);
+
+  // W23: 同步启动注册全部派发后记录 SW 同步启动耗时（异步后台任务不计入）
+  diagnosticLogBuffer.record({
+    level: 'info',
+    source: 'boot',
+    message: 'boot_ms',
+    details: String(Math.round(performance.now() - BOOT_T0)),
+  });
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // 前置处理：自动提取记忆消息
