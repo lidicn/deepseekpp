@@ -1,5 +1,6 @@
 import type { ToolCall, ToolDescriptor, ToolExecutionRecord } from '../types';
 import type { SupportedLocale } from '../i18n';
+import type { TraceEvent } from '../trace/report';
 
 export interface InlineAgentStartPayload {
   loopId: string;
@@ -86,6 +87,15 @@ export interface InlineAgentTraceRecord {
    * group instead — the count must not be lost on refresh.
    */
   initialExecutions?: ToolExecutionRecord[];
+  /**
+   * W29 轨迹事件流（2026-10-21 接线）。
+   *
+   * 「断流」类问题长期无法定位，是因为 loop-adapter 的续轮判定点没有任何记录。
+   * 这里保存紧凑的事件流（无正文），供 renderTraceReport 渲染成可读报告：
+   * 能直接看出「哪一轮 OPEN（从未结束）」「continuation.decision 是 true 还是 false」
+   * 「turn.end 的 stopReason 是什么」。旧记录没有该字段，解码时按空数组处理。
+   */
+  events?: TraceEvent[];
   totalSteps: number;
   totalTools: number;
   finalText: string;
@@ -126,13 +136,33 @@ export interface InlineAgentLoopCompleteMsg {
   totalSteps: number;
   totalTools: number;
   finalText: string;
+  /**
+   * W29 观测（2026-10-21）：这一轮是怎么结束的。
+   *
+   * 修复「静默结束」类 bug 的前提是能区分结束原因。此前 finalize 的两个
+   * `signal.aborted` 分支都会 post `finalText: ''` 的 COMPLETE，从消息上无法
+   * 与「正常但模型没产出」区分开，导致断流长期无法定位。
+   *
+   * - 'finalized'    正常收尾（finalText 可能为空，表示模型确实没产出）
+   * - 'aborted'      信号被 abort（用户停止 / 步骤超时 / 通道断开），静默结束
+   * - 'turn_error'   收尾时发现上一轮是错误轮
+   * - 'loop_threw'   循环抛出异常
+   */
+  stopReason?: InlineAgentStopReason;
 }
+
+export type InlineAgentStopReason =
+  | 'finalized'
+  | 'aborted'
+  | 'turn_error'
+  | 'loop_threw';
 
 export interface InlineAgentLoopErrorMsg {
   loopId: string;
   stepIndex: number;
   totalTools: number;
   error: string;
+  stopReason?: InlineAgentStopReason;
 }
 
 export const INLINE_AGENT_MAX_STEPS = 25;

@@ -620,6 +620,9 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
         totalSteps: stepIndex,
         totalTools: collectedExecutions.length,
         finalText: '',
+        // W29: 标注这是 abort 导致的静默结束（不是模型没产出），否则无法与
+        // 「正常但空答案」区分，断流取证会失去方向。
+        stopReason: 'aborted',
       });
       return;
     }
@@ -629,6 +632,7 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
         stepIndex,
         totalTools: collectedExecutions.length,
         error: lastErrorMessage,
+        stopReason: 'turn_error',
       });
       return;
     }
@@ -650,6 +654,7 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
       totalSteps: lastStepCompleted ? stepIndex : stepIndex + 1,
       totalTools: collectedExecutions.length,
       finalText,
+      stopReason: 'finalized',
     });
   };
 
@@ -677,6 +682,7 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
         totalSteps: stepIndex,
         totalTools: collectedExecutions.length,
         finalText: '',
+        stopReason: 'aborted',
       });
       return;
     }
@@ -685,6 +691,7 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
       stepIndex,
       totalTools: collectedExecutions.length,
       error: err instanceof Error ? err.message : String(err),
+      stopReason: 'loop_threw',
     });
   }
 }

@@ -1,0 +1,163 @@
+/**
+ * W29 轮次跟踪器（2026-10-21 接线）。
+ *
+ * 把「消息流 → TraceEvent 流」的映射逻辑集中在纯模块里，内容脚本只负责调用，
+ * 这样两件事都能成立：content.ts 的改动极小；映射逻辑可以单测，不必上真机。
+ *
+ * 关键设计：
+ * - turnId 按「步」划分（loopId:stepIndex）。inline agent 的一次模型请求＝一个 turn。
+ * - SSE 帧不逐帧记录，按 kind 累计，达到阈值或 flush 时只发一条聚合事件，
+ *   避免事件数组被刷屏（100 帧就撑爆 200 条上限）。
+ * - 每次 emit 都回调 onChange，由调用方决定「立即落盘」还是「防抖落盘」：
+ *   turn.start 必须立即落盘——否则进程被杀时连「这一轮开始过」都查不到（Bug B 的取证前提）。
+ */
+
+import { createTraceEventCollector, type TraceEventCollector } from './collector';
+import type {
+  ContinuationReason,
+  SseFrameKind,
+  TraceEvent,
+  TraceEventType,
+} from './report';
+
+/** SSE 累计到多少帧就发一条聚合事件。 */
+export const SSE_FLUSH_THRESHOLD = 20;
+
+export interface TraceEventChange {
+  event: TraceEvent;
+  events: readonly TraceEvent[];
+}
+
+export interface TurnTrackerOptions {
+  limit?: number;
+  now?: () => number;
+  onChange?: (change: TraceEventChange) => void;
+}
+
+export interface SseCounts {
+  text: number;
+  think: number;
+  tool: number;
+}
+
+export interface TurnTracker {
+  /** 开始新的一轮。返回该轮的 turnId。 */
+  startTurn(turnId: string): string;
+  sseFrame(kind: SseFrameKind, count?: number): void;
+  /** 把累计的 SSE 计数冲刷成一条 sse.frame 事件（若为 0 则不产生事件）。 */
+  flushSse(): void;
+  toolParsed(name: string, status: 'OK' | 'FAIL'): void;
+  toolExec(name: string, durationMs: number, ok: boolean): void;
+  continuationDecision(reason: ContinuationReason, triggered: boolean): void;
+  /** 结束当前轮。传入的 finished 表示「整轮 agent 是否全部结束」。 */
+  endTurn(stopReason: string, finished: boolean): void;
+  /** 当前轮是否已经发过 turn.end。用于避免重复收尾。 */
+  readonly currentTurnEnded: boolean;
+  readonly currentTurnId: string | null;
+  readonly counts: SseCounts;
+  snapshot(): readonly TraceEvent[];
+  readonly dropped: number;
+}
+
+export function createTurnTracker(options: TurnTrackerOptions = {}): TurnTracker {
+  const now = options.now ?? (() => Date.now());
+  const collector: TraceEventCollector = createTraceEventCollector(options.limit);
+  const counts: SseCounts = { text: 0, think: 0, tool: 0 };
+  let turnId: string | null = null;
+  let turnEnded = false;
+
+  const emit = (event: TraceEvent): void => {
+    collector.push(event);
+    try {
+      options.onChange?.({ event, events: collector.snapshot() });
+    } catch {
+      // 观测回调失败绝不影响主流程。
+    }
+  };
+
+  const emitWithTurn = (
+    t: TraceEventType,
+    extra: Record<string, unknown>,
+  ): void => {
+    if (!turnId) return; // 没有活动轮次时丢弃，避免产生无归属事件。
+    emit({
+      t,
+      turnId,
+      timestamp: now(),
+      ...extra,
+    } as TraceEvent);
+  };
+
+  return {
+    startTurn(nextTurnId: string): string {
+      turnId = nextTurnId;
+      turnEnded = false;
+      counts.text = 0;
+      counts.think = 0;
+      counts.tool = 0;
+      emitWithTurn('turn.start', {});
+      return nextTurnId;
+    },
+
+    sseFrame(kind: SseFrameKind, count = 1): void {
+      if (!turnId) return;
+      counts[kind] += count;
+      const total = counts.text + counts.think + counts.tool;
+      if (total > 0 && total % SSE_FLUSH_THRESHOLD === 0) this.flushSse();
+    },
+
+    flushSse(): void {
+      const total = counts.text + counts.think + counts.tool;
+      if (!turnId || total === 0) return;
+      // 一次只发一条：报告层按 kind 求和，逐条发没有额外信息量。
+      emitWithTurn('sse.frame', { kind: dominantKind(counts), count: total });
+      counts.text = 0;
+      counts.think = 0;
+      counts.tool = 0;
+    },
+
+    toolParsed(name: string, status: 'OK' | 'FAIL'): void {
+      emitWithTurn('tool.parsed', { name, status });
+    },
+
+    toolExec(name: string, durationMs: number, ok: boolean): void {
+      emitWithTurn('tool.exec', { name, durationMs, ok });
+    },
+
+    continuationDecision(reason: ContinuationReason, triggered: boolean): void {
+      emitWithTurn('continuation.decision', { reason, triggered });
+    },
+
+    endTurn(stopReason: string, finished: boolean): void {
+      if (!turnId || turnEnded) return;
+      turnEnded = true;
+      emitWithTurn('turn.end', { stopReason, finished });
+    },
+
+    get currentTurnEnded(): boolean {
+      return turnEnded;
+    },
+
+    get currentTurnId(): string | null {
+      return turnId;
+    },
+
+    get counts(): SseCounts {
+      return { ...counts };
+    },
+
+    snapshot(): readonly TraceEvent[] {
+      return collector.snapshot();
+    },
+
+    get dropped(): number {
+      return collector.dropped;
+    },
+  };
+}
+
+function dominantKind(counts: SseCounts): SseFrameKind {
+  if (counts.tool >= counts.text && counts.tool >= counts.think) return 'tool';
+  if (counts.think >= counts.text) return 'think';
+  return 'text';
+}

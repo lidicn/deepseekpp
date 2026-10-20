@@ -481,6 +481,12 @@ export const sidepanel = {
     copyDiagnostics: 'Copy diagnostics',
     diagnosticsCopied: 'Copied',
     copyDiagnosticsFailed: 'Copy failed, please retry',
+    traceReportTitle: 'Recent run trace',
+    traceReportDescription: 'Readable event log of the latest agent run: which turns finished, and where one stopped.',
+    traceReportShow: 'Load trace',
+    traceReportHide: 'Hide trace',
+    traceReportLoading: 'Loading…',
+    traceReportEmpty: 'No trace recorded yet. Run a task that calls a tool, then reload this section.',
   },
   promptControls: {
     title: 'Prompt controls',

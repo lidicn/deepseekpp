@@ -481,6 +481,12 @@ export const sidepanel = {
     copyDiagnostics: '复制诊断信息',
     diagnosticsCopied: '已复制',
     copyDiagnosticsFailed: '复制失败，请重试',
+    traceReportTitle: '最近一次执行轨迹',
+    traceReportDescription: '最新一次 agent 运行的可读事件日志：哪些轮完成了、哪一轮停在哪里。',
+    traceReportShow: '查看轨迹',
+    traceReportHide: '收起轨迹',
+    traceReportLoading: '加载中…',
+    traceReportEmpty: '还没有轨迹记录。先跑一个会调用工具的任务，再回到这里刷新。',
   },
   promptControls: {
     title: '提示词控制',

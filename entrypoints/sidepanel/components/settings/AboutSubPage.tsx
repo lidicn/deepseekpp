@@ -9,6 +9,29 @@ type CopyDiagnosticsState = 'idle' | 'copying' | 'copied' | 'failed';
 export default function AboutSubPage({ state }: { state: SettingsState }) {
   const { t } = useI18n();
   const [copyState, setCopyState] = useState<CopyDiagnosticsState>('idle');
+  // W29 观测出口：让用户自己也能查「上一次跑在哪一步停下」。
+  const [traceReport, setTraceReport] = useState<string | null>(null);
+  const [traceLoading, setTraceLoading] = useState(false);
+
+  const toggleTraceReport = async () => {
+    if (traceLoading) return;
+    if (traceReport !== null) {
+      setTraceReport(null);
+      return;
+    }
+    setTraceLoading(true);
+    try {
+      const snapshot = await sidepanelRuntimeClient.request({
+        type: 'GET_DIAGNOSTIC_SNAPSHOT',
+      });
+      const report = (snapshot as { traceReport?: unknown } | null)?.traceReport;
+      setTraceReport(typeof report === 'string' ? report : '');
+    } catch {
+      setTraceReport('');
+    } finally {
+      setTraceLoading(false);
+    }
+  };
 
   const copyDiagnostics = async () => {
     if (copyState === 'copying') return;
@@ -78,6 +101,34 @@ export default function AboutSubPage({ state }: { state: SettingsState }) {
             {buttonLabel}
           </button>
         </div>
+      </SettingsSection>
+      <SettingsSection
+        title={t('sidepanel.settings.traceReportTitle')}
+        description={t('sidepanel.settings.traceReportDescription')}
+      >
+        <button
+          type="button"
+          onClick={toggleTraceReport}
+          disabled={traceLoading}
+          className="flex items-center gap-1.5 text-[11px] transition-opacity hover:opacity-80 disabled:opacity-50"
+          style={{ color: 'var(--ds-text-secondary)' }}
+          data-testid="trace-report-toggle"
+        >
+          {traceLoading
+            ? t('sidepanel.settings.traceReportLoading')
+            : traceReport === null
+              ? t('sidepanel.settings.traceReportShow')
+              : t('sidepanel.settings.traceReportHide')}
+        </button>
+        {traceReport !== null && (
+          <pre
+            data-testid="trace-report-body"
+            className="mt-2 max-h-72 overflow-auto rounded-lg p-2.5 text-[10px] leading-relaxed whitespace-pre-wrap break-words"
+            style={{ background: 'var(--ds-surface-sunken)', color: 'var(--ds-text-secondary)' }}
+          >
+            {traceReport || t('sidepanel.settings.traceReportEmpty')}
+          </pre>
+        )}
       </SettingsSection>
     </div>
   );

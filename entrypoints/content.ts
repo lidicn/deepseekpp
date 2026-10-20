@@ -191,6 +191,11 @@ import {
   upsertPersistedInlineAgentTrace,
 } from "../core/inline-agent/trace-store";
 import {
+  createTurnTracker,
+  type TurnTracker,
+} from "../core/trace/turn-tracker";
+import { setTraceEventSink } from "../core/trace/collector";
+import {
   chainExternalizedPayloadWrite,
   isExternalizedToolPayloadCall,
 } from "../core/tool/externalized-payload";
@@ -5093,6 +5098,8 @@ async function startInlineAgentIfNeeded(
     anchorContent,
   );
   observeReportedPersistence(writeInlineAgentTrace(activeInlineAgentTrace));
+  // W29：开始采集轨迹事件（turn.start 会立即落盘）。
+  beginTraceTracking(loopId);
 
   inlineAgentContainer = container;
   // Stamp the live container with its trace id so the restore dedupe check
@@ -5957,13 +5964,16 @@ function handleInlineAgentLoopEvent(
       agentStatusBarCurrentTool = null;
       updateAgentStatusBar("running", { step: msg.stepIndex });
       handleAgentStepStarted(msg);
+      advanceTraceTurn(msg.loopId, msg.stepIndex);
       break;
     }
     case "AGENT_STREAM_CHUNK":
       setPetState("speaking");
+      activeTraceTracker?.sseFrame("text");
       handleAgentStreamChunk(data as InlineAgentStreamChunkMsg);
       break;
     case "AGENT_REASONING_CHUNK":
+      activeTraceTracker?.sseFrame("think");
       handleAgentReasoningChunk(data as InlineAgentReasoningChunkMsg);
       break;
     case "AGENT_TOKEN_SPEED": {
@@ -5979,14 +5989,20 @@ function handleInlineAgentLoopEvent(
       agentStatusBarCurrentTool = msg.call.name;
       updateAgentStatusBar("running", { step: msg.stepIndex, tool: msg.call.name });
       handleAgentToolDetected(msg);
+      activeTraceTracker?.toolParsed(msg.call.name, "OK");
       break;
     }
-    case "AGENT_STEP_COMPLETE":
+    case "AGENT_STEP_COMPLETE": {
       // 不再 schedulePetIdle：loop 可能还在跑下一轮，宠物保持 working
-      handleAgentStepComplete(data as InlineAgentStepCompleteMsg);
+      const msg = data as InlineAgentStepCompleteMsg;
+      handleAgentStepComplete(msg);
+      flushTraceStep(msg.toolExecutions);
       break;
+    }
     case "AGENT_LOOP_COMPLETE": {
       const msg = data as InlineAgentLoopCompleteMsg;
+      // W29：先收尾轨迹（含 stopReason），再走原有的完成处理。
+      finishTraceRun(msg.stopReason ?? "finalized", msg.finalText.trim().length > 0);
       const terminalTask = handleAgentLoopComplete(msg, modelBackend);
       setPetState("success");
       schedulePetIdle(PET_FEEDBACK_DELAY_MS);
@@ -5999,6 +6015,7 @@ function handleInlineAgentLoopEvent(
     }
     case "AGENT_LOOP_ERROR": {
       const msg = data as InlineAgentLoopErrorMsg;
+      finishTraceRun(msg.stopReason ?? "turn_error", false);
       setPetState("error");
       handleAgentLoopError(msg);
       schedulePetIdle(PET_FEEDBACK_DELAY_MS);
@@ -7428,6 +7445,76 @@ function isInlineAgentStepTextTheFinalAnswer(
     normalizedStep === normalizedAnswer ||
     normalizedAnswer.startsWith(normalizedStep)
   );
+}
+
+/**
+ * W29 观测接线（2026-10-21）。
+ *
+ * `core/trace/report.ts` 定义了 TraceEvent 与 renderTraceReport，但从来没人发过事件，
+ * 「断流」问题因此长期无法定位。这里把消息流映射成事件流并挂到当前 trace 上。
+ *
+ * 关键取舍：turn.start 立即落盘，其余防抖。否则进程被杀时连「这一轮开始过」都查不到，
+ * 而那正是 Bug B「连 trace 都没有」的取证前提。
+ */
+let activeTraceTracker: TurnTracker | null = null;
+
+function syncTraceEvents(immediate: boolean): void {
+  if (!activeTraceTracker || !activeInlineAgentTrace) return;
+  const events = [...activeTraceTracker.snapshot()];
+  updateActiveInlineAgentTrace((trace) => ({ ...trace, events }), { immediate });
+}
+
+function endTraceTracking(): void {
+  setTraceEventSink(null);
+  activeTraceTracker = null;
+}
+
+function beginTraceTracking(loopId: string): void {
+  endTraceTracking();
+  activeTraceTracker = createTurnTracker({
+    onChange: ({ event }) => {
+      syncTraceEvents(event.t === "turn.start");
+    },
+  });
+  setTraceEventSink((event) => {
+    if (event.t === "continuation.decision") {
+      activeTraceTracker?.continuationDecision(event.reason, event.triggered);
+    }
+  });
+  activeTraceTracker.startTurn(`${loopId}:0`);
+}
+
+/** 进入下一步：先把上一步的 SSE 冲平并收尾（未收尾时标注 step_advanced）。 */
+function advanceTraceTurn(loopId: string, stepIndex: number): void {
+  if (!activeTraceTracker) return;
+  activeTraceTracker.flushSse();
+  if (!activeTraceTracker.currentTurnEnded) {
+    activeTraceTracker.endTurn("step_advanced", false);
+  }
+  activeTraceTracker.startTurn(`${loopId}:${stepIndex}`);
+}
+
+/** 一步完成：记录本步的工具执行结果。turn 的收尾留给 loop 级事件。 */
+function flushTraceStep(toolExecutions: readonly { name: string; result?: { ok?: boolean; durationMs?: number } }[]): void {
+  if (!activeTraceTracker) return;
+  for (const exec of toolExecutions) {
+    activeTraceTracker.toolExec(exec.name, exec.result?.durationMs ?? 0, Boolean(exec.result?.ok));
+  }
+  activeTraceTracker.flushSse();
+}
+
+/**
+ * 整轮结束：收尾、落盘、解绑。
+ *
+ * `finished` 的语义是「用户拿到东西了」：只有 finalized 且 finalText 非空才算完成。
+ * 这样「aborted / 空文本」会渲染成 TRUNCATED ← 断在这里，正是 Bug A 的形态。
+ */
+function finishTraceRun(stopReason: string, hasFinalText: boolean): void {
+  if (!activeTraceTracker) return;
+  activeTraceTracker.flushSse();
+  activeTraceTracker.endTurn(stopReason, stopReason === "finalized" && hasFinalText);
+  syncTraceEvents(true);
+  endTraceTracking();
 }
 
 function updateActiveInlineAgentTrace(
