@@ -261,14 +261,21 @@ async function executeRuntimeToolCall(
   const callName = authorized.call.name;
   const isLongRunning = LONG_RUNNING_TOOL_NAMES.has(callName);
   const isInteractive = INTERACTIVE_TOOL_NAMES.has(callName);
-  const fallbackTimeoutMs = isLongRunning
+  const categoryTimeoutMs = isLongRunning
     ? LONG_RUNNING_TOOL_TIMEOUT_MS
     : isInteractive
       ? INTERACTIVE_TOOL_TIMEOUT_MS
-      : DEFAULT_TOOL_TIMEOUT_MS;
+      : null;
+  // 真机修正（2026-10-20）：分类预算必须**优先于** MCP 描述符的 timeoutMs。
+  // 依据：core/mcp/client-descriptor.ts:72 把 descriptor.execution.timeoutMs 设为
+  // server.timeouts.requestMs（shell 服务器 = 120_000，见 core/shell/policy.ts:52）。
+  // 原实现把 descriptor 放在分类预算之前，导致长任务/交互型预算永远不生效——
+  // 实测 Start-Sleep 150s 在 120.07s 被判 tool_timeout。
+  // 正确优先级：调用方显式覆盖 > 分类预算 > 描述符预算 > 全局兜底。
   const effectiveTimeoutMs = options.timeoutMs
+    ?? categoryTimeoutMs
     ?? executionDescriptor.execution.timeoutMs
-    ?? fallbackTimeoutMs;
+    ?? DEFAULT_TOOL_TIMEOUT_MS;
   try {
     resolvedCall = await resolveToolCallPayload(
       authorized.call,
