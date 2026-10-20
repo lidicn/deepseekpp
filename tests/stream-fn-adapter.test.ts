@@ -253,7 +253,12 @@ describe('createDeepSeekStreamFn', () => {
     const controller = new AbortController();
     adapterMocks.submitPromptStreaming.mockImplementation((_input, _handlers, signal) =>
       new Promise((_resolve, reject) => {
-        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+        // Standard AbortSignal/fetch semantics: an already-aborted signal rejects
+        // immediately; a later abort fires the listener. Without the immediate
+        // branch a pre-aborted signal leaves the promise pending forever.
+        const onAbort = () => reject(signal.reason);
+        if (signal?.aborted) reject(signal.reason);
+        else signal?.addEventListener('abort', onAbort, { once: true });
       }),
     );
 
