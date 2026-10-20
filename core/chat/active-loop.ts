@@ -39,7 +39,7 @@ function registerKeepaliveAlarm(): boolean {
   }).alarms;
   if (!alarms) return false;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises -- MV3 chrome.alarms.create 为 fire-and-forget 注册，无需 await 其返回值，注册失败已由 try/catch 兜底
     alarms.create(CHAT_LOOP_KEEPALIVE_ALARM, {
       periodInMinutes: CHAT_LOOP_KEEPALIVE_PERIOD_MIN,
     });
@@ -60,7 +60,7 @@ function clearKeepaliveAlarm(): void {
   }).alarms;
   if (!alarms) return;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises -- MV3 chrome.alarms.clear 为 fire-and-forget 清理，无需 await，失败已由 try/catch 兜底
     alarms.clear(CHAT_LOOP_KEEPALIVE_ALARM);
     console.log('[DPP] SW keepalive alarm cleared');
     keepaliveRegistered = false;

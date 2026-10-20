@@ -86,7 +86,7 @@ describe('D1-03c streamFn tail probe', () => {
     }
     clearTimeout(timeout);
 
-    // eslint-disable-next-line no-console
+    // eslint-disable-next-line no-console -- 本探针用例需把事件/超时/轨迹打到控制台供 D1-03c 人工核对，非生产代码
     console.log('[D1-03c] events=', JSON.stringify(events), 'timedOut=', timedOut, 'trace=', JSON.stringify(trace));
     expect(events.length).toBeGreaterThan(0);
   }, 30000);

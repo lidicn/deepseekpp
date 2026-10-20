@@ -83,7 +83,7 @@ describe('GitHub importer remote frontmatter description sanitization', () => {
     const raw = ['---', 'name: ctrl-desc', `description: ${descriptionValue}`, '---', '', '# Ctrl', '', 'text'].join('\n');
 
     const { description } = parseGitHubSkillDoc(raw, 'skills/demo/SKILL.md');
-    // eslint-disable-next-line no-control-regex
+    // eslint-disable-next-line no-control-regex -- 断言描述不含 C0/C1 控制字符，正则必须显式覆盖控制字符区间，无法用普通字符替代
     expect(description).not.toMatch(/[\u0000-\u001F\u007F-\u009F]/);
     expect(description).toBe('a b c d');
   });
