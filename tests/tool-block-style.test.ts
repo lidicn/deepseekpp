@@ -181,10 +181,14 @@ describe('content tool block styles', () => {
     const loopStart = source.indexOf('async function startInlineAgentLoop(');
     const loopEnd = source.indexOf('\nfunction handleInlineAgentLoopEvent(', loopStart);
     const loopSource = source.slice(loopStart, loopEnd);
-    expect(loopSource.indexOf('const terminalResults = await Promise.all(terminalTasks);'))
-      .toBeLessThan(loopSource.indexOf('await closeContentToolAuthorization(authorizationRequestKey);'));
-    expect(loopSource.indexOf('await closeContentToolAuthorization(authorizationRequestKey);'))
-      .toBeLessThan(loopSource.indexOf('reloadInlineAgentNativeHistory();'));
+    // Locate the teardown close relative to terminalResults, not the first
+    // occurrence: the loop also closes the *old* authorization inside the
+    // auto-reauth branch (tool_authorization_missing/stale), which sits earlier
+    // and must not be mistaken for the finally-block teardown.
+    const terminalIdx = loopSource.indexOf('const terminalResults = await Promise.all(terminalTasks);');
+    const closeIdx = loopSource.indexOf('await closeContentToolAuthorization(authorizationRequestKey);', terminalIdx);
+    expect(closeIdx).toBeGreaterThan(terminalIdx);
+    expect(loopSource.indexOf('reloadInlineAgentNativeHistory();', closeIdx)).toBeGreaterThan(closeIdx);
     expect(source).not.toContain('deliverInlineAgentFinalAnswerNatively');
     expect(source).not.toContain('registerAgentReplay');
     const fetchHook = readFileSync(
