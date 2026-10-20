@@ -154,7 +154,9 @@ describe('Shell Native Host external contract', () => {
       id: null,
       error: { code: -32600, message: 'Invalid JSON-RPC request.' },
     });
-  });
+    // Two real host-process round trips exceed the 5s default on a loaded machine;
+    // budget the same generous ceiling as the other live-host cases.
+  }, 140_000);
 });
 
 describe('Shell Host installer external contract', () => {
