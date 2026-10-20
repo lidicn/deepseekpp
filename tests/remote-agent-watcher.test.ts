@@ -139,6 +139,18 @@ async function attempt(): Promise<void> {
   await receiptWindow();
 }
 
+/**
+ * Production resend cooldown (RESEND_RETRY_COOLDOWN_MS = 8000) suppresses a
+ * retry inside the window; advance past it between deliberate retries so the
+ * next poll actually re-issues instead of being throttled this cycle.
+ */
+const RESEND_COOLDOWN_MS = 8_000;
+async function advancePastCooldown(): Promise<void> {
+  await drain();
+  vi.advanceTimersByTime(RESEND_COOLDOWN_MS + 100);
+  await drain();
+}
+
 function startWatcher(): void {
   startRemoteAgentWatcher({
     chatSessionId: CHAT_SESSION_ID,
@@ -240,7 +252,9 @@ describe('remote agent watcher', () => {
     expect(notices).toEqual([]);
 
     // The cursor must still sit on message 1, so the next poll re-detects the
-    // same remote message instead of treating it as handled.
+    // same remote message instead of treating it as handled. Advance past the
+    // 8s resend cooldown first, otherwise the poll throttles the retry.
+    await advancePastCooldown();
     await attempt();
     expect(sent).toHaveLength(2);
     expect(notices).toEqual([]);
@@ -282,17 +296,24 @@ describe('remote agent watcher', () => {
     histories.get(CHAT_SESSION_ID)!.push(userMessage(2, remoteMessage));
 
     for (let i = 0; i < MAX_RETRIES; i++) {
+      // Cross the 8s resend cooldown before each deliberate retry so the poll
+      // re-issues instead of being throttled; notices stay empty until cap.
+      await advancePastCooldown();
       await attempt();
       expect(notices).toEqual([]);
     }
     expect(sent).toHaveLength(MAX_RETRIES);
 
     // The attempt after the cap notifies once and stops, rather than looping on
-    // the same message for the rest of the session.
+    // the same message for the rest of the session. Cross the cooldown first so
+    // beginResendAttempt reaches the exhausted branch (pending cleared) instead
+    // of the cooldown-skip branch, which never notifies.
+    await advancePastCooldown();
     await attempt();
     expect(sent).toHaveLength(MAX_RETRIES);
     expect(notices).toEqual([remoteMessage]);
 
+    await advancePastCooldown();
     await attempt();
     expect(sent).toHaveLength(MAX_RETRIES);
     expect(notices).toEqual([remoteMessage]);
