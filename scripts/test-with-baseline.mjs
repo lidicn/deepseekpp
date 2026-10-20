@@ -32,17 +32,29 @@ try {
     cwd: root,
     stdio: 'pipe',
     encoding: 'utf8',
-    timeout: 300000,
+    // 2026-10-20 fix: 原为 300_000（5 分钟），但全量套件实测 314s~712s，
+    // 会在中途杀进程并只拿到残缺输出，导致「新增失败」误报。
+    timeout: 1_500_000,
+    maxBuffer: 64 * 1024 * 1024,
   });
 } catch (e) {
   output = (e.stdout || '') + (e.stderr || '');
+  if (e.killed || e.signal) {
+    console.error(`[baseline] ⚠ vitest 被终止（${e.signal ?? 'timeout'}），结果不完整`);
+  }
 }
 
-// 解析 failed 用例（格式：tests/xxx.test.ts > suite > test name）
+// 解析 failed 用例。
+// vitest 4 的 verbose 输出是单行：` × tests/a.test.ts > suite > case 123ms`
+// 所以捕获到的 f 形如 `tests/a.test.ts > suite > case`（已含文件名）。
+//
+// 2026-10-20 fix: 正则必须锚定行首。原本用 /\s*×\s+(.+?)\s+\d+ms/，
+// 遇到 describe 名里自带 `×` 的用例（如 `pi bridge × runtime authorization (A2-T3)`）
+// 会从那个 `×` 开始截，导致结果丢掉文件名与前缀、基线永远匹配不上。
 const failed = new Set();
 const lines = output.split('\n');
 for (const line of lines) {
-  const m = line.match(/\s*×\s+(.+?)\s+\d+ms/);
+  const m = line.match(/^\s*×\s+(.+?)\s+\d+ms/);
   if (m) {
     // 粗略匹配，只保留用例名
     failed.add(m[1].trim());
@@ -59,7 +71,10 @@ for (const f of failed) {
   let known = false;
   for (const b of baseline) {
     if (b.endsWith('::TODO') || b.endsWith('::')) continue;
-    if (b === f || f.startsWith(b + '::')) {
+    // 2026-10-20 fix: baseline 里存的是文件路径（如 tests/a.test.ts），而 verbose 解析出的
+    // 用例名用 ` > ` 分隔。原判断只认 `b + '::'`，永远不成立 —— 门禁退化成「零失败」。
+    // 现在同时接受 `::` 与 ` > ` 两种分隔符，文件级条目即可覆盖该文件下所有用例。
+    if (b === f || f.startsWith(`${b}::`) || f.startsWith(`${b} > `)) {
       known = true;
       break;
     }
