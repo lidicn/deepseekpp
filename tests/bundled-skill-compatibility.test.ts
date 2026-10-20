@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   BUNDLED_SKILL_REGISTRATIONS,
   loadBundledSkills,
@@ -10,13 +10,14 @@ import {
   getBundledSkillAssetUrl,
 } from './helpers/bundled-skill-assets';
 
-beforeAll(() => {
+// unstubGlobals:true (vitest.config) revokes module-level/beforeAll stubs before
+// each test, so re-stub in beforeEach. The officecli skill module is loaded
+// dynamically inside loadBundledSkills and reads chrome.runtime.getURL through
+// bundled-assets; fetch is the local asset reader, chrome.runtime.getURL maps to
+// the local extension-origin URL builder.
+beforeEach(() => {
   vi.stubGlobal('fetch', fetchBundledSkillAsset);
   vi.stubGlobal('chrome', { runtime: { getURL: getBundledSkillAssetUrl } });
-});
-
-afterAll(() => {
-  vi.unstubAllGlobals();
 });
 
 describe('bundled Skill compatibility', () => {

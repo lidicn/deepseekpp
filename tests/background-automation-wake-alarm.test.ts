@@ -12,7 +12,12 @@ const alarms = {
   onAlarm: { addListener: vi.fn() },
 };
 
-vi.stubGlobal('chrome', {
+// Declared as a named constant (not only inline in stubGlobal) so beforeEach
+// can re-stub it: unstubGlobals:true (vitest.config) revokes the module-level
+// stub before each test, which otherwise leaves `chrome` undefined inside the
+// async function under test. The module-level stub below also satisfies the
+// background entrypoint's top-level chrome access during the dynamic import.
+const chromeStub = {
   alarms,
   storage: {
     local: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}), remove: vi.fn(async () => {}) },
@@ -32,7 +37,9 @@ vi.stubGlobal('chrome', {
     create: vi.fn(async () => {}),
   },
   menus: { create: vi.fn(), removeAll: vi.fn(async () => {}), onClicked: { addListener: vi.fn() } },
-});
+};
+
+vi.stubGlobal('chrome', chromeStub);
 
 // Loading the full background entrypoint module graph (all core services) takes
 // several seconds at collection time, which is why these assertions live in one
@@ -41,6 +48,8 @@ const { ensureAutomationWakeAlarm } = await import('../entrypoints/background');
 
 describe('ensureAutomationWakeAlarm', () => {
   beforeEach(() => {
+    // Re-stub every case: unstubGlobals revoked the module-level stub above.
+    vi.stubGlobal('chrome', chromeStub);
     alarms.create.mockClear();
     alarms.get.mockReset();
     alarms.get.mockResolvedValue(undefined);
