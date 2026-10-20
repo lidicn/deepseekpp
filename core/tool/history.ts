@@ -6,6 +6,7 @@ import { BurstSupersededError, createCoalescingMutationQueue } from '../persiste
 // import whitelist (tests/tool-provider-import-boundary.test.ts).
 export { BurstSupersededError };
 import { refactorTelemetry } from '../debug/refactor-telemetry';
+import { diagnosticLogBuffer } from '../diagnostics/log-buffer';
 
 export const TOOL_HISTORY_STORAGE_KEY = 'deepseek_pp_tool_history';
 // Lowered from 200 → 100. Each record carries detail/output snapshots, and each
@@ -56,8 +57,18 @@ async function persistToolHistoryBurst(
       source,
       createdAt: Date.now(),
     };
-    history = trimToFit([record, ...history.slice(0, MAX_HISTORY)], budgetBytes)
-      .slice(0, MAX_HISTORY);
+    const candidate = [record, ...history.slice(0, MAX_HISTORY)];
+    const trimmed = trimToFit(candidate, budgetBytes).slice(0, MAX_HISTORY);
+    const dropped = candidate.length - trimmed.length;
+    if (dropped > 0) {
+      diagnosticLogBuffer.record({
+        level: 'warn',
+        source: 'tool-history',
+        message: 'tool_history_evicted',
+        details: `dropped=${dropped}`,
+      });
+    }
+    history = trimmed;
     results.push(record);
   }
   // B2 fix: write-back 前再检查一次 —— 防 clear 在 write 前瞬间执行（仅当 burst 开始时 key 还在）
