@@ -1,7 +1,7 @@
 # 测试失败基线（P0-3）
 # 日期：2026-10-19（更新）
 # 来源：vitest run 全量
-# 总数：12 文件 / 14 用例
+# 总数：11 文件（2026-10-20 全量核对，与实际失败集一致）
 # 用途：CI 只检查"有没有新增 failed"，不阻塞已知红
 # 修复一个就从这里删一行，不要新增这里的条目
 
@@ -13,7 +13,6 @@ tests/memory-indexeddb-compatibility.test.ts
 tests/persistence-burst-budget.test.ts
 tests/remote-agent-watcher.test.ts
 tests/runtime-command-contract.test.ts
-tests/shell-host-external-contract.test.ts
 tests/stream-fn-adapter.test.ts
 tests/stream-fn-event-mapping.test.ts
 tests/tool-block-style.test.ts
