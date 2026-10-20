@@ -192,8 +192,11 @@ function schemaForTool(name: BrowserControlToolName): ToolDescriptor['inputSchem
         url: { type: 'string', description: 'Absolute http(s) or file URL.' },
         newTab: {
           type: 'boolean',
-          default: true,
-          description: 'Open in a new tab by default. Set false only when intentionally replacing the current controlled tab.',
+          // 2026-10-20 变更：默认由 true 改为 false。
+          // 原默认会在 agent 自动导航时每轮新建一个 tab（用户实测「每次触发记忆都多一个 tab」）。
+          // 自动化任务的默认语义应是「复用受控 tab」；需要新窗口时由调用方显式传 true。
+          default: false,
+          description: 'Reuse the current controlled tab by default. Set true only when the user explicitly asks for a new tab.',
         },
       }, ['url']);
     case 'browser_select_tab':

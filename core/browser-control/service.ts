@@ -222,7 +222,9 @@ export class BrowserControlService {
     settings: BrowserControlSettings,
   ): Promise<BrowserActionResult> {
     const url = normalizeUrl(requireString(payload, 'url'));
-    const newTab = readOptionalBoolean(payload, 'newTab', true);
+    // 2026-10-20：与 schemaForTool('browser_navigate') 的默认值保持一致，
+    // 由 true 改为 false —— 默认复用当前受控 tab，避免 agent 自动导航时每次新建 tab。
+    const newTab = readOptionalBoolean(payload, 'newTab', false);
     let tabId: number;
     let previousUrl: string | undefined;
     if (newTab) {

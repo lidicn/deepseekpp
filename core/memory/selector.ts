@@ -2,6 +2,7 @@ import type { Memory } from '../types';
 import { MEMORY_TOKEN_BUDGET, STOP_WORDS } from '../constants';
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n/background';
 import { estimateTokens } from '../token/estimator';
+import { wrapUntrustedMemoryContent } from './untrusted-content';
 
 export { estimateTokens } from '../token/estimator';
 
@@ -164,5 +165,8 @@ export function formatMemoriesBlock(
   locale: SupportedLocale = DEFAULT_LOCALE,
 ): string {
   if (memories.length === 0) return translate(locale, 'prompt.memoryEmpty');
-  return memories.map(formatMemoryLine).join('\n');
+  const body = memories.map(formatMemoryLine).join('\n');
+  // 2026-10-20：记忆是自动抽取的历史内容，按不可信数据处理。
+  // 详见 core/memory/untrusted-content.ts —— 修复「记忆里的链接导致 agent 自行导航、每次多开 tab」。
+  return wrapUntrustedMemoryContent(body, locale);
 }

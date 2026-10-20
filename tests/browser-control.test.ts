@@ -163,7 +163,7 @@ describe('browser navigation tool', () => {
     });
   });
 
-  it('opens a new tab by default so the chat tab is not replaced', async () => {
+  it('reuses the selected tab by default so agent navigation does not spawn a tab per turn', async () => {
     const storage = new Map<string, unknown>();
     storage.set(BROWSER_CONTROL_STORAGE_KEY, {
       ...DEFAULT_BROWSER_CONTROL_SETTINGS,
@@ -178,6 +178,44 @@ describe('browser navigation tool', () => {
 
     const service = new BrowserControlService({ chromeApi: chromeStub as unknown as typeof chrome });
     const result = await service.execute('browser_navigate', { url: 'https://example.com/' });
+
+    expect(result.ok).toBe(true);
+    expect(result.output).toMatchObject({
+      tabId: 12,
+      url: 'https://example.com/',
+      newTab: false,
+    });
+    // 2026-10-20: the default flipped from "new tab per navigation" to "reuse the controlled tab".
+    expect(chromeStub.tabs.create).not.toHaveBeenCalled();
+    expect(chromeStub.debugger.attach).toHaveBeenCalledWith({ tabId: 12 }, '1.3');
+    expect(chromeStub.debugger.sendCommand).toHaveBeenCalledWith(
+      { tabId: 12 },
+      'Page.navigate',
+      { url: 'https://example.com/' },
+    );
+    await expect(chromeStub.tabs.get(12)).resolves.toMatchObject({
+      url: 'https://example.com/',
+    });
+  });
+
+  it('opens a new tab only when newTab is explicitly true', async () => {
+    const storage = new Map<string, unknown>();
+    storage.set(BROWSER_CONTROL_STORAGE_KEY, {
+      ...DEFAULT_BROWSER_CONTROL_SETTINGS,
+      enabled: true,
+      targetTabId: 12,
+      includeSnapshotAfterActions: false,
+    });
+    const chromeStub = createChromeStub(storage, [
+      createTab({ id: 12, active: true, title: 'DeepSeek', url: 'https://chat.deepseek.com/a/chat/s/current' }),
+    ]);
+    vi.stubGlobal('chrome', chromeStub);
+
+    const service = new BrowserControlService({ chromeApi: chromeStub as unknown as typeof chrome });
+    const result = await service.execute('browser_navigate', {
+      url: 'https://example.com/',
+      newTab: true,
+    });
 
     expect(result.ok).toBe(true);
     expect(result.output).toMatchObject({
@@ -197,43 +235,6 @@ describe('browser navigation tool', () => {
     });
     await expect(chromeStub.storage.local.get(BROWSER_CONTROL_STORAGE_KEY)).resolves.toMatchObject({
       [BROWSER_CONTROL_STORAGE_KEY]: expect.objectContaining({ targetTabId: 100 }),
-    });
-  });
-
-  it('can still replace the selected tab when newTab is explicitly false', async () => {
-    const storage = new Map<string, unknown>();
-    storage.set(BROWSER_CONTROL_STORAGE_KEY, {
-      ...DEFAULT_BROWSER_CONTROL_SETTINGS,
-      enabled: true,
-      targetTabId: 12,
-      includeSnapshotAfterActions: false,
-    });
-    const chromeStub = createChromeStub(storage, [
-      createTab({ id: 12, active: true, title: 'DeepSeek', url: 'https://chat.deepseek.com/a/chat/s/current' }),
-    ]);
-    vi.stubGlobal('chrome', chromeStub);
-
-    const service = new BrowserControlService({ chromeApi: chromeStub as unknown as typeof chrome });
-    const result = await service.execute('browser_navigate', {
-      url: 'https://example.com/',
-      newTab: false,
-    });
-
-    expect(result.ok).toBe(true);
-    expect(result.output).toMatchObject({
-      tabId: 12,
-      url: 'https://example.com/',
-      newTab: false,
-    });
-    expect(chromeStub.tabs.create).not.toHaveBeenCalled();
-    expect(chromeStub.debugger.attach).toHaveBeenCalledWith({ tabId: 12 }, '1.3');
-    expect(chromeStub.debugger.sendCommand).toHaveBeenCalledWith(
-      { tabId: 12 },
-      'Page.navigate',
-      { url: 'https://example.com/' },
-    );
-    await expect(chromeStub.tabs.get(12)).resolves.toMatchObject({
-      url: 'https://example.com/',
     });
   });
 });
