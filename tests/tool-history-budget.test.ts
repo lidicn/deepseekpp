@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { appendToolCallHistory, clearToolCallHistory, getToolCallHistory } from '../core/tool/history';
+import {
+  appendToolCallHistory,
+  clearToolCallHistory,
+  getToolCallHistory,
+  TOOL_HISTORY_STORAGE_KEY,
+} from '../core/tool/history';
 import type { ToolCall, ToolResult } from '../core/tool/types';
 
 // Regression tests for issue #297: a growing tool history must not make every
@@ -25,7 +30,12 @@ beforeEach(() => {
         // race leg itself is covered by tests/coalescing-mutation-queue.test.ts.
         get: vi.fn(async (key: string) => (key in storage ? { [key]: storage[key] } : {})),
         set: vi.fn(async (values: Record<string, unknown>) => {
-          setCalls.push(Object.values(values)[0] as unknown[]);
+          // Only the history key participates in the per-key budget assertion;
+          // other writers (e.g. the diagnostic log buffer's write-behind persist)
+          // have their own independent budgets and must not be counted here.
+          if (TOOL_HISTORY_STORAGE_KEY in values) {
+            setCalls.push(values[TOOL_HISTORY_STORAGE_KEY] as unknown[]);
+          }
           Object.assign(storage, values);
         }),
         remove: vi.fn(async (key: string) => { delete storage[key]; }),
@@ -50,7 +60,7 @@ describe('tool history budget trimming', () => {
     const stored = (await getToolCallHistory()) as ToolCallHistoryRecordLike[];
     expect(stored.length).toBeLessThan(8);
     expect(stored.length).toBeGreaterThanOrEqual(1);
-    // No write attempt should have exceeded the per-key budget.
+    // No history write attempt should have exceeded the per-key budget.
     for (const value of setCalls) {
       expect(new Blob([JSON.stringify(value)]).size).toBeLessThanOrEqual(450);
     }
