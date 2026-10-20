@@ -28,7 +28,8 @@ const JSON_OUT = (() => {
   const next = process.argv[i + 1];
   return next && !next.startsWith('--') ? next : 'verify-pain-items.json';
 })();
-const CDP_HTTP = process.env.DPP_CDP_HTTP ?? 'http://127.0.0.1:9222';
+// 实际使用的 CDP 端点（由 pickCdpEndpoint 探测后填入，供汇总 JSON 留档）。
+let usedCdpBase = null;
 // dpp 未打包扩展 id（与 tools/reload-extension.py DEFAULT_EXT_ID 一致），可用 env 覆盖。
 const EXT_ID = process.env.DPP_EXT_ID ?? 'jjjhcjjegfplcfncohmfhbdhcalmijnc';
 
@@ -201,16 +202,52 @@ staticCheck(
 // LIVE: CDP 在线探测（--static 或离线时整段跳过，相关项记 SKIP）
 // ---------------------------------------------------------------------------
 
-async function cdpListTargets() {
+/**
+ * A3 实测修正：9222 在这台机器上被**豆包桌面版内嵌 Chromium** 长期占用
+ * （它的 target 是 `doubao://...`）。若只用 9222，脚本会连上错误的端点。
+ * 因此探测候选端口并按「有 deepseek 页 / 有扩展 target」打分选最佳。
+ * 用 DPP_CDP_HTTP 指定时只用该端点（不做回退）。
+ */
+const CDP_CANDIDATES = process.env.DPP_CDP_HTTP
+  ? [process.env.DPP_CDP_HTTP]
+  : ['http://127.0.0.1:9222', 'http://127.0.0.1:9223'];
+
+async function fetchTargets(base) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 3000);
   try {
-    const res = await fetch(`${CDP_HTTP}/json`, { signal: controller.signal });
+    const res = await fetch(`${base}/json`, { signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** 打分：有 deepseek 页 +2，有扩展 target +2，有任何 http 页 +1。 */
+function scoreTargets(targets) {
+  const list = Array.isArray(targets) ? targets : [];
+  let score = 0;
+  if (list.some((t) => /chat\.deepseek\.com|www\.deepseek\.com/.test(String(t.url)))) score += 2;
+  if (list.some((t) => String(t.url).startsWith('chrome-extension://'))) score += 2;
+  if (list.some((t) => String(t.url).startsWith('http'))) score += 1;
+  return score;
+}
+
+async function pickCdpEndpoint() {
+  const tried = [];
+  let best = null;
+  for (const base of CDP_CANDIDATES) {
+    try {
+      const targets = await fetchTargets(base);
+      const score = scoreTargets(targets);
+      tried.push({ base, ok: true, score, count: targets.length });
+      if (!best || score > best.score) best = { base, score, targets };
+    } catch (e) {
+      tried.push({ base, ok: false, error: String(e?.message ?? e) });
+    }
+  }
+  return { best, tried };
 }
 
 async function cdpEvaluate(wsUrl, expression) {
@@ -241,17 +278,37 @@ async function cdpEvaluate(wsUrl, expression) {
 }
 
 async function live() {
-  let targets;
-  try {
-    targets = await cdpListTargets();
-  } catch {
-    console.log('\n[CDP] 未连接到 ' + CDP_HTTP + ' —— LIVE 探测全部 SKIP（静态项仍有效）。');
-    console.log('启动带调试端口的 Chrome：');
-    console.log('  Windows: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" '
-      + '--remote-debugging-port=9222 --user-data-dir=%TEMP%\\dpp-cdp-profile');
+  const { best, tried } = await pickCdpEndpoint();
+
+  if (!best) {
+    console.log('\n[CDP] 未连接到任何候选端点 —— LIVE 探测全部 SKIP（静态项仍有效）。');
+    for (const t of tried) console.log(`  尝试 ${t.base} → 失败：${t.error}`);
+    console.log('启动带调试端口的 Chrome（注意 9222 常被豆包桌面版占用，建议用 9223）：');
+    console.log('  $chrome = "$env:LOCALAPPDATA\\Google\\Chrome\\Application\\chrome.exe"');
+    console.log('  & $chrome --remote-debugging-port=9223 --user-data-dir="$env:TEMP\\dpp-cdp-profile"');
     console.log('  然后打开 deepseek 对话页、加载 dpp 未打包扩展，重跑本脚本。\n');
-    record('LIVE', 'CDP 连接', 'SKIP', '9222 不可达，见上方启动指引');
+    record('LIVE', 'CDP 连接', 'SKIP', '候选端点均不可达，见上方启动指引');
     return;
+  }
+
+  const cdpBase = best.base;
+  usedCdpBase = cdpBase;
+  const targets = best.targets;
+  if (tried.filter((t) => t.ok).length > 1) {
+    console.log(`[CDP] 多个端点可连，选用 ${cdpBase}（score=${best.score}）`);
+  }
+
+  // 撞端口诊断：连上了，但既没有 deepseek 页也没有扩展 target，且存在非 http 协议 target
+  // → 极可能是连到了别的 Chromium 应用（如豆包桌面版的 doubao:// 页面）。
+  const nonHttp = targets.filter((t) => typeof t.url === 'string' && !/^https?:\/\//.test(t.url));
+  if (best.score <= 1 && nonHttp.length > 0) {
+    console.log(`[CDP] ⚠ 端点 ${cdpBase} 看起来不是我们的调试浏览器：`);
+    for (const t of nonHttp.slice(0, 4)) {
+      console.log(`     [${t.type}] ${String(t.url).slice(0, 100)}`);
+    }
+    console.log('  → 该端口很可能被其他应用（如豆包桌面版）占用。');
+    console.log('     改用独立端口启动 Chrome 后，用 DPP_CDP_HTTP 指向它：');
+    console.log('     $env:DPP_CDP_HTTP="http://127.0.0.1:9223"; node scripts/verify-pain-items.mjs');
   }
 
   const pages = targets.filter((t) => t.type === 'page');
@@ -261,7 +318,7 @@ async function live() {
   const sw = targets.find((t) => t.type === 'service_worker' && t.url.includes(EXT_ID));
   const deepseekPage = pages.find((t) => /chat\.deepseek\.com|www\.deepseek\.com/.test(t.url));
 
-  console.log(`\n[CDP] 已连接，target=${targets.length}；sidepanel=${!!panel} SW=${!!sw} deepseekPage=${!!deepseekPage}`);
+  console.log(`\n[CDP] 已连接 ${cdpBase}，target=${targets.length}；sidepanel=${!!panel} SW=${!!sw} deepseekPage=${!!deepseekPage}`);
 
   // A2: 扩展 target 定位失败时给出可排查信息，而不是静默 SKIP。
   if (!panel && !sw) {
@@ -355,7 +412,7 @@ if (JSON_OUT) {
   const payload = {
     generatedAt: new Date().toISOString(),
     mode: ONLY_STATIC ? 'static' : 'live',
-    cdpHttp: CDP_HTTP,
+    cdpHttp: usedCdpBase,
     extId: EXT_ID,
     tally,
     results,
