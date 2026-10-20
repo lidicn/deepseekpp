@@ -518,7 +518,12 @@ describe('AGENT_* event protocol golden', () => {
   });
 
   it('G8b stream-event truncation: 12k clamp on STREAM_CHUNK, unclamped final text', async () => {
-    const longAnswer = 'x'.repeat(13_000);
+    // A 方案：原 mock 用 13k 无标点纯 x，shouldNudge 兜底判为待续而触发 nudge 第二轮，
+    // mockImplementationOnce 在第二轮耗尽 → 空续轮 LOOP_ERROR，且轮次间真实
+    // waitBetweenDeepSeekRequests(2.5-6.5s) 顶穿 5s 用例超时。改为以句末标点收尾的完整
+    // 长回答（总长仍 13000，12k clamp 与 finalText [long-text:13000] 断言完全不动），
+    // 首轮自然完成、不触发 nudge。截断夹取断言不放宽。
+    const longAnswer = `${'x'.repeat(12_999)}.`;
     adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
       handlers.onTextChunk(longAnswer);
       return { assistantText: '', responseMessageId: 102, requestMessageId: 101, finished: true };
