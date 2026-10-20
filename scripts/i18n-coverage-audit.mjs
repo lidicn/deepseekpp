@@ -42,6 +42,10 @@ const pathAllowlist = new Map([
   ['scripts/render-product-assets.mjs', 'offline README and Chrome Web Store image generator intentionally contains fixed zh-CN marketing fixture copy; runtime UI remains locale-backed'],
   ['scripts/shell-smoke.mjs', 'unicode stdout fixture intentionally verifies non-ASCII shell output'],
   ['scripts/web-search-smoke.mjs', 'legacy smoke fixture intentionally simulates zh-CN web-search prompts and output'],
+  ['scripts/verify-pain-items.mjs', 'developer-facing real-machine acceptance harness; prints zh-CN operator instructions to the console and greps zh-CN source needles. It is never bundled into the extension and renders no user-facing UI'],
+  ['scripts/detect-flaky.mjs', 'developer CLI that reports flaky-test rounds to the console; never bundled and renders no user-facing UI'],
+  ['scripts/perf-baseline.mjs', 'developer CLI that prints perf-baseline comparisons and warnings; never bundled and renders no user-facing UI'],
+  ['scripts/test-with-baseline.mjs', 'CI gate script that prints baseline comparison results to the workflow log; never bundled and renders no user-facing UI'],
 ]);
 
 const lineAllowlist = [
