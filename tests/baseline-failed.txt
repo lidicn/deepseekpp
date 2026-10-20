@@ -1,13 +1,13 @@
 # 测试失败基线（P0-3）
 # 日期：2026-10-20（更新）
 # 来源：vitest run 全量
-# 总数：8 文件（2026-10-20 第二轮；G8b inline-agent-event-protocol-golden 转绿后移除）
+# 总数：7 文件（2026-10-20 第二轮；G8b inline-agent-event-protocol-golden、
+# deepseek-protocol-contract abort透传 转绿后移除）
 # 用途：CI 只检查"有没有新增 failed"，不阻塞已知红
 # 修复一个就从这里删一行，不要新增这里的条目
 
 tests/background-automation-wake-alarm.test.ts
 tests/bundled-skill-compatibility.test.ts
-tests/deepseek-protocol-contract.test.ts
 tests/memory-indexeddb-compatibility.test.ts
 tests/persistence-burst-budget.test.ts
 tests/remote-agent-watcher.test.ts
