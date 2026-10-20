@@ -14,7 +14,7 @@ Compatibility-run baseline: v1.10.0, commit `165ec46`, with 119 live-router name
 
 The production ownership model and the cutover ledger serve different purposes. `core/messaging/runtime-command-contracts.ts` is the single 131-name metadata and current-owner authority (`129 typed / 0 legacy / 2 client-only`), consumed by the dispatch registry; the sections below retain historical migration ownership (`2 / 61 / 32 / 16 / 18`). Contract tests fail on a duplicate, missing, or cross-owner name.
 
-## Replanned Cutover Ownership — 129 Live Commands
+## Replanned Cutover Ownership — 135 Live Commands
 
 ### R3.1 / #351 — Typed seam bootstrap (2)
 
@@ -130,7 +130,7 @@ CLEAR_TOOL_CALL_HISTORY
 GET_PLATFORM_CAPABILITIES
 ```
 
-### R4.3 / #362 — DeepSeek, chat, multimodal, and export (16)
+### R4.3 / #362 — DeepSeek, chat, multimodal, and export (17)
 
 ```text
 GET_DEEPSEEK_API_KEY_STATUS
@@ -149,9 +149,10 @@ SAVE_OFFICIAL_API_CHAT_CONFIG
 EXPORT_DEEPSEEK_CONVERSATIONS
 CANCEL_DEEPSEEK_EXPORT
 AUTH_STATUS_CHANGED
+GET_DIAGNOSTIC_SNAPSHOT
 ```
 
-### R4.4 / #363 — Sync, automation, usage, scenario, and lifecycle closure (18)
+### R4.4 / #363 — Sync, automation, usage, scenario, and lifecycle closure (19)
 
 ```text
 RECORD_USAGE_TURN
@@ -172,11 +173,12 @@ DELETE_AUTOMATION
 RUN_AUTOMATION_NOW
 SCENARIOS_UPDATED
 EXPORT_DIAGNOSTIC_LOGS
+PARSE_NATURAL_LANGUAGE_AUTOMATION
 ```
 
-`TOOL_CALL_EXECUTED` and `MEMORIES_UPDATED` remain declared-only compatibility records. They are not counted in the 129 live command owners and R3.1 must classify them explicitly rather than invent handlers.
+`TOOL_CALL_EXECUTED` and `MEMORIES_UPDATED` remain declared-only compatibility records. They are not counted in the 135 live command owners and R3.1 must classify them explicitly rather than invent handlers.
 
-## Live Background Router — 129
+## Live Background Router — 135
 
 ```text
 GET_MEMORIES
@@ -308,9 +310,15 @@ SET_AUTOMATION_STATUS
 DELETE_AUTOMATION
 RUN_AUTOMATION_NOW
 SCENARIOS_UPDATED
+ARCHIVE_MEMORY
+UNARCHIVE_MEMORY
+ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE
+APPLY_MEMORY_ORGANIZE_DRAFT
+GET_DIAGNOSTIC_SNAPSHOT
+PARSE_NATURAL_LANGUAGE_AUTOMATION
 ```
 
-## Declared `MessageAction` Union — 98
+## Declared `MessageAction` Union — 102
 
 ```text
 GET_MEMORIES
@@ -411,9 +419,13 @@ CLEAR_BACKGROUND
 GET_PET
 SAVE_PET
 CLEAR_PET
+ARCHIVE_MEMORY
+UNARCHIVE_MEMORY
+ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE
+APPLY_MEMORY_ORGANIZE_DRAFT
 ```
 
-## Live Router Only — 33
+## Live Router Only — 35
 
 ```text
 TOUCH_MEMORIES
@@ -449,6 +461,8 @@ SET_AUTOMATION_STATUS
 DELETE_AUTOMATION
 RUN_AUTOMATION_NOW
 SCENARIOS_UPDATED
+GET_DIAGNOSTIC_SNAPSHOT
+PARSE_NATURAL_LANGUAGE_AUTOMATION
 ```
 
 ## Declared Only — 2
