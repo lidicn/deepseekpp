@@ -14,13 +14,20 @@
  * 退出码：0 = 无 FAIL（含全 SKIP/离线）；1 = 存在 FAIL。
  * CDP 离线不是 FAIL：静态项照常评估，LIVE 项记 SKIP 并给出启动 Chrome 指引。
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC_ROOT = join(HERE, '..');
 const ONLY_STATIC = process.argv.includes('--static');
+// A2: --json [path] 把结果落盘，便于两轮对比留档。
+const JSON_OUT = (() => {
+  const i = process.argv.indexOf('--json');
+  if (i < 0) return null;
+  const next = process.argv[i + 1];
+  return next && !next.startsWith('--') ? next : 'verify-pain-items.json';
+})();
 const CDP_HTTP = process.env.DPP_CDP_HTTP ?? 'http://127.0.0.1:9222';
 // dpp 未打包扩展 id（与 tools/reload-extension.py DEFAULT_EXT_ID 一致），可用 env 覆盖。
 const EXT_ID = process.env.DPP_EXT_ID ?? 'jjjhcjjegfplcfncohmfhbdhcalmijnc';
@@ -124,6 +131,72 @@ staticCheck(
   '（静态：面板挂载在位；真实工具卡片需有一次工具运行，见清单）',
 );
 
+// R01: 交互型工具独立 10 分钟预算（选文件夹不被 120s 机器超时掐断）。
+staticCheck(
+  'R01',
+  '交互型工具 10 分钟预算（选文件夹不受 120s 约束）',
+  'core/tool/runtime.ts',
+  ['INTERACTIVE_TOOL_TIMEOUT_MS = 10 * 60_000', "'local_folder_pick'"],
+  '（静态：预算常量与交互型工具名单在位；真实停留 >2 分钟需人工，见清单）',
+);
+
+// R02: 选文件夹取消语义分三态（取消 / 空路径 / 协议错误），不再把取消报成协议错误。
+staticCheck(
+  'R02',
+  '选文件夹取消/空路径/协议错误三态',
+  'core/skill/local-importer.ts',
+  ['FOLDER_PICK_CANCELLED', 'FOLDER_PICK_EMPTY_PATH', 'FOLDER_PICK_INVALID_PROTOCOL'],
+  '（静态：三态常量在位；真实点击取消需人工，见清单）',
+);
+
+// R03: Native Host 预热，避免 folder pick 撞 host 冷启动。
+staticCheck(
+  'R03',
+  'native host 预热 shell_status（防冷启动弹不出框）',
+  'core/skill/local-importer.ts',
+  ['shell_status'],
+  '（静态：预热调用在位；真实首次弹框速度需人工观察）',
+);
+
+// R04: 交互型工具超时后记 abandoned 诊断（留证据，不静默）。
+staticCheck(
+  'R04',
+  '交互型超时记 interactive_tool_abandoned 诊断',
+  'core/tool/runtime.ts',
+  ['interactive_tool_abandoned'],
+);
+
+// R09: 步骤时间线（纯文本按 step 分组）。
+staticCheck(
+  'R09',
+  '步骤时间线 buildStepTimeline 分组',
+  'entrypoints/sidepanel/tool-runs.ts',
+  ['buildStepTimeline'],
+);
+staticCheck(
+  'R09',
+  'StepTimeline 已挂进 ChatPage',
+  'entrypoints/sidepanel/pages/ChatPage.tsx',
+  ['StepTimeline'],
+);
+
+// R10: __DPP_DEBUG__.lastTurn() 最近一轮聚合。
+staticCheck(
+  'R10',
+  '__DPP_DEBUG__.lastTurn() 聚合最近一轮',
+  'core/debug/refactor-telemetry.ts',
+  ['buildLastTurnSummary', 'lastTurn'],
+  '（静态：聚合函数与挂载在位；真实读取需页面在线，见清单）',
+);
+
+// T05 剩余：sidepanel 消费 GET_DIAGNOSTIC_SNAPSHOT（handler 已在 5843d12）。
+staticCheck(
+  'T05',
+  'GET_DIAGNOSTIC_SNAPSHOT handler 已注册',
+  'entrypoints/background/diagnostics-handlers.ts',
+  ['GET_DIAGNOSTIC_SNAPSHOT'],
+);
+
 // ---------------------------------------------------------------------------
 // LIVE: CDP 在线探测（--static 或离线时整段跳过，相关项记 SKIP）
 // ---------------------------------------------------------------------------
@@ -182,11 +255,30 @@ async function live() {
   }
 
   const pages = targets.filter((t) => t.type === 'page');
-  const panel = pages.find((t) => t.type === 'page' && t.url.includes(EXT_ID) && /sidepanel/i.test(t.url));
+  const extTargets = targets.filter((t) => typeof t.url === 'string' && t.url.startsWith('chrome-extension://'));
+  const extIdMatched = extTargets.some((t) => t.url.includes(EXT_ID));
+  const panel = pages.find((t) => t.url.includes(EXT_ID) && /sidepanel/i.test(t.url));
   const sw = targets.find((t) => t.type === 'service_worker' && t.url.includes(EXT_ID));
   const deepseekPage = pages.find((t) => /chat\.deepseek\.com|www\.deepseek\.com/.test(t.url));
 
   console.log(`\n[CDP] 已连接，target=${targets.length}；sidepanel=${!!panel} SW=${!!sw} deepseekPage=${!!deepseekPage}`);
+
+  // A2: 扩展 target 定位失败时给出可排查信息，而不是静默 SKIP。
+  if (!panel && !sw) {
+    console.log(`[CDP] 未发现扩展 target（期望 id=${EXT_ID}）。`);
+    if (extTargets.length === 0) {
+      console.log('  → 当前没有任何 chrome-extension:// target，扩展很可能未加载：');
+      console.log('     到 chrome://extensions 打开开发者模式，加载 src/dist/chrome-mv3');
+      console.log('     （若尚未构建：npx wxt build --browser chrome）');
+    } else {
+      console.log(`  → 发现 ${extTargets.length} 个扩展 target，但 id 与期望不符。实际：`);
+      for (const t of extTargets.slice(0, 5)) {
+        console.log(`     [${t.type}] ${String(t.url).slice(0, 110)}`);
+      }
+      console.log('     若扩展确实已加载，用实际 id 覆盖后重跑：');
+      console.log('     $env:DPP_EXT_ID="<实际id>"; node scripts/verify-pain-items.mjs');
+    }
+  }
 
   // R08 LIVE: sidepanel 面板出现真实工具卡片。
   if (panel) {
@@ -204,7 +296,13 @@ async function live() {
       record('R08', 'LIVE 侧边栏工具卡片', 'SKIP', `sidepanel 求值失败: ${e?.message ?? e}`);
     }
   } else {
-    record('R08', 'LIVE 侧边栏工具卡片', 'SKIP', '未发现 sidepanel target（请打开扩展侧边栏）');
+    // A2: 区分「扩展没加载」「扩展 id 不匹配」「侧边栏没打开」——三者处置完全不同。
+    const detail = !extIdMatched
+      ? (extTargets.length === 0
+        ? '未发现任何扩展 target —— 扩展未加载，见上方指引'
+        : '扩展 id 与期望不符 —— 见上方诊断，用 DPP_EXT_ID 覆盖后重跑')
+      : '未发现 sidepanel target —— 请在 Chrome 中打开 dpp 扩展侧边栏后重跑';
+    record('R08', 'LIVE 侧边栏工具卡片', 'SKIP', detail);
   }
 
   // R05 LIVE: 诊断缓冲里出现 stream_stall。
@@ -223,7 +321,13 @@ async function live() {
       record('R05', 'LIVE stream_stall 诊断', 'SKIP', `SW 求值失败: ${e?.message ?? e}`);
     }
   } else {
-    record('R05', 'LIVE stream_stall 诊断', 'SKIP', '未发现 dpp service worker target');
+    // A2: 同理区分三种原因；MV3 SW 空闲 30 秒即回收，缺 target 常是睡着了。
+    const detail = !extIdMatched
+      ? (extTargets.length === 0
+        ? '未发现任何扩展 target —— 扩展未加载，见上方指引'
+        : '扩展 id 与期望不符 —— 见上方诊断，用 DPP_EXT_ID 覆盖后重跑')
+      : '未发现 dpp SW target —— MV3 SW 空闲 30s 即回收；打开侧边栏或让 agent 跑一次工具调用唤醒后重跑';
+    record('R05', 'LIVE stream_stall 诊断', 'SKIP', detail);
   }
 
   // R06/R07/R15 的运行态需主动发起超长输入 / 触发截断续轮 / >120s 命令，
@@ -245,6 +349,21 @@ if (!ONLY_STATIC) {
 const tally = { PASS: 0, FAIL: 0, SKIP: 0 };
 for (const r of results) tally[r.status] += 1;
 console.log(`\n===== 汇总: PASS=${tally.PASS} FAIL=${tally.FAIL} SKIP=${tally.SKIP} =====`);
+
+if (JSON_OUT) {
+  // A2: 留档用。含时间戳、模式、汇总与逐项结果，便于两轮 diff。
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    mode: ONLY_STATIC ? 'static' : 'live',
+    cdpHttp: CDP_HTTP,
+    extId: EXT_ID,
+    tally,
+    results,
+  };
+  writeFileSync(JSON_OUT, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  console.log(`结果已写入 ${JSON_OUT}`);
+}
+
 if (tally.FAIL > 0) {
   console.log('存在 FAIL，请按上方缺失钩子修复。');
   process.exit(1);
