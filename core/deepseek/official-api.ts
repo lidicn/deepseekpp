@@ -78,6 +78,12 @@ export async function submitOfficialDeepSeekStreaming(
   }, {
     operation: 'DeepSeek official API completion',
     phase: 'completion',
+    // Pass the caller's own signal identity through policy.callerSignal so the
+    // native fetch receives the exact AbortController signal; caller abort then
+    // rejects with the original reason instead of being wrapped as
+    // network_request_failed. The scope still records callerSignal for
+    // abort-reason pass-through classification.
+    callerSignal: signal,
     deadlineAt: Date.now() + OFFICIAL_API_STREAM_DEADLINE_MS,
     maxRequestBytes: DEEPSEEK_BODY_BUDGETS.officialApi,
     maxResponseBytes: DEEPSEEK_BODY_BUDGETS.officialApi,

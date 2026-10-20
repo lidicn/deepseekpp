@@ -56,6 +56,13 @@ export interface NetworkRequestPolicy {
   readonly maxResponseBytes: number;
   readonly fetchImpl?: typeof fetch;
   readonly onDispatch?: () => void;
+  /**
+   * Caller-provided cancellation signal handed to fetch verbatim (identity
+   * preserved, Object.is equal). Use only where the caller's own AbortController
+   * must drive cancellation on the exact signal it owns; the derived scope still
+   * records callerSignal for abort-reason pass-through classification.
+   */
+  readonly callerSignal?: AbortSignal;
 }
 
 interface RequestScope {
@@ -71,13 +78,19 @@ export async function fetchWithNetworkPolicy(
   policy: NetworkRequestPolicy,
 ): Promise<Response> {
   assertRequestWithinPolicy(init.body, policy);
-  const scope = createRequestScope(init.signal, policy);
+  // policy.callerSignal is the authoritative cancellation signal; init.signal
+  // remains the fallback for callers that only populate the RequestInit.
+  const scope = createRequestScope(policy.callerSignal ?? init.signal, policy);
   const fetchImpl = policy.fetchImpl ?? fetch;
+  // When an explicit callerSignal is supplied, hand that exact signal to fetch
+  // so cancellation fires on the caller's own controller (identity preserved);
+  // otherwise pass the derived scope signal so the policy deadline can cancel.
+  const fetchSignal = policy.callerSignal ?? scope.signal;
   let response: Response;
 
   try {
     policy.onDispatch?.();
-    response = await fetchImpl(input, { ...init, signal: scope.signal });
+    response = await fetchImpl(input, { ...init, signal: fetchSignal });
   } catch (error) {
     scope.cleanup();
     throw classifyNetworkFailure(error, scope, policy, 'request');
