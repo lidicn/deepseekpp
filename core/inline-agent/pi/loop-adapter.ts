@@ -643,11 +643,22 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
     if (!lastStepCompleted) {
       postStepComplete();
     }
+    // 2026-10-22 修复 Bug A：走到这里意味着「既没有模型给出的最终文本，
+    // 也没有预算提示」——此前 finalText 保持空串，却仍以
+    // stopReason:'finalized' 对外宣称完成。用户侧看到的就是
+    // 「工具跑完了，但什么都没有」，零解释、零诊断。
+    // 真机证据：trace 记录 status='complete' 而 finalTextLen=0。
+    //
+    // 注意判空用 trim()：resolvedFinalText 可能是空串（不是 null），
+    // 例如失败 turn 被清成 stepText='' 的那条路径。
+    const hasFinalText = resolvedFinalText !== null && resolvedFinalText.trim().length > 0;
     let finalText = '';
-    if (resolvedFinalText !== null) {
-      finalText = resolvedFinalText;
+    if (hasFinalText) {
+      finalText = resolvedFinalText as string;
     } else if (!signal.aborted && stopNotice !== null) {
       finalText = stopNotice;
+    } else if (!signal.aborted) {
+      finalText = translate(locale, 'content.agent.emptyOutcome');
     }
     post('AGENT_LOOP_COMPLETE', {
       loopId,

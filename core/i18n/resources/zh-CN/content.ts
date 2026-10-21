@@ -93,6 +93,7 @@ export const content = {
     startFailed: 'Agent 启动失败，请重试',
     contextInvalidated: 'DeepSeek++ 已重载或被更新，请刷新本页面以恢复工具执行。',
     budgetReached: 'DeepSeek++ 已执行 {count} 轮自动工具续跑并暂停，避免把未完成任务伪装成最终答案。请发送“继续”让当前对话接着处理剩余工作。',
+    emptyOutcome: 'DeepSeek++ 这一轮执行了工具但没有给出最终结论，且未收到模型说明。为免把未完成的工作伪装成答案，此处显式标注：本轮无有效产出。请发送“继续”重试，或到「设置 → 诊断」查看最近一次执行的轨迹报告。',
     error: '执行出错',
     process: '过程',
     tools: '工具调用',

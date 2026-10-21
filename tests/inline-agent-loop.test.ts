@@ -474,6 +474,45 @@ describe('runInlineAgentLoop', () => {
     expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.anything());
   });
 
+  // 2026-10-22 Bug A 回归：非 abort 情况下循环既没拿到最终文本、也没有预算提示时，
+  // 此前 finalText 保持空串却仍以 stopReason:'finalized' 宣称完成 ——
+  // 用户侧就是「工具跑完了但什么都没有」，零解释。
+  // 真机证据：trace status='complete' 而 finalTextLen=0。
+  it('给「无最终文本又无预算提示」的收尾补一句可读说明，而不是静默空串', async () => {
+    // Bug A 回归：流被截断且一个字的文本都没收到（finished=false, assistantText=''），
+    // 既拿不到最终文本、也没有预算提示、又不是用户 abort。
+    // 此前 finalText 保持空串却仍以 stopReason:'finalized' 宣称完成 ——
+    // 用户侧就是「工具跑完了但什么都没有」，零解释、零诊断。
+    // 真机证据：trace status='complete' 而 finalTextLen=0。
+    vi.useFakeTimers();
+    adapterMocks.submitPromptStreaming.mockImplementationOnce(async () => ({
+      assistantText: '',
+      responseMessageId: 102,
+      requestMessageId: 101,
+      finished: false,
+    }));
+
+    const post = vi.fn();
+    const executeTool = vi.fn();
+
+    const run = runInlineAgentLoop(createPayload(), {
+      post,
+      executeTool,
+      signal: new AbortController().signal,
+    });
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    await run;
+
+    expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.anything());
+    const complete = post.mock.calls.find((c) => c[0] === 'AGENT_LOOP_COMPLETE');
+    expect(complete).toBeDefined();
+    const payload = (complete?.[1] ?? {}) as { finalText?: string; stopReason?: string };
+    // 只针对「非 abort 的正常收尾」这一分支：这正是 Bug A 的路径。
+    expect(payload.stopReason).toBe('finalized');
+    expect(String(payload.finalText ?? '').length).toBeGreaterThan(0);
+  });
+
   it('nudges a "让我再抓取" continuation sentence instead of stopping the run', async () => {
     // Reproducible mid-output stop: a turn that ends with a common Chinese
     // first-person continuation sentence ("让我再抓取…获取更完整的月度数据。")

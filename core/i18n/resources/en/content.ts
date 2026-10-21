@@ -93,6 +93,7 @@ export const content = {
     startFailed: 'Agent failed to start, please retry',
     contextInvalidated: 'DeepSeek++ was reloaded or updated. Refresh this page to restore tool execution.',
     budgetReached: 'DeepSeek++ paused after {count} automated tool-continuation rounds to avoid presenting incomplete work as a final answer. Send "continue" in this conversation to resume the remaining work.',
+    emptyOutcome: 'DeepSeek++ ran tools this round but produced no final answer and received no explanation from the model. To avoid presenting unfinished work as a result, this is flagged explicitly: this round yielded no usable output. Send "continue" to retry, or open Settings → Diagnostics to see the trace report of the latest run.',
     error: 'Execution error',
     process: 'Process',
     tools: 'Tool calls',
