@@ -44,6 +44,7 @@
                     "verify:extensions-version":  "node scripts/verify-extensions-version.mjs",
                     "ci:quality":  "npm run verify:workflows \u0026\u0026 npm run audit:prod \u0026\u0026 npm run prompt:freeze \u0026\u0026 npm run compile \u0026\u0026 npm run verify:test-collection \u0026\u0026 node scripts/test-with-baseline.mjs \u0026\u0026 npm run verify:persistence-burst \u0026\u0026 npm run verify:i18n \u0026\u0026 npm run verify:automation \u0026\u0026 npm run smoke:mcp \u0026\u0026 npm run verify:mcp:mock \u0026\u0026 npm run smoke:shell \u0026\u0026 npm run smoke:pow \u0026\u0026 npm run smoke:web \u0026\u0026 npm run build:all \u0026\u0026 npm run pi:bundle-budget \u0026\u0026 npm run verify:extensions-version \u0026\u0026 npm run verify:bundled-skills \u0026\u0026 npm run verify:sidepanel-chunks \u0026\u0026 npm run verify:extension-utf8 \u0026\u0026 npm run verify:manifest-policy \u0026\u0026 npm run zip:all \u0026\u0026 npm run verify:release-assets \u0026\u0026 npm run smoke:pyodide",
                     "shell:install":  "node scripts/install-shell-host.mjs",
+                    "bridge:install":  "node scripts/install-bridge.mjs",
                     "multimodal:install":  "npx --yes deepseek-pp-multimodal-mcp@0.1.0",
                     "smoke:pow":  "node scripts/pow-smoke.mjs",
                     "smoke:web":  "node scripts/web-search-smoke.mjs",
