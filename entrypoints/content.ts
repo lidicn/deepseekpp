@@ -7948,11 +7948,19 @@ function getActiveToolBlockSessionForComplete(
     .map((id) => activeToolBlockSessions.get(id))
     .find((session): session is ActiveToolBlockSession => Boolean(session)) ?? null;
 
+  // 2026-10-22 补齐 ② 里明确标注的缺口：若创建侧用了 requestId 而完成侧
+  // requestId 为空/不同，request 分支的 id 无法从完成侧反推。这里直接按
+  // session 上记录的 requestId 反查，把这条路径也兜住。
+  const byRequest = byId ? null : (requestId
+    ? Array.from(activeToolBlockSessions.values())
+      .find((s) => s.requestId && s.requestId === requestId) ?? null
+    : null);
+
   // 全部 miss 时再按「当前路由上的会话」找——route 维度比单次 id 更稳。
   const byRoute = byId ? null : getCurrentRouteActiveToolBlockSession();
   const fallback = byId
     ? null
-    : (byRoute ?? (activeToolBlockSessionId
+    : (byRequest ?? byRoute ?? (activeToolBlockSessionId
       ? (activeToolBlockSessions.get(activeToolBlockSessionId) ?? null)
       : null));
   const session = byId ?? fallback;
@@ -7964,8 +7972,8 @@ function getActiveToolBlockSessionForComplete(
   if (!byId) {
     recordAgentStartDecision(
       'session_lookup_missed',
-      `tried=${candidates.length} byId=false routeHit=${Boolean(byRoute)} `
-      + `fallbackHit=${Boolean(fallback)} `
+      `tried=${candidates.length} byId=false reqHit=${Boolean(byRequest)} `
+      + `routeHit=${Boolean(byRoute)} fallbackHit=${Boolean(fallback)} `
       + `activeId=${activeToolBlockSessionId ?? '(none)'} `
       + `sessions=${Array.from(activeToolBlockSessions.values())
         .map((s) => `${s.id.slice(0, 10)}:${s.executions.length}`)
