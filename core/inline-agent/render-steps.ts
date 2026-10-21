@@ -367,6 +367,12 @@ function createAgentToolRow(
   const item = document.createElement('div');
   item.className = 'dpp-agent-tool-item';
   item.setAttribute('data-tool-status', status);
+  // 2026-10-22：补上 data-tool-name。
+  // 侧边栏的 ToolRunPanel 一直带 name/status 两个属性（R08 验收脚本按
+  // `tool-run-panel[data-tool-name]` 找卡片），而页面侧渲染器只有 status。
+  // 结果 R08 只覆盖了默认关闭的侧边栏对话，用户在页面 inline agent 上
+  // 看不到同等信息，验收脚本也探不到。
+  item.setAttribute('data-tool-name', toolName);
 
   const summaryId = nextAgentDomId('dpp-agent-tool-summary');
 
