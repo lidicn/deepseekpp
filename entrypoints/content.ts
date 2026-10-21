@@ -5124,7 +5124,12 @@ async function startInlineAgentIfNeeded(
 
   const anchorContent = getInlineAgentAnchorContent(complete);
   const scope = inlineAgentCapabilityScope;
-  const observationRoot = document.getElementById("root") ?? document.body;
+  // 2026-10-22：观测根改用 document.documentElement，而不是捕获一次的 #root。
+  // 原实现捕获 `document.getElementById("root")`，若 React 之后替换/卸载该节点
+  // （SPA 导航、hydration 重建），观察者就挂在一个已脱离文档的节点上，永远收不到
+  //  MutationRecord —— 真机表现就是 find() 只跑两次、然后直到超时。
+  // documentElement 在文档生命周期内稳定，subtree 覆盖整棵 light DOM。
+  const observationRoot = document.documentElement ?? document.body;
   if (!scope?.active || !observationRoot) {
     showContentToast(contentT("content.agent.startFailed"), "warning");
     return;
@@ -9703,12 +9708,35 @@ function getRestoreTruncatedPreview(value: unknown): string {
   return typeof preview === "string" ? preview : "";
 }
 
+/**
+ * 收集页面上的 assistant 消息元素。
+ *
+ * 2026-10-22：原实现只认 `.ds-message`。真机上出现过内容脚本侧
+ * `document.querySelectorAll('.ds-message').length === 0` 而主世界能查到 2 个
+ * 的情况（原因未定论：detached 文档 / frame / 渲染时序）。
+ * 这里在 `.ds-message` 为空时退回到「对话虚拟列表的可见行」，
+ * 让后续的 anchor 查找至少还有候选可看，而不是直接空数组。
+ *
+ * 退避选择器都基于 DeepSeek 的语义类名（ds-virtual-list-*），不依赖哈希类名。
+ */
 function getAssistantMessages(): Element[] {
   const messages = Array.from(document.querySelectorAll(".ds-message"));
-  const assistantMessages = messages.filter(
-    (message) => getAssistantContentHosts(message).length > 0,
+  if (messages.length > 0) {
+    const assistantMessages = messages.filter(
+      (message) => getAssistantContentHosts(message).length > 0,
+    );
+    return assistantMessages.length > 0 ? assistantMessages : messages;
+  }
+
+  // 退避：对话虚拟列表当前渲染出来的行。
+  const list = document.querySelector('.ds-virtual-list--printable')
+    ?? Array.from(document.querySelectorAll('.ds-virtual-list'))
+      .find((el) => el.querySelector('.ds-markdown, .ds-think-content'));
+  if (!list) return [];
+  const rows = Array.from(
+    list.querySelectorAll('.ds-virtual-list-visible-items > *'),
   );
-  return assistantMessages.length > 0 ? assistantMessages : messages;
+  return rows;
 }
 
 function getAssistantResponseHost(message: Element): Element {
