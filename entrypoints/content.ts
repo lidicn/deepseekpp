@@ -356,7 +356,27 @@ const REASONING_HOST_ANCESTOR_SCAN_DEPTH = 4;
 // 原正则 ^...$ 严格全匹配，用户换个说法就命中不了，R1 的静默跳过直接暴露。
 const USER_CONTINUATION_RE =
   /^(?:继续(?:完成|往下|接着|说|写|生成)?|接着(?:说|写|继续|往下)|往下(?:说|写|继续)|go on|continue(?: writing| speaking| generating)?|keep going|next(?: please)?)/i;
-const INLINE_AGENT_LIVE_TARGET_WAIT_MS = 1_500;
+/**
+ * 等待锚点 assistant 消息落地的上限。
+ *
+ * 2026-10-21 真机定位：原值 1.5s 太短。诊断实测
+ * `agent_start:skipped:anchor_not_located | located=false scopeMatch=true
+ *  scopeActive=true waitMs=1500` —— scope 健康，纯粹是等不及。
+ * DeepSeek 现在是虚拟列表（`.ds-virtual-list--printable`），提交是异步的；
+ * 再叠加「深度思考」模式的思考阶段，1.5s 内 assistant 消息常常还没进 DOM。
+ *
+ * 结果是锚点找不到 → 弹「Agent 启动失败」→ 在创建 trace 之前就 return，
+ * 于是「工具执行成功了却什么都没留下」，也永远看不到 W29 报告。
+ *
+ * 提到 15s：waitForInlineAgentLiveTarget 是 MutationObserver 驱动的，
+ * 目标一出现就立刻 settle，所以放大上限不会拖慢正常路径，只是放宽下限。
+ *
+ * 注意：实测放大到 15s 后 located 仍为 false，所以这不是根因，
+ * 真正原因见 anchor_find_probe 的诊断输出。
+ */
+const INLINE_AGENT_LIVE_TARGET_WAIT_MS = 15_000;
+/** anchor_find_probe 的限流计数，避免每帧都写存储。 */
+let anchorFindProbeCount = 0;
 const TOKEN_SPEED_BADGE_ID = "dpp-token-speed-badge";
 const TOKEN_SPEED_STYLE_ID = "dpp-token-speed-css";
 const MULTIMODAL_MEDIA_BUTTON_ID = "dpp-multimodal-media-button";
@@ -5116,6 +5136,20 @@ async function startInlineAgentIfNeeded(
         messages,
         anchorContent,
       );
+      // 2026-10-21 观测：真机 located=false 且放到 15s 也没用，
+      // 但手动在页面上跑同一套逻辑又能找到助手消息。
+      // 这里把每次 find() 看到的数量打出来（限流 20 次，覆盖整个等待窗），
+      // 直接区分「find() 看不到消息」与「看得到但匹配不上」。
+      if (anchorFindProbeCount < 20) {
+        anchorFindProbeCount += 1;
+        recordAgentStartDecision(
+          'anchor_find_probe',
+          `n=${anchorFindProbeCount} messages=${messages.length} anchorLen=${anchorContent.length} `
+          + `dsMessage=${document.querySelectorAll('.ds-message').length} `
+          + `contentHosts=${document.querySelectorAll(ASSISTANT_RESPONSE_CONTENT_SELECTOR).length} `
+          + `rootChildren=${(document.getElementById('root') ?? document.body).children.length}`,
+        );
+      }
       return target ? { target, messages } : null;
     },
     observe(onMutation) {
