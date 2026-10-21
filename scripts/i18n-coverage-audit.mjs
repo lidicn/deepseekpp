@@ -46,6 +46,7 @@ const pathAllowlist = new Map([
   ['scripts/detect-flaky.mjs', 'developer CLI that reports flaky-test rounds to the console; never bundled and renders no user-facing UI'],
   ['scripts/perf-baseline.mjs', 'developer CLI that prints perf-baseline comparisons and warnings; never bundled and renders no user-facing UI'],
   ['scripts/test-with-baseline.mjs', 'CI gate script that prints baseline comparison results to the workflow log; never bundled and renders no user-facing UI'],
+  ['scripts/install-bridge.mjs', 'developer CLI that deploys the DPP Bridge native host and prints progress to the console; never bundled and renders no user-facing UI'],
   // 2026-10-20: 存量 i18n 债分类（第一批）。以下文件是纯内部面：LLM 提示词、
   // 中文输入解析用的正则、console 调试日志、工具描述符元数据、启动自检诊断。
   // 它们不渲染产品界面文案；对应的用户可见文案都在 locale 资源里。
