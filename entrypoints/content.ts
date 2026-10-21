@@ -5136,8 +5136,19 @@ async function startInlineAgentIfNeeded(
   if (!located || inlineAgentCapabilityScope !== scope || !scope.active) {
     // Don't fail silently after the bounded DOM commit wait: the anchor
     // assistant message really could not be located (Issue #544).
+    //
+    // 2026-10-21 观测：这是「工具执行了但没有 trace、也没有续轮」的直接卡点。
+    // 真机复现：模型调了 shell_exec（SW 诊断有 tool start/finished ok），
+    // 页面弹「Agent 启动失败，请重试」，然后什么都没发生 ——
+    // 因为这里在 createInlineAgentTrace / beginTraceTracking 之前就 return 了。
+    // 之前只弹 toast（刷新即丢），无法区分是「没定位到锚点」「scope 失效」
+    // 还是「scope 不活跃」，所以补一条持久化诊断。
     if (scope.active)
       showContentToast(contentT("content.agent.startFailed"), "warning");
+    recordAgentStartDecision(
+      'skipped:anchor_not_located',
+      `located=${Boolean(located)} scopeMatch=${inlineAgentCapabilityScope === scope} scopeActive=${scope.active} waitMs=${INLINE_AGENT_LIVE_TARGET_WAIT_MS}`,
+    );
     return;
   }
   const { target, messages } = located;
