@@ -127,6 +127,34 @@ describe('Content persistence codecs', () => {
     expect(storage.write).not.toHaveBeenCalled();
   });
 
+  it('keeps the newest trace when the byte budget forces trimming (regression: used to drop the newest)', async () => {
+    // 真机根因：trimTracesToFit 用 slice(0, -1) 裁剪，而 upsert 把新记录
+    // append 到末尾 —— 于是「丢最旧的」实际丢了最新那条，新轨迹永远落不了盘，
+    // W29 观测看起来完全没生效（trace 数长期不变、时间戳停在几天前）。
+    const now = Date.now();
+    const padding = 'x'.repeat(800 * 1024); // 每条约 800KB，预算只有 2MB
+    const bigTrace = (id: string, ageMs: number) =>
+      createTrace({
+        id,
+        createdAt: now - ageMs,
+        updatedAt: now - ageMs,
+        anchorContent: padding,
+      });
+
+    const storage = createMemorySlot({
+      present: true,
+      value: [bigTrace('oldest', 3_000), bigTrace('middle', 2_000), bigTrace('third', 1_000)],
+    });
+    const store = createInlineAgentTraceStore(storage);
+
+    // 三条已约 2.4MB，写入第四条必然触发裁剪。
+    await store.upsert(bigTrace('brand-new', 0));
+
+    const ids = (await store.read()).map((trace) => trace.id);
+    expect(ids).toContain('brand-new'); // 最新的必须保留
+    expect(ids).not.toContain('oldest'); // 最旧的先被丢
+  });
+
   it('surfaces read and write failures to the controller boundary', async () => {
     const readFailure = new Error('storage read failed');
     const readStorage: StorageSlotPort = {

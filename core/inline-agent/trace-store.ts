@@ -34,6 +34,18 @@ function getTraceBudgetBytes(): number {
 /**
  * Drop the oldest traces until the serialized array fits within the budget.
  * The newest trace is always retained so the current execution is never lost.
+ *
+ * 2026-10-21 修复（真机定位）：原实现用 `candidate.slice(0, -1)` 裁剪，
+ * 而 `upsert` 是把新记录 **append 到数组末尾** 的（见 upsert 的
+ * `[...current.filter(...), decoded]`）。于是「丢弃最旧的」实际丢的是
+ * **最新的那条**，与注释和调用方预期完全相反。
+ *
+ * 后果：存储一旦接近预算（真机实测 1.85 MB / 2 MB 预算），每次写入新轨迹
+ * 都会把刚写进去的那条裁掉 —— 表现为 trace 数量长期不变、时间戳停在几天前，
+ * 让 W29 观测看起来「完全没生效」。这也是「工具确实执行了、循环也确实启动了，
+ * 却没有留下任何轨迹」的直接原因。
+ *
+ * 现在改为 `slice(1)`：丢索引 0（最旧），保留末尾（最新）。
  */
 function trimTracesToFit(
   traces: InlineAgentTraceRecord[],
@@ -43,8 +55,8 @@ function trimTracesToFit(
   while (candidate.length > 1) {
     const serialized = JSON.stringify(candidate);
     if (new Blob([serialized]).size <= budgetBytes) return candidate;
-    // Drop oldest (highest index — newest is appended at the end).
-    candidate = candidate.slice(0, -1);
+    // 丢最旧的（索引 0）；最新的在末尾，必须保留。
+    candidate = candidate.slice(1);
   }
   return candidate;
 }
