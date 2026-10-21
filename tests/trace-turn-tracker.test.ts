@@ -10,7 +10,26 @@ describe('W29 turn tracker · 事件映射', () => {
 
     const events = tracker.snapshot();
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ t: 'turn.start', turnId: 'loop-1:0', timestamp: 1000 });
+    expect(events[0]).toMatchObject({ t: 'turn.start', turnId: 'loop-1:0#1', timestamp: 1000 });
+  });
+
+  it('同一前缀重复开轮也产生唯一 turnId（真机教训：stepIndex 会重复）', () => {
+    // 真机上 AGENT_STEP_STARTED 的 stepIndex 在同一次运行里会重复（首轮与续轮
+    // 都可能为 0），用 loopId:stepIndex 当 turnId 会让两轮撞成同一个 id，
+    // 渲染器把它们并成一组，报告里出现「一个 turn 两个 turn.end」。
+    const tracker = createTurnTracker({ now: () => 1 });
+    tracker.startTurn('loop-9:0');
+    tracker.endTurn('step_advanced', false);
+    tracker.startTurn('loop-9:0');
+    tracker.endTurn('finalized', true);
+
+    const starts = tracker.snapshot().filter((e) => e.t === 'turn.start');
+    const ends = tracker.snapshot().filter((e) => e.t === 'turn.end');
+    expect(starts).toHaveLength(2);
+    expect(new Set(starts.map((e) => e.turnId)).size).toBe(2);
+    // 两个 turn.end 必须属于不同轮次，否则报告会把两轮并成一组。
+    expect(ends[0].turnId).not.toBe(ends[1].turnId);
+    expect(ends.map((e) => e.stopReason)).toEqual(['step_advanced', 'finalized']);
   });
 
   it('没有活动轮次时丢弃事件，不产生无归属记录', () => {

@@ -65,6 +65,12 @@ export function createTurnTracker(options: TurnTrackerOptions = {}): TurnTracker
   const counts: SseCounts = { text: 0, think: 0, tool: 0 };
   let turnId: string | null = null;
   let turnEnded = false;
+  // 轮次序号：turnId 必须全局唯一，否则渲染器会把两轮并成一组。
+  // 真机教训：原来用 `${loopId}:${stepIndex}`，而 AGENT_STEP_STARTED 的 stepIndex
+  // 在同一轮内可能重复（首轮与续轮都可能是 0），导致 turnId 碰撞，
+  // 报告里出现「一个 turn 两个 turn.end」，无法判断到底是几轮。
+  // 现在改用单调递增序号，调用方传的前缀只用于人读。
+  let turnSeq = 0;
 
   const emit = (event: TraceEvent): void => {
     collector.push(event);
@@ -89,14 +95,16 @@ export function createTurnTracker(options: TurnTrackerOptions = {}): TurnTracker
   };
 
   return {
-    startTurn(nextTurnId: string): string {
-      turnId = nextTurnId;
+    startTurn(prefix: string): string {
+      turnSeq += 1;
+      // turnId = 前缀 + 序号，保证同一轮内与跨轮都唯一。
+      turnId = `${prefix}#${turnSeq}`;
       turnEnded = false;
       counts.text = 0;
       counts.think = 0;
       counts.tool = 0;
       emitWithTurn('turn.start', {});
-      return nextTurnId;
+      return turnId;
     },
 
     sseFrame(kind: SseFrameKind, count = 1): void {
