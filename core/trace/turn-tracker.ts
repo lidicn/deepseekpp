@@ -47,7 +47,8 @@ export interface TurnTracker {
   /** 把累计的 SSE 计数冲刷成一条 sse.frame 事件（若为 0 则不产生事件）。 */
   flushSse(): void;
   toolParsed(name: string, status: 'OK' | 'FAIL'): void;
-  toolExec(name: string, durationMs: number, ok: boolean): void;
+  /** 记录一次工具执行；durationMs 可省略（工具结果不携带耗时）。 */
+  toolExec(name: string, durationMs: number | undefined, ok: boolean): void;
   continuationDecision(reason: ContinuationReason, triggered: boolean): void;
   /** 结束当前轮。传入的 finished 表示「整轮 agent 是否全部结束」。 */
   endTurn(stopReason: string, finished: boolean): void;
@@ -128,8 +129,13 @@ export function createTurnTracker(options: TurnTrackerOptions = {}): TurnTracker
       emitWithTurn('tool.parsed', { name, status });
     },
 
-    toolExec(name: string, durationMs: number, ok: boolean): void {
-      emitWithTurn('tool.exec', { name, durationMs, ok });
+    /**
+     * 记录一次工具执行。durationMs 可省略 —— 工具结果本身不携带耗时
+     * （ToolCardResult 只有 {ok, summary, detail}），省略时报告不显示耗时，
+     * 而不是显示一个假的 0.0s。
+     */
+    toolExec(name: string, durationMs: number | undefined, ok: boolean): void {
+      emitWithTurn('tool.exec', durationMs === undefined ? { name, ok } : { name, durationMs, ok });
     },
 
     continuationDecision(reason: ContinuationReason, triggered: boolean): void {

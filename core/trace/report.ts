@@ -58,7 +58,12 @@ export interface ToolParsedEvent extends BaseTraceEvent {
 export interface ToolExecEvent extends BaseTraceEvent {
   t: 'tool.exec';
   name: string;
-  durationMs: number;
+  /**
+   * 耗时（毫秒）。可能缺失：ToolCardResult 只有 {ok, summary, detail}，
+   * 不携带耗时；MCP 的 data 里也没有 duration 字段。所以做成可选，
+   * 渲染时缺失就不显示，而不是显示一个假的 0.0s。
+   */
+  durationMs?: number;
   ok: boolean;
 }
 
@@ -183,9 +188,12 @@ function renderDetailLines(group: TurnGroup): string[] {
       case 'tool.parsed':
         lines.push(`tool.parsed     ${event.name}  ${event.status}`);
         break;
-      case 'tool.exec':
-        lines.push(`tool.exec       ${event.name}  ${formatDurationMs(event.durationMs)}  ${event.ok ? 'ok' : 'FAIL'}`);
+      case 'tool.exec': {
+        // 耗时缺失时省略，而不是显示假的 0.0s。
+        const duration = event.durationMs === undefined ? '' : `  ${formatDurationMs(event.durationMs)}`;
+        lines.push(`tool.exec       ${event.name}${duration}  ${event.ok ? 'ok' : 'FAIL'}`);
         break;
+      }
       case 'continuation.decision':
         lines.push(`continuation.decision: ${event.reason} → triggered=${String(event.triggered)}`);
         break;

@@ -77,6 +77,24 @@ describe('W29 turn tracker · 事件映射', () => {
     });
   });
 
+  it('tool.exec 耗时缺失时省略，不显示假的 0.0s', () => {
+    // 真机事实：ToolCardResult 只有 {ok, summary, detail}，工具结果不携带耗时。
+    // 之前写死 durationMs: number，导致只能传 0，报告出现误导性的 "0.0s"。
+    const tracker = createTurnTracker({ now: () => 1 });
+    tracker.startTurn('t');
+    tracker.toolExec('shell_exec', undefined, true);
+    tracker.toolExec('local_file_read', 2600, false);
+
+    const events = tracker.snapshot().filter((e) => e.t === 'tool.exec');
+    expect(events[0]).toEqual({ t: 'tool.exec', turnId: 't#1', timestamp: 1, name: 'shell_exec', ok: true });
+    expect('durationMs' in events[0]).toBe(false);
+
+    const report = renderTraceReport(tracker.snapshot());
+    expect(report).toContain('tool.exec       shell_exec  ok');
+    expect(report).toContain('tool.exec       local_file_read  2.6s  FAIL');
+    expect(report).not.toContain('shell_exec  0.0s');
+  });
+
   it('turn.end 幂等：重复收尾不会产生两条', () => {
     const tracker = createTurnTracker({ now: () => 1 });
     tracker.startTurn('t');

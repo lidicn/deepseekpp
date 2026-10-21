@@ -5153,7 +5153,8 @@ async function startInlineAgentIfNeeded(
   );
   observeReportedPersistence(writeInlineAgentTrace(activeInlineAgentTrace));
   // W29：开始采集轨迹事件（turn.start 会立即落盘）。
-  beginTraceTracking(loopId);
+  // 传入原生 turn 已执行的工具，让报告里有 tool.exec 那一行。
+  beginTraceTracking(loopId, executions);
 
   inlineAgentContainer = container;
   // Stamp the live container with its trace id so the restore dedupe check
@@ -7527,7 +7528,20 @@ function endTraceTracking(): void {
   activeTraceTracker = null;
 }
 
-function beginTraceTracking(loopId: string): void {
+/**
+ * 开始一轮 agent 运行的轨迹采集。
+ *
+ * `initialExecutions` 是触发这一轮的**原生 turn** 已经执行完的工具
+ * （trace 记录里的 initialExecutions 字段）。真机验证发现：工具实际都在
+ * 原生 turn 里执行，循环自身的 step.toolExecutions 是空的
+ * （steps[0].tools === [] 而 totalTools === 1），所以必须在这里补发
+ * tool.exec —— 否则报告里永远看不到工具执行那一行，而它恰恰是
+ * 「工具执行出错」类问题最关键的证据。
+ */
+function beginTraceTracking(
+  loopId: string,
+  initialExecutions: readonly ToolExecutionRecord[] = [],
+): void {
   endTraceTracking();
   activeTraceTracker = createTurnTracker({
     onChange: ({ event }) => {
@@ -7540,6 +7554,11 @@ function beginTraceTracking(loopId: string): void {
     }
   });
   activeTraceTracker.startTurn(`${loopId}:0`);
+  for (const exec of initialExecutions) {
+    // 耗时不可得（工具结果不带 durationMs），省略。
+    activeTraceTracker.toolExec(exec.name, undefined, Boolean(exec.result?.ok));
+  }
+  activeTraceTracker.flushSse();
 }
 
 /** 进入下一步：先把上一步的 SSE 冲平并收尾（未收尾时标注 step_advanced）。 */
@@ -7552,11 +7571,16 @@ function advanceTraceTurn(loopId: string, stepIndex: number): void {
   activeTraceTracker.startTurn(`${loopId}:${stepIndex}`);
 }
 
-/** 一步完成：记录本步的工具执行结果。turn 的收尾留给 loop 级事件。 */
-function flushTraceStep(toolExecutions: readonly { name: string; result?: { ok?: boolean; durationMs?: number } }[]): void {
+/**
+ * 一步完成：记录本步的工具执行结果。turn 的收尾留给 loop 级事件。
+ *
+ * 耗时统一传 undefined：工具结果（ToolCardResult）只有 {ok, summary, detail}，
+ * 不携带 durationMs。报告里会省略耗时而不是显示假的 0.0s。
+ */
+function flushTraceStep(toolExecutions: readonly { name: string; result?: { ok?: boolean } }[]): void {
   if (!activeTraceTracker) return;
   for (const exec of toolExecutions) {
-    activeTraceTracker.toolExec(exec.name, exec.result?.durationMs ?? 0, Boolean(exec.result?.ok));
+    activeTraceTracker.toolExec(exec.name, undefined, Boolean(exec.result?.ok));
   }
   activeTraceTracker.flushSse();
 }
