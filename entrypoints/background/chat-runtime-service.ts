@@ -10,6 +10,8 @@ import {
   updateMarker,
 } from '../../core/chat/active-loop';
 import { createResumeGate, normalizeFlags, RESUME_FLAGS_STORAGE_KEY } from '../../core/chat/resume-gate';
+import { waitForWakeReconcile } from '../../core/chat/wake-reconcile-timeout';
+import { diagnosticLogBuffer } from '../../core/diagnostics/log-buffer';
 import {
   runResumeToolLoop,
   type ResumeToolLoopDeps,
@@ -670,7 +672,14 @@ export function createChatRuntimeService(
     // M1-2c H2: 用户新消息优先，取消延迟 arm 的 resume
     const cancelResume = (globalThis as unknown as { __dppResumeCancelled?: () => void }).__dppResumeCancelled;
     if (cancelResume) cancelResume();
+    // 2026-10-22：并发检查提前到任何 await 之前。
+    // 原来它在 ensureWakeReconciled() 之后，而那个 await 可能挂住；挂起期间
+    // 后来的请求全都堵在同一个 promise 上，永远走不到「已有会话在跑」的快速返回。
+    if (activeTurn || pendingAdmission || resetOperation) {
+      return { ok: false, error: 'chat_already_running' };
+    }
     await ensureWakeReconciled();
+    // reconcile 期间可能有别的请求抢进来，再判一次。
     if (activeTurn || pendingAdmission || resetOperation) {
       return { ok: false, error: 'chat_already_running' };
     }
@@ -965,9 +974,37 @@ export function createChatRuntimeService(
     return wakeReconcileOperation;
   };
 
+  /**
+   * reconcile 等待上限。
+   *
+   * 2026-10-22 修复：原实现直接 `await reconcileInterruptedOnWake()`，没有超时。
+   * 该操作内部会等待 storage / 网络，一旦挂住（残留 marker、storage 异常、
+   * 原生宿主无响应），`wakeReconcileOperation` 这个模块级共享 promise 就永远
+   * 不 settle，而它又是**单例**的 —— 之后每次 submitPrompt 都复用同一个挂起
+   * 的 promise，于是整个侧边栏对话永久不可用，UI 只显示「...」且零诊断。
+   *
+   * 真机复现过：手工写入一个残留的 active-loop marker 后即触发此状，
+   * 只能清 storage + 重载扩展才恢复。
+   */
+  const WAKE_RECONCILE_TIMEOUT_MS = 5_000;
+
   async function ensureWakeReconciled(): Promise<void> {
     if (wakeReconciled) return;
-    await reconcileInterruptedOnWake();
+    await waitForWakeReconcile({
+      reconcile: () => reconcileInterruptedOnWake(),
+      timeoutMs: WAKE_RECONCILE_TIMEOUT_MS,
+      scheduleTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+      clearScheduledTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout>),
+      onTimeout: () => {
+        console.warn('[dpp] wake reconcile timed out, continuing without it');
+        diagnosticLogBuffer.record({
+          level: 'warn',
+          source: 'chat-runtime',
+          message: 'wake_reconcile_timeout',
+          details: `exceeded ${WAKE_RECONCILE_TIMEOUT_MS}ms; continuing without resume reconcile`,
+        });
+      },
+    });
   }
 
   return Object.freeze({
