@@ -5142,12 +5142,19 @@ async function startInlineAgentIfNeeded(
       // 直接区分「find() 看不到消息」与「看得到但匹配不上」。
       if (anchorFindProbeCount < 20) {
         anchorFindProbeCount += 1;
+        const probeRoot = document.getElementById('root');
         recordAgentStartDecision(
           'anchor_find_probe',
           `n=${anchorFindProbeCount} messages=${messages.length} anchorLen=${anchorContent.length} `
           + `dsMessage=${document.querySelectorAll('.ds-message').length} `
           + `contentHosts=${document.querySelectorAll(ASSISTANT_RESPONSE_CONTENT_SELECTOR).length} `
-          + `rootChildren=${(document.getElementById('root') ?? document.body).children.length}`,
+          // 区分「detached 文档」与「frame 不对」的关键量：
+          // detached → root 存在但 isConnected=false；
+          // frame 不对 → location.href 不是 chat.deepseek.com。
+          + `rootPresent=${Boolean(probeRoot)} rootConnected=${probeRoot?.isConnected ?? 'n/a'} `
+          + `docChildren=${document.documentElement.childElementCount} `
+          + `href=${String(location.href).slice(0, 48)} `
+          + `obsRootConnected=${observationRoot.isConnected}`,
         );
       }
       return target ? { target, messages } : null;
