@@ -1819,9 +1819,30 @@ function broadcastChatChunk(
 // ========== DPP Bridge: native messaging ==========
 // 用于 P3 记忆系统调试：外部 HTTP 请求 → native messaging → runtime-command-registry
 
+// 单例状态：避免 setupDppBridge 被重复调用时叠加多个 port 与 listener。
+// 2026-10-21 修复：此前没有单例保护，宿主退出会让所有历史 port 同时断开，
+// 每个 port 又各自触发一次重连，port 数量指数增长，表现为
+// SW console 反复 "native port connected" -> "Native host has exited"。
+let bridgePort: chrome.runtime.Port | null = null;
+let bridgeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let bridgeReconnectAttempts = 0;
+const BRIDGE_MAX_RECONNECT_ATTEMPTS = 5;
+const BRIDGE_RECONNECT_BASE_MS = 5000;
+
 function setupDppBridge() {
+  // 单例：先把上一个 port 干净地断开，避免 listener 叠加。
+  if (bridgePort) {
+    try { bridgePort.disconnect(); } catch { /* 已断开 */ }
+    bridgePort = null;
+  }
+  if (bridgeReconnectTimer) {
+    clearTimeout(bridgeReconnectTimer);
+    bridgeReconnectTimer = null;
+  }
+
   try {
     const port = chrome.runtime.connectNative('com.deepseekpp.bridge');
+    bridgePort = port;
     
     port.onMessage.addListener((msg) => {
       // 收到来自 dpp-bridge.mjs 的请求
@@ -1862,6 +1883,8 @@ function setupDppBridge() {
     });
     
     port.onDisconnect.addListener(() => {
+      if (bridgePort !== port) return; // 已被更新的连接取代，忽略旧连接的断开事件
+      bridgePort = null;
       const err = chrome.runtime.lastError?.message || '';
       console.warn('[dpp-bridge] native port disconnected:', err);
       // 只有不是配置错误（forbidden/not found）时才自动重连，避免无限刷报错
@@ -1869,17 +1892,28 @@ function setupDppBridge() {
         console.log('[dpp-bridge] native host 未配置或被拒绝，停止自动重连');
         return;
       }
-      // 5 秒后重连（仅网络波动等临时错误）
-      setTimeout(() => {
+      // 指数退避 + 次数上限：临时错误（端口冲突、宿主重启）值得重试，
+      // 但持续失败必须停下来，否则每 5 秒刷一条 warn、并且可能叠加多个 port。
+      if (bridgeReconnectAttempts >= BRIDGE_MAX_RECONNECT_ATTEMPTS) {
+        console.log(`[dpp-bridge] 已达重连上限（${BRIDGE_MAX_RECONNECT_ATTEMPTS} 次），停止自动重连`);
+        return;
+      }
+      bridgeReconnectAttempts += 1;
+      const delay = BRIDGE_RECONNECT_BASE_MS * bridgeReconnectAttempts;
+      console.log(`[dpp-bridge] ${delay}ms 后第 ${bridgeReconnectAttempts} 次重连`);
+      bridgeReconnectTimer = setTimeout(() => {
+        bridgeReconnectTimer = null;
         try {
           setupDppBridge();
         } catch (e) {
           console.error('[dpp-bridge] reconnect failed:', e);
         }
-      }, 5000);
+      }, delay);
     });
     
     console.log('[dpp-bridge] native port connected');
+    // 连接成功即重置退避计数：后续再断开时仍按完整的重连额度处理。
+    bridgeReconnectAttempts = 0;
   } catch (error) {
     console.error('[dpp-bridge] connectNative failed:', error);
   }
