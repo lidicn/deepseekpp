@@ -2,7 +2,7 @@ import {
   definePayloadlessRuntimeCommandHandler,
   type RuntimeCommandHandler,
 } from '../../core/messaging/runtime-command-registry';
-import { diagnosticLogBuffer } from '../../core/diagnostics/log-buffer';
+import { diagnosticLogBuffer, type DiagnosticLogEntry } from '../../core/diagnostics/log-buffer';
 import { readPersistedInlineAgentTraces } from '../../core/inline-agent/trace-store';
 import { renderTraceReport } from '../../core/trace/report';
 
@@ -10,6 +10,42 @@ export interface DiagnosticsRuntimeHandlerDependencies {
   getVersion(): string;
   /** P1: 获取最近的用户消息（用于导出日志时带上上下文） */
   getRecentUserMessages?(): Promise<readonly string[]>;
+}
+
+/**
+ * content script 侧的诊断（独立存储键，见 entrypoints/content.ts 的 CONTENT_DIAGNOSTIC_STORAGE_KEY）。
+ * 合并后再按时间排序，让「agent 为什么没启动」与「工具何时执行」落在同一条时间线上。
+ */
+const CONTENT_DIAGNOSTIC_STORAGE_KEY = 'dpp_content_diagnostics';
+
+function isDiagnosticLogEntry(value: unknown): value is DiagnosticLogEntry {
+  if (!value || typeof value !== 'object') return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.ts === 'number'
+    && typeof v.level === 'string'
+    && typeof v.source === 'string'
+    && typeof v.message === 'string'
+    && (v.details === undefined || typeof v.details === 'string')
+  );
+}
+
+async function readContentDiagnostics(): Promise<DiagnosticLogEntry[]> {
+  try {
+    const data = await chrome.storage.local.get(CONTENT_DIAGNOSTIC_STORAGE_KEY);
+    const raw = data?.[CONTENT_DIAGNOSTIC_STORAGE_KEY];
+    // 形状不合法的一律丢弃：诊断出口不能因为一条脏数据就报错。
+    return Array.isArray(raw) ? raw.filter(isDiagnosticLogEntry) : [];
+  } catch {
+    return [];
+  }
+}
+
+function mergeByTimestamp(
+  background: readonly DiagnosticLogEntry[],
+  content: readonly DiagnosticLogEntry[],
+): DiagnosticLogEntry[] {
+  return [...background, ...content].sort((a, b) => a.ts - b.ts);
 }
 
 /**
@@ -51,10 +87,16 @@ export function createDiagnosticsRuntimeHandlers(
       };
     }),
     definePayloadlessRuntimeCommandHandler('GET_DIAGNOSTIC_SNAPSHOT', async () => {
-      const trace = await buildTraceReport();
+      const [trace, contentEntries] = await Promise.all([
+        buildTraceReport(),
+        readContentDiagnostics(),
+      ]);
       return {
         timestamp: Date.now(),
-        logs: diagnosticLogBuffer.snapshot().map((entry) => ({ ...entry })),
+        logs: mergeByTimestamp(
+          diagnosticLogBuffer.snapshot().map((entry) => ({ ...entry })),
+          contentEntries,
+        ),
         version: dependencies.getVersion(),
         ...trace,
       };

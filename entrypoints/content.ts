@@ -195,6 +195,52 @@ import {
   type TurnTracker,
 } from "../core/trace/turn-tracker";
 import { setTraceEventSink } from "../core/trace/collector";
+
+/**
+ * 2026-10-21 观测：inline agent 是否启动、没启动是卡在哪个分支。
+ *
+ * 真机验收发现「工具确实执行了，但 runInlineAgentLoop 从未进入」
+ * （agent_loop_entered 一次都没出现、轨迹冻结在 10-18）。而工具执行的
+ * 唯一续轮入口就是 startInlineAgentIfNeeded —— 它有三个早退分支，
+ * 之前全部只写 console.log（页面一刷新就没了），所以无法定位。
+ *
+ * 为什么用独立存储键而不是 diagnosticLogBuffer：
+ * 诊断缓冲是「每上下文一份」的内存快照，content script 若直接写同一个键，
+ * 会用自己加载时的旧快照覆盖 SW 期间新增的条目（跨上下文互相覆盖）。
+ * 独立键只有 content 一个写入者，append-only，天然不会覆盖 SW 的日志；
+ * 读取侧（GET_DIAGNOSTIC_SNAPSHOT）把两个键按时间合并即可。
+ */
+const CONTENT_DIAGNOSTIC_STORAGE_KEY = "dpp_content_diagnostics";
+const CONTENT_DIAGNOSTIC_LIMIT = 120;
+
+function recordAgentStartDecision(outcome: string, details: string): void {
+  try {
+    void chrome.storage.local
+      .get(CONTENT_DIAGNOSTIC_STORAGE_KEY)
+      .then((data) => {
+        const raw = data?.[CONTENT_DIAGNOSTIC_STORAGE_KEY];
+        const prev = Array.isArray(raw) ? raw : [];
+        const next = [
+          ...prev,
+          {
+            ts: Date.now(),
+            level: outcome.startsWith("skipped") ? "warn" : "info",
+            source: "inline-agent",
+            message: `agent_start:${outcome}`,
+            details,
+          },
+        ].slice(-CONTENT_DIAGNOSTIC_LIMIT);
+        return chrome.storage.local.set({
+          [CONTENT_DIAGNOSTIC_STORAGE_KEY]: next,
+        });
+      })
+      .catch(() => {
+        // 观测绝不影响主流程。
+      });
+  } catch {
+    // chrome.storage 不可用时静默跳过。
+  }
+}
 import {
   chainExternalizedPayloadWrite,
   isExternalizedToolPayloadCall,
@@ -4929,6 +4975,7 @@ async function startInlineAgentIfNeeded(
 ): Promise<void> {
   if (isInlineAgentResponseComplete(complete)) {
     console.log('[DPP-AUTO] skip: inline agent continuation response');
+    recordAgentStartDecision('skipped:continuation_response', 'complete 被判定为本循环自己发起的续轮响应');
     return;
   }
 
@@ -4940,9 +4987,11 @@ async function startInlineAgentIfNeeded(
   // handled by isInlineAgentResponseComplete above.
   if (isInlineAgentRunning()) {
     console.log('[DPP-AUTO] concurrency: inline agent already running, showing confirm dialog');
+    recordAgentStartDecision('skipped:already_running', '已有 inline agent 在跑，弹并发确认框');
     const shouldInterrupt = await showAgentConcurrencyConfirm();
     if (!shouldInterrupt) {
       console.log('[DPP-AUTO] concurrency: user cancelled, skipping new loop');
+      recordAgentStartDecision('skipped:user_cancelled_concurrency', '用户在并发确认框里选择不中断');
       return;
     }
     console.log('[DPP-AUTO] concurrency: user confirmed, stopping old loop and starting new one');
@@ -4962,6 +5011,11 @@ async function startInlineAgentIfNeeded(
       total: executions.length,
       tools: executions.map(e => ({ name: e.name, providerKind: e.provider?.kind })),
     });
+    // 这是最可能的早退分支：工具执行了但没被算作「可续跑」。
+    recordAgentStartDecision(
+      'skipped:no_continuable_executions',
+      `executions=${executions.length} continuable=0 userAskedToContinue=false names=${executions.map(e => e.name).join(',') || '(none)'}`,
+    );
     return;
   }
   if (userAskedToContinue && continuableExecutions.length === 0) {
@@ -5138,6 +5192,10 @@ async function startInlineAgentIfNeeded(
   container.setAttribute("data-agent-starting", "true");
 
   startAgentConsoleTimer();
+  recordAgentStartDecision(
+    'starting',
+    `executions=${initialExecutions.length} names=${initialExecutions.map((e) => e.name).join(',') || '(none)'}`,
+  );
   startOwnedInlineAgentLoop(payload);
 }
 
