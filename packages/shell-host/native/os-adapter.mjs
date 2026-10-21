@@ -123,11 +123,24 @@ export function createShellInvocation(command, shell) {
     // PowerShell here-string（@'...'@）等多行写法失败。
     // 在此将字面 \n 还原为真实换行。
     const fixedCommand = command.replace(/\\n/g, '\n');
-    // 命令末尾用 $LASTEXITCODE 作为退出码，避免 PowerShell 7 的 NativeCommandError
-    // （原生命令写 stderr + 管道时）导致进程 exit code 误报为 1。
-    // 对纯 PowerShell cmdlet（$LASTEXITCODE 为 null），exit $null 等价于 exit 0。
-    // 改用 -EncodedCommand 传递，避免 PowerShell 重新解析命令串中的嵌套引号/管道字符。
-    const fullCommand = `${WINDOWS_POWERSHELL_UTF8_PREAMBLE}; ${fixedCommand}; if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }`;
+    // 命令末尾推导退出码。
+    //
+    // 2026-10-21 修复（真机验收发现）：原实现只看 $LASTEXITCODE ——
+    //   `... ; if ($null -ne $LASTEXITCODE) { exit $LASTEXITCODE }`
+    // 但对「纯 PowerShell cmdlet 的非终止错误」（如 Get-ChildItem 路径不存在），
+    // $LASTEXITCODE 不会被设置；更糟的是 preamble 里的 chcp.com 是原生命令，
+    // 它早已把 $LASTEXITCODE 置为 0，于是 `$null -ne $LASTEXITCODE` 成立 → exit 0。
+    // 结果：任何失败的纯 cmdlet 都报 exitCode=0 / ok=true，agent 对这类失败完全失明。
+    //
+    // 新逻辑（先取 $?，再按「非零 $LASTEXITCODE 优先」判定）：
+    //   1. $dppOk = $?        —— 紧跟用户命令取，反映它整体是否成功
+    //   2. 非零 $LASTEXITCODE  —— 原生命令失败时保留具体退出码（如 exit 3 → 3）
+    //   3. 否则 -not $dppOk   —— 纯 cmdlet 失败统一退 1
+    // 关键：判断的是 `-ne 0` 而不是原来的 `$null -ne`。preamble 里的 chcp.com 会把
+    // $LASTEXITCODE 置为 0，旧代码因此被 0 短路掉，永远看不到真实失败。
+    // preamble 已把 PSNativeCommandUseErrorActionPreference 设为 $false，
+    // 因此「原生命令写 stderr 但退出 0」不会被误判为失败，保留原修复意图。
+    const fullCommand = `${WINDOWS_POWERSHELL_UTF8_PREAMBLE}; ${fixedCommand}; $dppOk = $?; if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) { exit $LASTEXITCODE } elseif (-not $dppOk) { exit 1 }`;
     const encodedCommand = Buffer.from(fullCommand, 'utf16le').toString('base64');
     return {
       shellBin,
