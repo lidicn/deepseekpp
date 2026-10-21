@@ -378,6 +378,15 @@ const USER_CONTINUATION_RE =
 const INLINE_AGENT_LIVE_TARGET_WAIT_MS = 15_000;
 /** anchor_find_probe 的限流计数，避免每帧都写存储。 */
 let anchorFindProbeCount = 0;
+/**
+ * 上一次完整锚点扫描的时间戳，用作限流。
+ * 观测根是 document.documentElement，childList+subtree 会收到整页每次 DOM
+ * 变更；用时间间隔限流，把昂贵的 getAssistantMessages() 全量扫描降到
+ * 每 MIN_FIND_SCAN_INTERVAL_MS 一次。
+ */
+let lastFindScanAt = 0;
+/** find() 完整扫描的最小间隔（毫秒）。 */
+const MIN_FIND_SCAN_INTERVAL_MS = 150;
 const TOKEN_SPEED_BADGE_ID = "dpp-token-speed-badge";
 const TOKEN_SPEED_STYLE_ID = "dpp-token-speed-css";
 const MULTIMODAL_MEDIA_BUTTON_ID = "dpp-multimodal-media-button";
@@ -5134,8 +5143,24 @@ async function startInlineAgentIfNeeded(
     showContentToast(contentT("content.agent.startFailed"), "warning");
     return;
   }
+  // 新的等待窗开始：重置限流时间戳，保证 waitForInlineAgentLiveTarget 的
+  // 第一次同步 find() 一定执行。若沿用上一次的 lastFindScanAt，
+  // 「锚点其实已经在了」的情况可能被限流跳过而误判成等不到。
+  lastFindScanAt = 0;
   const located = await waitForInlineAgentLiveTarget({
     find() {
+      // 2026-10-22 性能护栏：观测根改成 document.documentElement 之后，
+      // childList+subtree 会收到整页每一次 DOM 变更（DeepSeek 流式输出时
+      // 每秒几十次）。而 find() 里的 getAssistantMessages() 是全 DOM 扫描 +
+      // 过滤，15s 等待窗里可能跑几百次。
+      //
+      // 用「距上次完整扫描至少间隔 MIN_FIND_SCAN_INTERVAL_MS」限流，而不是用
+      // 「.ds-message 数量没变就跳过」——后者会漏掉「数量不变但同一条消息内部
+      // 才刚渲染出锚点文本」的情况（虚拟列表会先挂容器再填内容）。
+      const now = Date.now();
+      if (now - lastFindScanAt < MIN_FIND_SCAN_INTERVAL_MS) return null;
+      lastFindScanAt = now;
+
       const messages = getAssistantMessages();
       const target = findInlineAgentLiveTarget(
         complete,
