@@ -7873,12 +7873,29 @@ function getActiveToolBlockSessionForComplete(
     fallbackSeed: complete.agentTaskPrompt || complete.originalPrompt,
   });
 
-  return (
-    activeToolBlockSessions.get(id) ??
-    (activeToolBlockSessionId
-      ? (activeToolBlockSessions.get(activeToolBlockSessionId) ?? null)
-      : null)
-  );
+  const byId = activeToolBlockSessions.get(id);
+  const fallback = activeToolBlockSessionId
+    ? (activeToolBlockSessions.get(activeToolBlockSessionId) ?? null)
+    : null;
+  const session = byId ?? fallback;
+
+  // 2026-10-21 观测：真机出现「工具执行成功了，但 RESPONSE_COMPLETE 时
+  // completedExecutions 是空数组」，导致 agent 直接跳过启动、什么都不留下。
+  // 这里把「算出的 id 是否命中 / 回退是否命中 / 各 session 的执行数」打出来，
+  // 用于区分是 id 算错、还是 session 被提前清空。
+  if (!byId) {
+    recordAgentStartDecision(
+      'session_lookup_missed',
+      `computedId=${id} byId=false fallbackHit=${Boolean(fallback)} `
+      + `activeId=${activeToolBlockSessionId ?? '(none)'} `
+      + `sessions=${Array.from(activeToolBlockSessions.values())
+        .map((s) => `${s.id.slice(0, 8)}:${s.executions.length}`)
+        .join(',') || '(none)'} `
+      + `reqId=${complete.requestId ?? '(none)'} parentMsgId=${complete.parentMessageId ?? '(none)'}`,
+    );
+  }
+
+  return session;
 }
 
 function getCurrentRouteActiveToolBlockSession(): ActiveToolBlockSession | null {
