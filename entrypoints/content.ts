@@ -247,6 +247,7 @@ import {
 } from "../core/tool/externalized-payload";
 import {
   createToolRestoreBlockId,
+  createToolRestoreBlockIdCandidates,
   createToolRestoreBlockUrl,
 } from "../core/tool/restore-block";
 import { PendingRequestRegistry } from "../core/tool/pending-request-registry";
@@ -7901,38 +7902,70 @@ function getOrCreateActiveToolBlockSession(
   return session;
 }
 
+/**
+ * 按 complete 信息找回本轮的工具会话。
+ *
+ * 2026-10-22 修复「executions=0」：原来只按**一个**现算 id 精确查找，
+ * 而 id 的三段式优先级（requestId → chatSessionId → route）在创建侧和
+ * 完成侧拿到的字段并不总是一致：
+ *   - 创建侧（工具调用）用 `requestId = call.source?.requestId`、
+ *     `parentMessageId` 取调用时的值、`fallbackSeed = call.raw`（工具 XML）；
+ *   - 完成侧用 `requestId = complete.requestId`、`parentMessageId = complete.parentMessageId`、
+ *     `fallbackSeed = 提示词`。
+ * 只要 complete 侧 requestId 为空（或 parentMessageId 不同），两边的 id 就会
+ * 落进不同分支，精确查找必然 miss，只能回退 activeToolBlockSessionId ——
+ * 而它在某些路径上已被清空（:1469 / :1481 / :7165），于是
+ * `completedExecutions` 变成空数组，agent 直接跳过启动、什么都不留下。
+ *
+ * 真机证据：SW 诊断有 tool start/finished (ok)，而埋点显示
+ * `agent_start:skipped:no_continuable_executions | executions=0`。
+ *
+ * 现在按候选 id 列表依次尝试，全部 miss 再走「当前路由」与 activeId 回退。
+ */
 function getActiveToolBlockSessionForComplete(
   complete: ResponseCompletePayload,
 ): ActiveToolBlockSession | null {
   const chatSessionId = complete.chatSessionId;
   const url = getToolBlockUrlForChatSession(chatSessionId);
-  const id = createToolRestoreBlockId({
-    requestId: complete.requestId || null,
+  const requestId = complete.requestId || null;
+
+  // 候选 id：覆盖创建侧可能采用的各种字段组合。
+  // 用共享 helper 而不是本地重算，避免两侧 hash 逻辑漂移。
+  const candidates = createToolRestoreBlockIdCandidates({
+    requestId,
     chatSessionId,
     parentMessageId: complete.parentMessageId,
     fallbackUrl: url,
     fallbackSeed: complete.agentTaskPrompt || complete.originalPrompt,
   });
 
-  const byId = activeToolBlockSessions.get(id);
-  const fallback = activeToolBlockSessionId
-    ? (activeToolBlockSessions.get(activeToolBlockSessionId) ?? null)
-    : null;
+  const byId = candidates
+    .map((id) => activeToolBlockSessions.get(id))
+    .find((session): session is ActiveToolBlockSession => Boolean(session)) ?? null;
+
+  // 全部 miss 时再按「当前路由上的会话」找——route 维度比单次 id 更稳。
+  const byRoute = byId ? null : getCurrentRouteActiveToolBlockSession();
+  const fallback = byId
+    ? null
+    : (byRoute ?? (activeToolBlockSessionId
+      ? (activeToolBlockSessions.get(activeToolBlockSessionId) ?? null)
+      : null));
   const session = byId ?? fallback;
 
   // 2026-10-21 观测：真机出现「工具执行成功了，但 RESPONSE_COMPLETE 时
   // completedExecutions 是空数组」，导致 agent 直接跳过启动、什么都不留下。
-  // 这里把「算出的 id 是否命中 / 回退是否命中 / 各 session 的执行数」打出来，
-  // 用于区分是 id 算错、还是 session 被提前清空。
+  // 这里把「算了哪些 id / 哪个命中 / 各 session 的执行数」打出来，
+  // 用于继续区分是 id 算错、还是 session 被提前清空。
   if (!byId) {
     recordAgentStartDecision(
       'session_lookup_missed',
-      `computedId=${id} byId=false fallbackHit=${Boolean(fallback)} `
+      `tried=${candidates.length} byId=false routeHit=${Boolean(byRoute)} `
+      + `fallbackHit=${Boolean(fallback)} `
       + `activeId=${activeToolBlockSessionId ?? '(none)'} `
       + `sessions=${Array.from(activeToolBlockSessions.values())
-        .map((s) => `${s.id.slice(0, 8)}:${s.executions.length}`)
+        .map((s) => `${s.id.slice(0, 10)}:${s.executions.length}`)
         .join(',') || '(none)'} `
-      + `reqId=${complete.requestId ?? '(none)'} parentMsgId=${complete.parentMessageId ?? '(none)'}`,
+      + `reqId=${requestId ?? '(none)'} parentMsgId=${complete.parentMessageId ?? '(none)'}`,
     );
   }
 
