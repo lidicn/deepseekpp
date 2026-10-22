@@ -122,7 +122,7 @@ describe('createToolExecutionRecord · field backfill and clamping', () => {
       detail: 'd'.repeat(500),
       output: { big: 'o'.repeat(500) },
     };
-    const record = createToolExecutionRecord(call, result, { detailMaxLength: 40, outputMaxLength: 60 });
+    const record = createToolExecutionRecord(call, result, { detailMaxBytes: 40, outputMaxBytes: 60 });
     expect(record.name).toBe('local_file_read');
     expect(record.descriptorId).toBe('desc-1');
     expect(record.result.detail!.endsWith('\n...[truncated]')).toBe(true);

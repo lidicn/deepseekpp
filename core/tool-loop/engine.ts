@@ -1,4 +1,5 @@
 import type { ToolCall, ToolExecutionRecord, ToolResult } from '../types';
+import { TRUNCATION_MARKER, clampTextToBytes } from '../text/truncate-bytes';
 
 export type ToolLoopExecuteTool = (call: ToolCall) => Promise<ToolExecutionRecord>;
 
@@ -103,7 +104,9 @@ function assertContinuationActive<TTurn>(input: ToolContinuationLoopInput<TTurn>
 export function createToolExecutionRecord(
   call: ToolCall,
   result: ToolResult,
-  limits: { detailMaxLength: number; outputMaxLength: number },
+  // 2026-10-22：字段从 *MaxLength 改为 *MaxBytes —— clampText 一直是字节口径，
+  // 原名会让人误以为是字符数（CJK 下差 3 倍）。
+  limits: { detailMaxBytes: number; outputMaxBytes: number },
 ): ToolExecutionRecord {
   return {
     name: result.name ?? call.name,
@@ -115,27 +118,19 @@ export function createToolExecutionRecord(
       provider: result.provider,
       descriptorId: result.descriptorId,
       summary: result.summary,
-      detail: clampText(result.detail, limits.detailMaxLength),
+      detail: clampText(result.detail, limits.detailMaxBytes),
       output: result.output === undefined
         ? undefined
-        : clampText(JSON.stringify(result.output), limits.outputMaxLength),
+        : clampText(JSON.stringify(result.output), limits.outputMaxBytes),
       truncated: result.truncated,
       error: result.error,
     },
   };
 }
 
-const encoder = new TextEncoder();
-const decoder = new TextDecoder();
-
+// 2026-10-22：实现收敛到 core/text/truncate-bytes.ts，避免与
+// core/tool/execution-restore.ts 的同名函数语义漂移（那边曾是字符口径）。
+// 保持本函数名与签名不变，所有既有调用点无需改动。
 export function clampText(value: string | undefined, maxBytes: number): string | undefined {
-  if (!value) return value;
-  const bytes = encoder.encode(value);
-  if (bytes.byteLength <= maxBytes) return value;
-  const marker = '\n...[truncated]';
-  const markerBytes = encoder.encode(marker).byteLength;
-  const limit = Math.max(0, maxBytes - markerBytes);
-  let boundary = Math.min(limit, bytes.byteLength);
-  while (boundary > 0 && (bytes[boundary] & 0xC0) === 0x80) boundary--;
-  return `${decoder.decode(bytes.subarray(0, boundary))}${marker}`;
+  return clampTextToBytes(value, maxBytes);
 }

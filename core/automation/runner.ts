@@ -338,8 +338,10 @@ async function runAutomationToolLoop(
         throw new AutomationToolOutcomeAmbiguousError(executionCall.name);
       }
       return createToolExecutionRecord(executionCall, result, {
-        detailMaxLength: AUTOMATION_TOOL_DETAIL_MAX_BYTES,
-        outputMaxLength: AUTOMATION_TOOL_OUTPUT_MAX_BYTES,
+        // 2026-10-22：字段由 *MaxLength 改名为 *MaxBytes —— clampText 一直是
+        // UTF-8 字节口径，原名容易被当成字符数（CJK 下差约 3 倍）。
+        detailMaxBytes: AUTOMATION_TOOL_DETAIL_MAX_BYTES,
+        outputMaxBytes: AUTOMATION_TOOL_OUTPUT_MAX_BYTES,
       });
     },
     buildContinuationPrompt: (executions) => buildAutomationToolContinuationPrompt(executions, locale),
