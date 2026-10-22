@@ -6683,7 +6683,17 @@ function runToolExecution(call: ToolCall): Promise<ToolCardResult> {
         provider: result.provider ?? call.provider,
         descriptorId: result.descriptorId ?? call.descriptorId,
       };
-      session.executions.push(execution);
+      // 2026-10-22 真机定位：同一个 call 的结果被追加了两次。
+      // 证据是一条 634 KB 的块里 4 条执行变成了 8 条（18/5/14/279 KB
+      // 各出现两遍），storage 因此翻倍，每次 upsert 的 JSON 往返也翻倍，
+      // 叠加后把渲染进程压崩。
+      //
+      // 根因方向：session 是按 createToolRestoreBlockId 归并的，当 requestId /
+      // chatSessionId 都缺失时两个不同的运行会落进同一个 `route:` 会话，
+      // 于是各自的执行都追加到同一个数组里。这里按 callId 去重兜住。
+      if (!session.executions.some((existing) => existing.callId === execution.callId)) {
+        session.executions.push(execution);
+      }
       activeToolBlockSessionId = session.id;
       toolExecutions = session.executions;
       renderToolBlock(session);
