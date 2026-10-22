@@ -436,8 +436,29 @@ async function searchMemory(
 
   // 2. 用 selector 检索（复用现有逻辑）
   const { selectMemories, formatMemoriesBlock } = await import('../memory/selector');
+  // 2026-10-22 真机定位（DPP 八环节验收暴露）：
+  //
+  // 原实现 `budget: topK * 200`（假设每条约 200 token），而 selectMemories 的
+  // budget 循环是「装不下就 break」。真机实测单条记忆可以远超 200 token：
+  //
+  //   budget = 5 * 200 = 1000
+  //   #84 = 1646 token   ← 单条就超过整个 budget
+  //   #92 = 1525 / #86 = 644 / #114 = 566 / #113 = 351
+  //   通过关键词阈值的共 24 条，最终只返回 1 条
+  //
+  // 循环细节：第 1 条 1000-1646 = -646，但 selected 为空所以仍 push；
+  // 第 2 条 -646-351 < 0 且已有 1 条 → break。**一条长记忆吃光预算，
+  // 饿死后面 23 条（含精确匹配但较短的 #113）。**
+  //
+  // 表现：要 topK=5 条却只拿到 1 条，且 count=1 让人误判成「只匹配到 1 条」，
+  // 而不是「匹配到 24 条但只显示了 1 条」。
+  //
+  // 修法：把「选哪些」与「显示多少」解耦 ——
+  //   · selectMemories 用宽松上限，确保拿到完整排序结果；
+  //   · slice(0, topK) 取前 K 条；
+  //   · 显示时对单条内容截断，保证 topK 条都装得下。
   const selected = selectMemories(query, allMemories, {
-    budget: topK * 200, // 每条记忆约 200 token
+    budget: MEMORY_SEARCH_SELECTION_BUDGET,
     includeArchived,
   });
 
@@ -447,12 +468,15 @@ async function searchMemory(
       locale,
       `没有找到与"${query}"相关的记忆。`,
       undefined,
-      { query, count: 0 },
+      { query, count: 0, matched: 0 },
     );
   }
 
-  // 3. 截取 top-K 并格式化
-  const topResults = selected.slice(0, topK);
+  // 3. 截取 top-K 并格式化（单条内容截断，避免一条长记忆挤掉其余条目）
+  const topResults = selected.slice(0, topK).map((memory) => ({
+    ...memory,
+    content: truncateMemoryContentForSearch(memory.content),
+  }));
   const header = `找到 ${topResults.length} 条与"${query}"相关的记忆：\n`;
   const body = formatMemoriesBlock(topResults);
 
@@ -461,8 +485,28 @@ async function searchMemory(
     locale,
     header + body,
     undefined,
-    { query, count: topResults.length },
+    // matched = 通过关键词阈值的总数；count = 本次实际返回条数。
+    // 分开之后调用方才能区分「只匹配到 1 条」与「匹配很多但只给了 1 条」。
+    { query, count: topResults.length, matched: selected.length },
   );
+}
+
+/**
+ * selectMemories 的选择预算上限。
+ *
+ * 只作安全上限（防止把上万条记忆全排一遍），不参与「显示多少」的决策。
+ * 设得足够大，确保按分数排好序的完整结果能拿到，再由调用方 slice(0, topK)。
+ */
+const MEMORY_SEARCH_SELECTION_BUDGET = 200_000;
+
+/** 检索结果里单条记忆的最大字符数；超出部分截断并标注。 */
+const MEMORY_SEARCH_CONTENT_MAX_CHARS = 600;
+
+function truncateMemoryContentForSearch(content: string): string {
+  const text = String(content ?? '');
+  if (text.length <= MEMORY_SEARCH_CONTENT_MAX_CHARS) return text;
+  const omitted = text.length - MEMORY_SEARCH_CONTENT_MAX_CHARS;
+  return `${text.slice(0, MEMORY_SEARCH_CONTENT_MAX_CHARS)}…（截断，省略 ${omitted} 字）`;
 }
 
 function success(
