@@ -184,8 +184,28 @@ export async function createChatSession(
   return createChatSessionWithContext(clientHeaders, { signal });
 }
 
-const CREATE_SESSION_RETRY_ATTEMPTS = 3;
-const CREATE_SESSION_BACKOFF_MS = [300, 900, 2700];
+/**
+ * 新建对话会话的重试预算。
+ *
+ * 2026-10-22 真机复查：用户报「新对话最开头高概率报 服务器暂时不可用」。
+ * 排查确认这个文案不是扩展产生的（源码里除本段注释外无此字符串），
+ * 它来自 DeepSeek 自己的 503 空体。而 `active-client.ts:222-225` 的 R-7
+ * 注释早就点名过：「fetch 抛 TypeError 或 503 空体时一次即溃 ——
+ * 这正是『新建对话最开头 服务器暂时不可用』的主因」。
+ *
+ * R-7 已经把网络异常包进 try 并加了退避，但预算偏小：
+ * 原配置 3 次尝试、总等待仅 300+900+2700 = 3.9s。
+ * DeepSeek 的 503 抖动常持续十几秒，3.9s 内打不满就必然暴露给用户。
+ *
+ * 现在放宽到 5 次、总等待约 15.5s（300/900/2700/5400/6000）。
+ * 若响应带 `Retry-After`，retryDelayMs() 优先采用它（上限 30s，带抖动），
+ * 也就是服务端给了更明确的等待指令时以它为准。
+ *
+ * 5xx / 429 / 传输层 TypeError 才重试；4xx 与 AuthError 仍然立即抛，
+ * 不做无意义的等待。
+ */
+const CREATE_SESSION_RETRY_ATTEMPTS = 5;
+const CREATE_SESSION_BACKOFF_MS = [300, 900, 2_700, 5_400, 6_000];
 
 async function createChatSessionWithContext(
   clientHeaders: Record<string, string>,
