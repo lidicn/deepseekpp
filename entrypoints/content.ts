@@ -121,6 +121,7 @@ import {
   findAssistantMessageByContentSnippet,
   findInlineAgentRestoreTarget,
 } from "../core/inline-agent/message-anchor";
+import { probePageRenderState } from "../core/inline-agent/page-render-state";
 import type {
   InlineAgentStartPayload,
   InlineAgentReasoningChunkMsg,
@@ -388,6 +389,22 @@ let anchorFindProbeCount = 0;
 let lastFindScanAt = 0;
 /** find() 完整扫描的最小间隔（毫秒）。 */
 const MIN_FIND_SCAN_INTERVAL_MS = 150;
+
+/**
+ * 延长等待窗。
+ *
+ * 2026-10-22 真机定位（关键）：DeepSeek 新建/刷新对话后，**要 30–90 秒**
+ * 才把消息渲染进虚拟列表（正常应 1–3 秒）。实测：硬刷新后 `.ds-message`
+ * 保持 0 达 32 秒；同一会话过 45 秒再测已恢复为 2 条。
+ *
+ * 而原来的快速窗只有 15 秒 —— 必然超时 → 弹「Agent 启动失败，请重试」，
+ * 但那时工具其实已经执行成功了（SW 诊断有 tool start/finished ok），
+ * 只是 DOM 里什么都没有、没有可锚定的对象。
+ *
+ * 这不是扩展的 bug，是页面渲染慢的症状；所以不该报「失败」，
+ * 而应该用中性提示继续等。
+ */
+const INLINE_AGENT_EXTENDED_TARGET_WAIT_MS = 120_000;
 const TOKEN_SPEED_BADGE_ID = "dpp-token-speed-badge";
 const TOKEN_SPEED_STYLE_ID = "dpp-token-speed-css";
 const MULTIMODAL_MEDIA_BUTTON_ID = "dpp-multimodal-media-button";
@@ -5147,65 +5164,95 @@ async function startInlineAgentIfNeeded(
   // 新的等待窗开始：重置限流时间戳，保证 waitForInlineAgentLiveTarget 的
   // 第一次同步 find() 一定执行。若沿用上一次的 lastFindScanAt，
   // 「锚点其实已经在了」的情况可能被限流跳过而误判成等不到。
-  lastFindScanAt = 0;
-  const located = await waitForInlineAgentLiveTarget({
-    find() {
-      // 2026-10-22 性能护栏：观测根改成 document.documentElement 之后，
-      // childList+subtree 会收到整页每一次 DOM 变更（DeepSeek 流式输出时
-      // 每秒几十次）。而 find() 里的 getAssistantMessages() 是全 DOM 扫描 +
-      // 过滤，15s 等待窗里可能跑几百次。
-      //
-      // 用「距上次完整扫描至少间隔 MIN_FIND_SCAN_INTERVAL_MS」限流，而不是用
-      // 「.ds-message 数量没变就跳过」——后者会漏掉「数量不变但同一条消息内部
-      // 才刚渲染出锚点文本」的情况（虚拟列表会先挂容器再填内容）。
-      const now = Date.now();
-      if (now - lastFindScanAt < MIN_FIND_SCAN_INTERVAL_MS) return null;
-      lastFindScanAt = now;
+  const runAnchorWait = (timeoutMs: number) => {
+    lastFindScanAt = 0;
+    return waitForInlineAgentLiveTarget({
+      find() {
+        // 2026-10-22 性能护栏：观测根改成 document.documentElement 之后，
+        // childList+subtree 会收到整页每一次 DOM 变更（DeepSeek 流式输出时
+        // 每秒几十次）。而 find() 里的 getAssistantMessages() 是全 DOM 扫描 +
+        // 过滤，等待窗里可能跑几百次。
+        //
+        // 用「距上次完整扫描至少间隔 MIN_FIND_SCAN_INTERVAL_MS」限流，而不是用
+        // 「.ds-message 数量没变就跳过」——后者会漏掉「数量不变但同一条消息内部
+        // 才刚渲染出锚点文本」的情况（虚拟列表会先挂容器再填内容）。
+        const now = Date.now();
+        if (now - lastFindScanAt < MIN_FIND_SCAN_INTERVAL_MS) return null;
+        lastFindScanAt = now;
 
-      const messages = getAssistantMessages();
-      const target = findInlineAgentLiveTarget(
-        complete,
-        messages,
-        anchorContent,
-      );
-      // 2026-10-21 观测：真机 located=false 且放到 15s 也没用，
-      // 但手动在页面上跑同一套逻辑又能找到助手消息。
-      // 这里把每次 find() 看到的数量打出来（限流 20 次，覆盖整个等待窗），
-      // 直接区分「find() 看不到消息」与「看得到但匹配不上」。
-      if (anchorFindProbeCount < 20) {
-        anchorFindProbeCount += 1;
-        const probeRoot = document.getElementById('root');
-        recordAgentStartDecision(
-          'anchor_find_probe',
-          `n=${anchorFindProbeCount} messages=${messages.length} anchorLen=${anchorContent.length} `
-          + `dsMessage=${document.querySelectorAll('.ds-message').length} `
-          + `contentHosts=${document.querySelectorAll(ASSISTANT_RESPONSE_CONTENT_SELECTOR).length} `
-          // 区分「detached 文档」与「frame 不对」的关键量：
-          // detached → root 存在但 isConnected=false；
-          // frame 不对 → location.href 不是 chat.deepseek.com。
-          + `rootPresent=${Boolean(probeRoot)} rootConnected=${probeRoot?.isConnected ?? 'n/a'} `
-          + `docChildren=${document.documentElement.childElementCount} `
-          + `href=${String(location.href).slice(0, 48)} `
-          + `obsRootConnected=${observationRoot.isConnected}`,
+        const messages = getAssistantMessages();
+        const target = findInlineAgentLiveTarget(
+          complete,
+          messages,
+          anchorContent,
         );
-      }
-      return target ? { target, messages } : null;
-    },
-    observe(onMutation) {
-      const observer = new MutationObserver(onMutation);
-      const release = scope.observe(observer, observationRoot, {
-        childList: true,
-        subtree: true,
-      });
-      return () => {
-        void release();
-      };
-    },
-    scheduleTimeout: (callback, delayMs) => scope.setTimeout(callback, delayMs),
-    clearScheduledTimeout: (timer) => scope.clearTimeout(timer),
-    signal: scope.signal,
-    timeoutMs: INLINE_AGENT_LIVE_TARGET_WAIT_MS,
-  });
+        // 2026-10-21 观测：真机 located=false 且放到 15s 也没用，
+        // 但手动在页面上跑同一套逻辑又能找到助手消息。
+        // 这里把每次 find() 看到的数量打出来（限流 20 次，覆盖整个等待窗），
+        // 直接区分「find() 看不到消息」与「看得到但匹配不上」。
+        if (anchorFindProbeCount < 20) {
+          anchorFindProbeCount += 1;
+          const probeRoot = document.getElementById('root');
+          recordAgentStartDecision(
+            'anchor_find_probe',
+            `n=${anchorFindProbeCount} messages=${messages.length} anchorLen=${anchorContent.length} `
+            + `dsMessage=${document.querySelectorAll('.ds-message').length} `
+            + `contentHosts=${document.querySelectorAll(ASSISTANT_RESPONSE_CONTENT_SELECTOR).length} `
+            // 区分「detached 文档」与「frame 不对」的关键量：
+            // detached → root 存在但 isConnected=false；
+            // frame 不对 → location.href 不是 chat.deepseek.com。
+            + `rootPresent=${Boolean(probeRoot)} rootConnected=${probeRoot?.isConnected ?? 'n/a'} `
+            + `docChildren=${document.documentElement.childElementCount} `
+            + `href=${String(location.href).slice(0, 48)} `
+            + `obsRootConnected=${observationRoot.isConnected} `
+            + `waitMs=${timeoutMs}`,
+          );
+        }
+        return target ? { target, messages } : null;
+      },
+      observe(onMutation) {
+        const observer = new MutationObserver(onMutation);
+        const release = scope.observe(observer, observationRoot, {
+          childList: true,
+          subtree: true,
+        });
+        return () => {
+          void release();
+        };
+      },
+      scheduleTimeout: (callback, delayMs) => scope.setTimeout(callback, delayMs),
+      clearScheduledTimeout: (timer) => scope.clearTimeout(timer),
+      signal: scope.signal,
+      timeoutMs,
+    });
+  };
+
+  let located = await runAnchorWait(INLINE_AGENT_LIVE_TARGET_WAIT_MS);
+
+  // 2026-10-22 真机定位：DeepSeek 新建/刷新对话后要 30–90 秒才渲染出消息，
+  // 15 秒快速窗必然超时。但那时 DOM 里确实什么都没有 —— 这不是「失败」，
+  // 是「页面还没画完」。所以先探测页面状态：
+  //   页面仍空（hasAnyMessage=false）→ 中性提示 + 延长窗继续等
+  //   页面已有消息（hasAnyMessage=true）→ 才是真的锚点匹配失败
+  if (!located && scope.active && inlineAgentCapabilityScope === scope) {
+    const pageState = probePageRenderState();
+    if (!pageState.hasAnyMessage) {
+      showContentToast(contentT("content.agent.stillLoading"), "info");
+      recordAgentStartDecision(
+        'anchor_extended_wait',
+        `visibleItems=${pageState.visibleItems} dsMessage=${pageState.dsMessage} `
+        + `fastWaitMs=${INLINE_AGENT_LIVE_TARGET_WAIT_MS} extendedWaitMs=${INLINE_AGENT_EXTENDED_TARGET_WAIT_MS}`,
+      );
+      located = await runAnchorWait(INLINE_AGENT_EXTENDED_TARGET_WAIT_MS);
+    } else {
+      recordAgentStartDecision(
+        'anchor_missed_but_page_rendered',
+        `visibleItems=${pageState.visibleItems} dsMessage=${pageState.dsMessage} `
+        + `fastWaitMs=${INLINE_AGENT_LIVE_TARGET_WAIT_MS}`,
+      );
+    }
+  }
+
   if (!located || inlineAgentCapabilityScope !== scope || !scope.active) {
     // Don't fail silently after the bounded DOM commit wait: the anchor
     // assistant message really could not be located (Issue #544).
