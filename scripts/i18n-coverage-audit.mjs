@@ -36,7 +36,6 @@ const pathAllowlist = new Map([
   ['core/shell/contracts.ts', 'Shell MCP tool metadata mirrors the native-host contract; sidepanel Shell UI is locale-backed'],
   ['core/sync/schema.ts', 'WebDAV sync schema errors protect persisted user data and are not translated during sync validation'],
   ['core/sync/webdav-client.ts', 'WebDAV transport errors are low-level connection diagnostics; sidepanel sync actions have locale-backed status copy'],
-  ['core/ui/tool-card.ts', 'legacy unused DSML card renderer retained for compatibility; current visible tool blocks use content.toolBlock resources'],
   ['scripts/i18n-coverage-audit.mjs', 'audit allowlist contains Chinese fragments that it is designed to detect elsewhere'],
   ['scripts/mcp-live-mock.mjs', 'mock explicitly validates zh-CN continuation prompt behavior'],
   ['scripts/render-product-assets.mjs', 'offline README and Chrome Web Store image generator intentionally contains fixed zh-CN marketing fixture copy; runtime UI remains locale-backed'],
