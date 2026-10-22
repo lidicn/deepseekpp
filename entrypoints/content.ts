@@ -116,6 +116,7 @@ import {
   stripInlineAgentTruncationSuffix,
 } from "../core/inline-agent/display-text";
 import {
+  collectAssistantMessages,
   elementHasMessageId,
   findAssistantMessageByContentSnippet,
   findInlineAgentRestoreTarget,
@@ -9744,32 +9745,14 @@ function getRestoreTruncatedPreview(value: unknown): string {
 /**
  * 收集页面上的 assistant 消息元素。
  *
- * 2026-10-22：原实现只认 `.ds-message`。真机上出现过内容脚本侧
- * `document.querySelectorAll('.ds-message').length === 0` 而主世界能查到 2 个
- * 的情况（原因未定论：detached 文档 / frame / 渲染时序）。
- * 这里在 `.ds-message` 为空时退回到「对话虚拟列表的可见行」，
- * 让后续的 anchor 查找至少还有候选可看，而不是直接空数组。
- *
- * 退避选择器都基于 DeepSeek 的语义类名（ds-virtual-list-*），不依赖哈希类名。
+ * 逻辑已抽到 `core/inline-agent/message-anchor.ts` 的
+ * `collectAssistantMessages()`，这样可以在 jsdom 里单测退避路径；
+ * 这里只是把 content.ts 的正文宿主选择器传进去。
  */
 function getAssistantMessages(): Element[] {
-  const messages = Array.from(document.querySelectorAll(".ds-message"));
-  if (messages.length > 0) {
-    const assistantMessages = messages.filter(
-      (message) => getAssistantContentHosts(message).length > 0,
-    );
-    return assistantMessages.length > 0 ? assistantMessages : messages;
-  }
-
-  // 退避：对话虚拟列表当前渲染出来的行。
-  const list = document.querySelector('.ds-virtual-list--printable')
-    ?? Array.from(document.querySelectorAll('.ds-virtual-list'))
-      .find((el) => el.querySelector('.ds-markdown, .ds-think-content'));
-  if (!list) return [];
-  const rows = Array.from(
-    list.querySelectorAll('.ds-virtual-list-visible-items > *'),
-  );
-  return rows;
+  return collectAssistantMessages({
+    contentSelector: ASSISTANT_RESPONSE_CONTENT_SELECTOR,
+  });
 }
 
 function getAssistantResponseHost(message: Element): Element {

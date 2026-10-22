@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  collectAssistantMessages,
   elementHasMessageId,
   findAssistantMessageByContentSnippet,
   findInlineAgentRestoreTarget,
@@ -193,5 +194,70 @@ describe('elementHasMessageId', () => {
     underscored.setAttribute('data-id', 'msg_18');
     underscore.appendChild(underscored);
     expect(elementHasMessageId(underscore, '18')).toBe(true);
+  });
+});
+
+describe('collectAssistantMessages', () => {
+  const CONTENT = '._74c0879, .ds-assistant-message-main-content';
+
+  function makeDoc(html: string): Document {
+    const parser = new DOMParser();
+    return parser.parseFromString(`<body>${html}</body>`, 'text/html');
+  }
+
+  it('优先返回含正文宿主的 .ds-message', () => {
+    const doc = makeDoc(`
+      <div class="ds-message" id="u1"><span>用户消息</span></div>
+      <div class="ds-message" id="a1"><div class="_74c0879">助手回答</div></div>
+      <div class="ds-message" id="a2"><div class="_74c0879">助手回答2</div></div>
+    `);
+    const result = collectAssistantMessages({ contentSelector: CONTENT, documentRoot: doc });
+    expect(result.map((el) => el.id)).toEqual(['a1', 'a2']);
+  });
+
+  it('.ds-message 都没有正文宿主时退回全部 .ds-message（不返回空）', () => {
+    const doc = makeDoc(`
+      <div class="ds-message" id="m1"><span>甲</span></div>
+      <div class="ds-message" id="m2"><span>乙</span></div>
+    `);
+    const result = collectAssistantMessages({ contentSelector: CONTENT, documentRoot: doc });
+    expect(result.map((el) => el.id)).toEqual(['m1', 'm2']);
+  });
+
+  // 2026-10-22 回归：真机上出现过内容脚本侧 .ds-message 为 0
+  // 而主世界能查到 2 个的情况。退避到虚拟列表可让 anchor 查找还有候选。
+  it('.ds-message 为空时退避到对话虚拟列表的可见行', () => {
+    const doc = makeDoc(`
+      <div class="ds-virtual-list ds-virtual-list--printable">
+        <div class="ds-virtual-list-items">
+          <div class="ds-virtual-list-visible-items">
+            <div id="r1">你是一个验收执行员</div>
+            <div id="r2">已思考（用时 1 秒）<div class="ds-markdown">答案</div></div>
+          </div>
+        </div>
+      </div>
+    `);
+    const result = collectAssistantMessages({ contentSelector: CONTENT, documentRoot: doc });
+    expect(result.map((el) => el.id)).toEqual(['r1', 'r2']);
+  });
+
+  it('没有 --printable 列表时按「含 ds-markdown/ds-think-content」挑列表', () => {
+    const doc = makeDoc(`
+      <div class="ds-virtual-list" id="sidebar">
+        <div class="ds-virtual-list-visible-items"><div id="s1">历史标题</div></div>
+      </div>
+      <div class="ds-virtual-list" id="chat">
+        <div class="ds-virtual-list-visible-items">
+          <div id="c1"><div class="ds-markdown">答案</div></div>
+        </div>
+      </div>
+    `);
+    const result = collectAssistantMessages({ contentSelector: CONTENT, documentRoot: doc });
+    expect(result.map((el) => el.id)).toEqual(['c1']);
+  });
+
+  it('页面里什么都没有时返回空数组（不抛错）', () => {
+    const doc = makeDoc('<div>空白页</div>');
+    expect(collectAssistantMessages({ contentSelector: CONTENT, documentRoot: doc })).toEqual([]);
   });
 });

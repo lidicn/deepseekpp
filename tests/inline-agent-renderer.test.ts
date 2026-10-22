@@ -334,6 +334,11 @@ describe('inline agent renderer', () => {
 
     const item = stream?.querySelector('.dpp-agent-tool-item');
     expect(item?.getAttribute('data-tool-status')).toBe('pending');
+    // 2026-10-22：页面侧工具行必须暴露 data-tool-name。
+    // 侧边栏的 ToolRunPanel 一直有 name/status 两个属性，R08 验收脚本按
+    // `[data-tool-name]` 找卡片；页面侧之前只有 status，导致同一份信息
+    // 在侧边栏可探测、在页面 inline agent 上不可。
+    expect(item?.getAttribute('data-tool-name')).toBe('web_search');
     expect(item?.querySelector('.dpp-agent-tool-name')?.textContent).toBe('web_search');
     expect(item?.querySelector('.dpp-agent-tool-param')?.textContent).toBe('· 天气');
     expect(item?.querySelector('.dpp-agent-tool-state')?.textContent).toBe('');
@@ -357,6 +362,8 @@ describe('inline agent renderer', () => {
 
     const item = stream?.querySelector('.dpp-agent-tool-item');
     expect(item?.getAttribute('data-tool-status')).toBe('ok');
+    // 完成态同样要保留 data-tool-name（验收脚本按它 + status 联合判定）。
+    expect(item?.getAttribute('data-tool-name')).toBe('web_search');
     expect(item?.querySelector('.dpp-agent-tool-state')?.textContent).toBe('Executed');
     // The payload param summary survives on the line; the result goes to the
     // expanded detail.

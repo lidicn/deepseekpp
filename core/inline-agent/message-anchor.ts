@@ -100,6 +100,57 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * 收集页面上当作「助手消息」候选的元素。
+ *
+ * 2026-10-22：原实现只认 `.ds-message`。真机上出现过内容脚本侧
+ * `querySelectorAll('.ds-message').length === 0` 而主世界能查到 2 个的情况
+ * （原因未定论：detached 文档 / 渲染时序）。这里在 `.ds-message` 为空时
+ * 退回到「对话虚拟列表的当前可见行」，让后续 anchor 查找至少还有候选，
+ * 而不是直接空数组。
+ *
+ * 退避选择器只用 DeepSeek 的语义类名（`ds-virtual-list-*` / `ds-markdown`），
+ * 不依赖会随构建变化的哈希类名。
+ */
+export interface CollectAssistantMessagesOptions {
+  /** 助手正文宿主选择器，用于筛出真正含助手正文的消息。 */
+  readonly contentSelector: string;
+  /** 文档根，默认取全局 document；测试可注入。 */
+  readonly documentRoot?: Document;
+}
+
+export function collectAssistantMessages(
+  options: CollectAssistantMessagesOptions,
+): Element[] {
+  const doc = options.documentRoot
+    ?? (typeof document === 'undefined' ? null : document);
+  if (!doc) return [];
+
+  const messages = Array.from(doc.querySelectorAll('.ds-message'));
+  if (messages.length > 0) {
+    const assistantMessages = messages.filter(
+      (message) => countContentHosts(message, options.contentSelector) > 0,
+    );
+    return assistantMessages.length > 0 ? assistantMessages : messages;
+  }
+
+  // 退避：对话虚拟列表当前渲染出来的行。
+  const lists = Array.from(doc.querySelectorAll('.ds-virtual-list'));
+  const list = doc.querySelector('.ds-virtual-list--printable')
+    ?? lists.find((el) => Boolean(el.querySelector('.ds-markdown, .ds-think-content')))
+    ?? null;
+  if (!list) return [];
+  return Array.from(
+    list.querySelectorAll('.ds-virtual-list-visible-items > *'),
+  );
+}
+
+function countContentHosts(message: Element, contentSelector: string): number {
+  return Array.from(message.querySelectorAll(contentSelector)).filter(
+    (host) => !host.parentElement?.closest(contentSelector),
+  ).length;
+}
+
 export interface InlineAgentRestoreAnchor {
   readonly anchorMessageId: string;
   readonly anchorContent: string;
