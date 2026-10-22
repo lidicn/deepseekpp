@@ -122,6 +122,7 @@ import {
   findInlineAgentRestoreTarget,
 } from "../core/inline-agent/message-anchor";
 import { probePageRenderState } from "../core/inline-agent/page-render-state";
+import { createSerializedQueue } from "../core/persistence/serialized-queue";
 import type {
   InlineAgentStartPayload,
   InlineAgentReasoningChunkMsg,
@@ -215,30 +216,51 @@ import { setTraceEventSink } from "../core/trace/collector";
 const CONTENT_DIAGNOSTIC_STORAGE_KEY = "dpp_content_diagnostics";
 const CONTENT_DIAGNOSTIC_LIMIT = 120;
 
+/**
+ * 诊断写入的串行化队列。
+ *
+ * 2026-10-22 真机定位：原实现是裸的 read-modify-write，**没有串行化**：
+ *
+ *   void chrome.storage.local.get(KEY).then((data) => {
+ *     const next = [...prev, entry].slice(-LIMIT);
+ *     return chrome.storage.local.set({ [KEY]: next });
+ *   });
+ *
+ * 两个几乎同时发起的写入会互相吞掉：
+ *   A 读 [x] → B 读 [x] → A 写 [x,A] → B 写 [x,B]   ← A 的条目丢失
+ *
+ * 实证：加了两阶段锚点等待后，探针能证明延长窗确实跑了
+ * （`anchor_find_probe` 里 waitMs 从 15000 变成 120000），
+ * 但配套的 `anchor_extended_wait` 条目**从未落盘** —— 它被并发的
+ * `anchor_find_probe` 写入覆盖了。整个排查过程中大量「诊断缺失」
+ * 都是这个竞态造成的，而不是探针没触发。
+ *
+ * 这里用一条 promise 链把写入排成序。竞态源自同一个 content script 实例，
+ * 所以进程内串行化就够了，不需要全局的 withSyncLocalStateLock
+ * （那个还会触发 recoverRequiredLocalStateAlreadyLocked，对诊断太重）。
+ */
+const contentDiagnosticQueue = createSerializedQueue();
+
 function recordAgentStartDecision(outcome: string, details: string): void {
   try {
-    void chrome.storage.local
-      .get(CONTENT_DIAGNOSTIC_STORAGE_KEY)
-      .then((data) => {
-        const raw = data?.[CONTENT_DIAGNOSTIC_STORAGE_KEY];
-        const prev = Array.isArray(raw) ? raw : [];
-        const next = [
-          ...prev,
-          {
-            ts: Date.now(),
-            level: outcome.startsWith("skipped") ? "warn" : "info",
-            source: "inline-agent",
-            message: `agent_start:${outcome}`,
-            details,
-          },
-        ].slice(-CONTENT_DIAGNOSTIC_LIMIT);
-        return chrome.storage.local.set({
-          [CONTENT_DIAGNOSTIC_STORAGE_KEY]: next,
-        });
-      })
-      .catch(() => {
-        // 观测绝不影响主流程。
+    void contentDiagnosticQueue(async () => {
+      const data = await chrome.storage.local.get(CONTENT_DIAGNOSTIC_STORAGE_KEY);
+      const raw = data?.[CONTENT_DIAGNOSTIC_STORAGE_KEY];
+      const prev = Array.isArray(raw) ? raw : [];
+      const next = [
+        ...prev,
+        {
+          ts: Date.now(),
+          level: outcome.startsWith("skipped") ? "warn" : "info",
+          source: "inline-agent",
+          message: `agent_start:${outcome}`,
+          details,
+        },
+      ].slice(-CONTENT_DIAGNOSTIC_LIMIT);
+      await chrome.storage.local.set({
+        [CONTENT_DIAGNOSTIC_STORAGE_KEY]: next,
       });
+    });
   } catch {
     // chrome.storage 不可用时静默跳过。
   }
