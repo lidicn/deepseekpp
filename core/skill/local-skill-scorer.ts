@@ -29,6 +29,38 @@ export interface LocalSkillIndex {
 const ACTIVATION_THRESHOLD = 100;
 const MIN_LEAD_GAP = 50;
 
+/**
+ * 描述命中覆盖率下限（2026-10-22 真机定位的误激活修复）。
+ *
+ * 问题：分数是「提示词每个 2-gram 命中描述就 +40」的**原始累加**，不按查询长度
+ * 归一化。长提示词天然含几百个 2-gram，几个巧合命中就累加过阈值。
+ *
+ * 真机实证（914 字验收提示词，306 个 queryTerms）：
+ *
+ *   dcd-adjudication      score=0
+ *   auditkit              score=0
+ *   codebase-review       score=0
+ *   dcd-decision-support  score=200    ← 被选中
+ *     descHits(5): 执行, nas, 同一, 用, 表
+ *
+ * 5 个巧合命中 × 40 = 200 ≥ 阈值 100，且其余全 0 → 领先差也过 → 激活。
+ * 于是扩展把「关键决策部/DCD/不可逆操作」这套完全无关的 SOP 注入进提示词，
+ * 并附上**强制措辞**（"你**必须**先完成以下前置步骤，否则禁止开始执行任务"），
+ * 模型被迫先去读 `dcd-decision-support/SKILL.md` 才允许干活 ——
+ * 用户看到的就是「DPP 在执行跟任务不相关的事情」。
+ *
+ * 其中 `用`、`表` 是单字 CJK（`tokenizeFlexible` 对单字片段会加单字 token），
+ * `nas` 来自路径 `E:\NAS\dpp-accept` 撞上描述里的 `E:\NAS\关键决策部`。
+ *
+ * 修法：给「按词命中累加」这条路径加覆盖率门 —— 命中项必须占查询词达到一定
+ * 比例才算数。短查询（真正的意图匹配）覆盖率天然高；长提示词的巧合命中覆盖率
+ * 极低（本例 5/306 ≈ 1.6%）。
+ */
+const MIN_DESC_HIT_RATIO = 0.15;
+
+/** 参与命中计分的最短词长度：单字 CJK（如「用」「表」）信息量太低，纯噪声。 */
+const MIN_MATCH_TERM_LENGTH = 2;
+
 // Common two-char weak/generic terms (down-weight, not block; A4 fix): when a query is composed solely of
 // these low-specificity words, treat as weakly shared and down-weight (not zero out); an exact-name hit (+800)
 // still wins activation (e.g. a two-char word that is itself a Skill name should still activate).
@@ -160,10 +192,27 @@ export function scoreLocalSkill(s: LocalSkillIndex, queryNorm: string, queryTerm
     // words from mis-activating via description whole-string match (R4②).
     if (descNorm.includes(queryNorm) && queryNorm.length >= 3 && !(generic && !exactNameHit)) score += 400;
   }
-  for (const term of queryTerms) {
-    if (nameNorm.includes(term)) score += 100;
-    // Generic query with no exact-name hit: description token score halved (+40 => +20) to lower weak-word correlation (R4② down-weight).
-    if (descNorm.includes(term)) score += (generic && !exactNameHit) ? 20 : 40;
+  // 单字 CJK（「用」「表」这类）信息量太低，不参与命中计分 —— 见 MIN_MATCH_TERM_LENGTH 注释。
+  const matchableTerms = queryTerms.filter((t) => t.length >= MIN_MATCH_TERM_LENGTH);
+  const nameHits = matchableTerms.filter((t) => nameNorm.includes(t));
+  const descHits = matchableTerms.filter((t) => descNorm.includes(t));
+
+  // 覆盖率门（2026-10-22 误激活修复）：
+  // 「按词命中累加」这条路径只有命中项占到足够比例才算数。
+  // 短查询里真正的意图匹配覆盖率天然高；长提示词的巧合命中覆盖率极低
+  // （真机实证 914 字提示词 306 个词只命中 5 个 ≈ 1.6%，却累加出 200 分）。
+  // 精确名命中（+800）不受此门限制，保留 A4 不变量。
+  const descHitRatio = matchableTerms.length === 0 ? 0 : descHits.length / matchableTerms.length;
+  const termScoringAllowed = exactNameHit || descHitRatio >= MIN_DESC_HIT_RATIO;
+
+  for (const term of nameHits) {
+    score += 100;
+  }
+  if (termScoringAllowed) {
+    for (const _term of descHits) {
+      // Generic query with no exact-name hit: description token score halved (+40 => +20) to lower weak-word correlation (R4② down-weight).
+      score += (generic && !exactNameHit) ? 20 : 40;
+    }
   }
   // scenarioAdjustment: applicable-scenario dynamic bonus (capped +100) / not-applicable -1000, preserving R4 scoring factors.
   const scenarioAdj = scenarioAdjustment(`${s.description}\n${s.instructions ?? ''}`, queryNorm, queryTerms);
