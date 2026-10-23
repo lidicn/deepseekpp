@@ -58,6 +58,23 @@ const MIN_LEAD_GAP = 50;
  */
 const MIN_DESC_HIT_RATIO = 0.15;
 
+/**
+ * 名称覆盖率门（2026-10-23，审计 X-68 / X-44 的同一枚 fix）。
+ *
+ * `descHitRatio` 算的是「查询词有多少落进描述」，方向是**查询 → 描述**。
+ * 但「用户就是在说这个 Skill 的名字」这种情形，用描述覆盖率衡量是错的：
+ * 名字匹配而描述不匹配时 `descHitRatio` 很低，门会把真实意图一起挡掉（X-44）。
+ *
+ * 所以另加一条**反向**指标：`nameCoverage` = Skill 名自身的 token 有多少出现在查询里。
+ * 名字 token 少（`dcd-decision-support` → 3 个），查询只要覆盖其中多数即视为
+ * 真实名称匹配，与 `exactNameHit` 一样放行。
+ *
+ * 取 0.5：名字通常 1–3 个 token，覆盖过半即「明显在指这个 Skill」；
+ * 再高会把「名字 + 包装词」的查询（如「用一下 dcd-decision-support」）误杀，
+ * 再低则长提示词里偶然覆盖一个短名 token 就能解锁。
+ */
+const MIN_NAME_HIT_RATIO = 0.5;
+
 /** 参与命中计分的最短词长度：单字 CJK（如「用」「表」）信息量太低，纯噪声。 */
 const MIN_MATCH_TERM_LENGTH = 2;
 
@@ -203,12 +220,28 @@ export function scoreLocalSkill(s: LocalSkillIndex, queryNorm: string, queryTerm
   // （真机实证 914 字提示词 306 个词只命中 5 个 ≈ 1.6%，却累加出 200 分）。
   // 精确名命中（+800）不受此门限制，保留 A4 不变量。
   const descHitRatio = matchableTerms.length === 0 ? 0 : descHits.length / matchableTerms.length;
-  const termScoringAllowed = exactNameHit || descHitRatio >= MIN_DESC_HIT_RATIO;
 
-  for (const term of nameHits) {
-    score += 100;
-  }
+  // 2026-10-23 补漏（审计 X-68）：上一版只把 `descHits` 罩进门内，`nameHits`
+  // 的 `score += 100` 仍在门外。而 `ACTIVATION_THRESHOLD = 100` —— 长提示词的
+  // 任意一个 2-gram 落进 Skill 名就恰好抵达激活阈值，其余候选被门压到 0，
+  // 领先差条件自动满足 ⇒ 无关 Skill 被误激活。现把 nameHits 一并纳入门内。
+  //
+  // 同时解 X-44（门太严把真意图稀释到不激活）：新增 **名称覆盖率** 解除条件 ——
+  // 看「Skill 名自身的 token 有多少出现在查询里」，而不是「查询的每个词都在名字里」。
+  // 后者过严：`用一下 dcd-decision-support` 这类「名字 + 包装词」的查询会被误杀。
+  // 名称覆盖率 ≥ MIN_NAME_HIT_RATIO 视为真实名称匹配，与 `exactNameHit` 一样放行。
+  const queryTermSet = new Set(matchableTerms);
+  const nameTokens = tokenizeFlexible(nameNorm);
+  const nameCoverage = nameTokens.length === 0
+    ? 0
+    : nameTokens.filter((t) => queryTermSet.has(t)).length / nameTokens.length;
+  const termScoringAllowed =
+    exactNameHit || nameCoverage >= MIN_NAME_HIT_RATIO || descHitRatio >= MIN_DESC_HIT_RATIO;
+
   if (termScoringAllowed) {
+    for (const term of nameHits) {
+      score += 100;
+    }
     for (const _term of descHits) {
       // Generic query with no exact-name hit: description token score halved (+40 => +20) to lower weak-word correlation (R4② down-weight).
       score += (generic && !exactNameHit) ? 20 : 40;
