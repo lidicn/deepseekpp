@@ -11,6 +11,7 @@ import {
   getGrantLocalSkillDir,
   haveEquivalentToolDescriptorSecurity,
 } from '../core/tool/authorization';
+import { MAX_CALLS_PER_GRANT } from '../core/tool/authorization-types';
 import type {
   ToolAuthorizationSubject,
   ToolCall,
@@ -777,6 +778,122 @@ describe('tool authorization context', () => {
       '[DeepSeek++] tool authorization completion persistence failed',
       expect.any(Error),
     );
+  });
+});
+
+// 2026-10-23 补：审计总汇总 §三 列为「设计正确但无测试守护」的三条授权防线。
+//
+// 核实后发现报告对其中两条有夸大（TTL 与 source 归属已有用例，见
+// `rejects expired and cross-session grants` 与 `:217` 的 it.each），
+// 真正零覆盖的是：
+//   1. 运行时预留路径的 128 调用上限（`tool_authorization_call_limit`）——
+//      原有 `rejects stored state that exceeds ... call caps` 测的是**存储态校验**
+//      （`authorization-types.ts` 里 `calls.length <= MAX_CALLS_PER_GRANT`），
+//      而不是 `authorization-flow.ts:155/220` 那条运行时抛错路径。
+//   2. `assertOwnerDocumentMatches` 里的 **tabId / frameId** 归属
+//      （原有用例只覆盖了 documentSessionId 与 chatSessionId）。
+//   3. TTL 的**边界**：`requireGrant` 用的是 `expiresAt <= now`，
+//      原用例只测了 `now > expiresAt`，`===` 这一侧没有守护。
+describe('authorization guards without prior test coverage', () => {
+  it('rejects the 129th distinct call on one grant (runtime reservation path)', async () => {
+    const descriptor = makeDescriptor();
+    const grant = await createGrant([descriptor]);
+
+    for (let index = 0; index < MAX_CALLS_PER_GRANT; index += 1) {
+      await authorizeToolExecution(
+        makeCall({ id: `call-${index}` }),
+        { kind: 'grant', grantId: grant.id, subject: SUBJECT },
+        [descriptor],
+      );
+    }
+
+    await expect(authorizeToolExecution(
+      makeCall({ id: 'call-overflow' }),
+      { kind: 'grant', grantId: grant.id, subject: SUBJECT },
+      [descriptor],
+    )).rejects.toMatchObject({ code: 'tool_authorization_call_limit' });
+  });
+
+  it('does not record the rejected overflow call (state stays at the cap)', async () => {
+    // 反向守卫：上限检查必须在**写入 call 记录之前**。
+    // 若有人把 `if (!existing && ...MAX_CALLS_PER_GRANT) throw` 移到
+    // `grant.calls[callId] = {...}` 之后，这条会变红（多出第 129 条记录）。
+    const descriptor = makeDescriptor();
+    const grant = await createGrant([descriptor]);
+    const context = { kind: 'grant' as const, grantId: grant.id, subject: SUBJECT };
+
+    for (let index = 0; index < MAX_CALLS_PER_GRANT; index += 1) {
+      await authorizeToolExecution(makeCall({ id: `call-${index}` }), context, [descriptor]);
+    }
+
+    await expect(authorizeToolExecution(
+      makeCall({ id: 'call-overflow' }),
+      context,
+      [descriptor],
+    )).rejects.toMatchObject({ code: 'tool_authorization_call_limit' });
+
+    const stored = sessionStorage[TOOL_AUTHORIZATION_STORAGE_KEY] as {
+      grants: Record<string, { calls: Record<string, unknown> }>;
+    };
+    const calls = stored.grants[grant.id].calls;
+    expect(Object.keys(calls)).toHaveLength(MAX_CALLS_PER_GRANT);
+    expect(calls).not.toHaveProperty('call-overflow');
+  });
+
+  it('rejects a call from another tab even with the same document', async () => {
+    const descriptor = makeDescriptor();
+    const grant = await createGrant([descriptor]);
+
+    await expect(authorizeToolExecution(
+      makeCall(),
+      { kind: 'grant', grantId: grant.id, subject: { ...SUBJECT, tabId: 8 } },
+      [descriptor],
+    )).rejects.toMatchObject({ code: 'tool_session_mismatch' });
+  });
+
+  it('rejects a call from another frame in the same tab', async () => {
+    const descriptor = makeDescriptor();
+    const grant = await createGrant([descriptor]);
+
+    await expect(authorizeToolExecution(
+      makeCall(),
+      { kind: 'grant', grantId: grant.id, subject: { ...SUBJECT, frameId: 3 } },
+      [descriptor],
+    )).rejects.toMatchObject({ code: 'tool_session_mismatch' });
+  });
+
+  it('rejects a call from another surface', async () => {
+    const descriptor = makeDescriptor();
+    const grant = await createGrant([descriptor]);
+
+    await expect(authorizeToolExecution(
+      makeCall(),
+      { kind: 'grant', grantId: grant.id, subject: { ...SUBJECT, surface: 'sidepanel' } as never },
+      [descriptor],
+    )).rejects.toMatchObject({ code: 'tool_session_mismatch' });
+  });
+
+  it('treats a grant as stale exactly at its expiry instant (<= boundary)', async () => {
+    // requireGrant 用 `grant.expiresAt <= now`：正好等于过期时刻即算过期。
+    // 原用例只测了 now > expiresAt，若把 `<=` 改成 `<` 不会有测试变红。
+    const descriptor = makeDescriptor();
+    const issuedAt = 1_000;
+    const grant = await createGrant([descriptor], issuedAt);
+    const expiresAt = issuedAt + TOOL_AUTHORIZATION_TTL_MS;
+
+    await expect(authorizeToolExecution(
+      makeCall(),
+      { kind: 'grant', grantId: grant.id, subject: SUBJECT },
+      [descriptor],
+      expiresAt - 1,
+    )).resolves.toBeDefined();
+
+    await expect(authorizeToolExecution(
+      makeCall({ id: 'call-at-boundary' }),
+      { kind: 'grant', grantId: grant.id, subject: SUBJECT },
+      [descriptor],
+      expiresAt,
+    )).rejects.toMatchObject({ code: 'tool_authorization_stale' });
   });
 });
 
