@@ -125,7 +125,19 @@ describe('content tool block styles', () => {
     // old-style collapsible block is removed from the DOM...
     expect(source).toContain('function removeToolBlockFromMessage(message: Element): void');
     expect(source).toContain(':scope > .dpp-tool-block, :scope > .dpp-artifact-results');
-    expect(source).toContain('removeToolBlockFromMessage(target);');
+    // ...**且只有在确实能渲染新式工具组时才移除**（2026-10-23 审计修复）。
+    //
+    // 原来这两件事不配对：移除是无条件的，渲染是 `if (stream && initialExecutions.length > 0)`。
+    // `getAgentConsoleBody()` 拿不到 `.dpp-agent-stream` 时（容器结构不符 / 被页面
+    // 重渲染破坏），旧块已删、新块没建 ⇒ 工具区一片空白，而状态条还写着
+    // 「任务完成（N 步 · M 工具）」—— 就是对比报告里那张截图。
+    //
+    // 旧断言只做两个独立的 toContain，钉的是「两段代码都存在」，
+    // **钉不住「移除必须被渲染能力守住」**，所以这个 bug 能溜过去。
+    // 现在改成结构断言：移除语句必须落在 `if (stream)` 里。
+    expect(source).toMatch(/if \(stream\) \{\s*removeToolBlockFromMessage\(target\);\s*\}/);
+    // 反向：不得再有裸露的、不在守卫内的移除调用
+    expect(source).not.toMatch(/\n\s{2}removeToolBlockFromMessage\(target\);/);
     // ...and the trigger turn's executions render as the FIRST new-style tool
     // group (step index -1 keeps it ahead of every loop step).
     expect(source).toContain('resolveAgentToolEntry(stream, -1, exec, getAgentRendererLabels());');

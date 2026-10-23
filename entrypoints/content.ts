@@ -5324,11 +5324,23 @@ async function startInlineAgentIfNeeded(
   // stream — the run reads as one flow and the tool count is neither lost
   // nor duplicated. ALL completed first-turn executions are shown (not only
   // the continuable subset), matching the legacy block's coverage.
-  removeToolBlockFromMessage(target);
+  //
+  // 2026-10-23 修复（审计《工具流渲染对比报告》）：「移除旧块」曾经是**无条件**的，
+  // 而「渲染新块」是**有条件**的（`stream && initialExecutions.length > 0`）。
+  // 两者不配对 ⇒ `getAgentConsoleBody()` 拿不到 `.dpp-agent-stream` 时（容器结构
+  // 不符 / 被页面重渲染破坏），旧块已经删掉、新块无处可建 ⇒ 助手消息下方的工具区
+  // **一片空白**，而状态条仍写着「任务完成（N 步 · M 工具）」，用户看不出工具跑过。
+  //
+  // 现在把移除也纳入同一个条件：**只有在确实能把这一轮的 executions 渲染成
+  // 新式工具组时才移除旧块**，否则保留旧块作为兜底 —— 宁可短暂重复展示，
+  // 也不能两者皆无。
   const stream = getAgentConsoleBody(container);
   const initialExecutions = executions.filter(
     (execution) => !execution.pending,
   );
+  if (stream) {
+    removeToolBlockFromMessage(target);
+  }
   if (stream && initialExecutions.length > 0) {
     // Step index -1 keeps the group ahead of every loop step: step 0's
     // narration mounts AFTER it, so the run record starts with the trigger
