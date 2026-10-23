@@ -11,6 +11,7 @@ import type {
   McpToolCacheEntry,
 } from './types';
 import { MCP_DEFAULT_LIMITS, MCP_DEFAULT_TIMEOUTS } from './constants';
+import { invalidateMcpTransportCache, isMcpConnectionConfigEqual } from './client-cache';
 import { createSerialOperationQueue } from '../persistence/serial-operation-queue';
 import {
   decodeMcpStorageState,
@@ -99,6 +100,11 @@ export async function updateMcpServer(
     const state = await readStateAlreadyOwned();
     let updated: McpServerConfig | null = null;
     const cacheInvalidations = new Set<McpServerId>();
+    // 审计 X-60：连接相关字段（transport / headers / secrets / enabled /
+    // timeouts / limits）变化时，还必须显式清掉**连接复用缓存**，否则已
+    // initialize 的 transport 会继续用旧凭据发请求。改 displayName / allowlist
+    // 不算连接变化，不清 —— 否则用户改个备注就被重连，会被当成 bug。
+    const transportInvalidations = new Set<McpServerId>();
     const servers = state.servers.map((server) => {
       if (server.id !== id) return server;
       const nextPatch: McpServerUpdateInput = patch.secrets
@@ -110,6 +116,9 @@ export async function updateMcpServer(
         updatedAt: Date.now(),
         status: resolvePatchedServerStatus(server, nextPatch),
       });
+      if (!isMcpConnectionConfigEqual(server, nextServer)) {
+        transportInvalidations.add(server.id);
+      }
       if (shouldInvalidateMcpToolCache(server, nextServer)) {
         cacheInvalidations.add(server.id);
         updated = {
@@ -132,6 +141,10 @@ export async function updateMcpServer(
         ? state.toolCaches.filter((cache) => !cacheInvalidations.has(cache.serverId))
         : state.toolCaches,
     });
+    // 审计 X-60：清掉连接复用缓存，让下一次调用重新 initialize（用新凭据）
+    for (const serverId of transportInvalidations) {
+      invalidateMcpTransportCache(serverId);
+    }
     return sanitizeMcpServerConfig(updated);
   });
 }
@@ -164,6 +177,9 @@ export async function deleteMcpServer(id: McpServerId): Promise<void> {
       servers: state.servers.filter((server) => server.id !== id),
       toolCaches: state.toolCaches.filter((cache) => cache.serverId !== id),
     });
+    // 审计 X-60：服务器已删除，连接复用缓存必须显式清 ——
+    // 删掉之后没有「下一次调用」来触发哈希自检，缓存会一直留着。
+    invalidateMcpTransportCache(id);
   });
 }
 

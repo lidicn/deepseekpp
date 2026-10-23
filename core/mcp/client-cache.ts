@@ -17,15 +17,46 @@ const cache = new Map<string, CacheEntry>();
 const MAX_CACHE_ENTRIES = 32;
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 分钟
 
-function hashServerConfig(server: McpServerConfig): string {
-  // 简化哈希：JSON.stringify 配置中影响连接的字段
+/**
+ * 连接相关配置的哈希。
+ *
+ * 2026-10-23 修复审计 X-60：原实现只取 `id`/`transport`/`timeouts`/`limits`，
+ * 而 `headers` 与 `secrets`（凭据）是 `McpServerConfig` 的**顶层字段**
+ * （`core/mcp/types.ts:64-81`），不在 `transport` 里 ⇒ 改密钥／改请求头之后
+ * 哈希不变 ⇒ `getCachedMcpTransport` 命中旧缓存 ⇒ **继续用旧凭据发请求**。
+ *
+ * 更坏的是它的现象：`store.ts` 用的是**发现指纹**（含 headers/secrets/url），
+ * 所以改密钥时工具列表会刷新 —— 用户看到「生效了」，实际连接还是旧的。
+ *
+ * 现纳入 `headers` / `secrets` / `enabled`。取整个值而不是摘要：这个字符串
+ * 只活在本模块的内存 Map 里（`CacheEntry.configHash`），**从不持久化、从不打印**，
+ * 因此不会造成额外的凭据落盘。⚠ 后续若要给它加日志，必须先改成摘要。
+ */
+export function hashMcpConnectionConfig(server: McpServerConfig): string {
   const relevant = {
     id: server.id,
+    enabled: server.enabled,
     transport: server.transport,
+    headers: server.headers,
+    secrets: server.secrets,
     timeouts: server.timeouts,
     limits: server.limits,
   };
   return JSON.stringify(relevant);
+}
+
+/**
+ * 两份配置在**连接层面**是否等价。
+ *
+ * 用于让存储层在更新后决定要不要显式失效连接缓存 —— 只看连接相关字段，
+ * 改 `displayName`／`allowlist` 不算。
+ */
+export function isMcpConnectionConfigEqual(left: McpServerConfig, right: McpServerConfig): boolean {
+  return hashMcpConnectionConfig(left) === hashMcpConnectionConfig(right);
+}
+
+function hashServerConfig(server: McpServerConfig): string {
+  return hashMcpConnectionConfig(server);
 }
 
 function cacheKey(serverId: string): string {
