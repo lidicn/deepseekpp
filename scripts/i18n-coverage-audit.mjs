@@ -58,7 +58,6 @@ const pathAllowlist = new Map([
   ['core/memory/digest.ts', 'memory digest section labels fed to the LLM prompt; not rendered in product UI'],
   ['core/memory/extractor.ts', 'zh-CN keyword regexes used to classify Chinese conversation content; not display text'],
   ['core/memory/l2-injector.ts', 'L2 memory injection prefix embedded into the model prompt'],
-  ['core/memory/memory-search-tool.ts', 'memory_search tool descriptor and model-facing result text; the sidepanel memory UI is locale-backed'],
   ['core/memory/organize-prompt.ts', 'natural-language memory organize prompt builder'],
   ['core/tool/memory.ts', 'memory tool descriptors mirror the tool contract and are consumed by the model; sidepanel memory UI is locale-backed'],
   ['core/remote-agent/watcher.ts', 'remote agent watcher internal diagnostics'],
