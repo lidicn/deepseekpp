@@ -8,6 +8,7 @@ import { execSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isCoveredByBaseline, parseFailedCases } from './lib/vitest-output.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
@@ -45,41 +46,30 @@ try {
 }
 
 // 解析 failed 用例。
-// vitest 4 的 verbose 输出是单行：` × tests/a.test.ts > suite > case 123ms`
-// 所以捕获到的 f 形如 `tests/a.test.ts > suite > case`（已含文件名）。
 //
 // 2026-10-20 fix: 正则必须锚定行首。原本用 /\s*×\s+(.+?)\s+\d+ms/，
 // 遇到 describe 名里自带 `×` 的用例（如 `pi bridge × runtime authorization (A2-T3)`）
 // 会从那个 `×` 开始截，导致结果丢掉文件名与前缀、基线永远匹配不上。
-const failed = new Set();
-const lines = output.split('\n');
-for (const line of lines) {
-  const m = line.match(/^\s*×\s+(.+?)\s+\d+ms/);
-  if (m) {
-    // 粗略匹配，只保留用例名
-    failed.add(m[1].trim());
-  }
-}
+//
+// 2026-10-23 fix（审计 X-52，第四次复现把病灶钉在取材面）：
+// vitest 输出**带 ANSI 转义码**，失败行实际形如
+//   `\u001b[31m × \u001b[39m tests/a.test.ts > suite > case 123ms`
+// 于是 `^\s*×` 永远不成立 —— 门上一条正则打在带 ANSI 的原面命中 0、
+// 打在剥掉 ANSI 的面命中 1。后果是门永远报「本次 failed: 0 条」并 `exit 0`：
+// 它区分不了「真的没有红」与「没看见任何红」。
+//
+// 修法：解析前先剥 ANSI。逻辑已抽到 scripts/lib/vitest-output.mjs（纯函数，可单测），
+// 自检腿见 tests/test-with-baseline-parser.test.ts —— 门禁尺本身也要有守护。
+const failed = parseFailedCases(output);
 
 console.log(`[baseline] 本次 failed: ${failed.size} 条`);
 
 // 找新增
 const newFailed = [];
 for (const f of failed) {
-  // F1 fix: skip ::TODO placeholders (they match everything via includes(''))
-  // and use exact file::test name matching instead of loose includes.
-  let known = false;
-  for (const b of baseline) {
-    if (b.endsWith('::TODO') || b.endsWith('::')) continue;
-    // 2026-10-20 fix: baseline 里存的是文件路径（如 tests/a.test.ts），而 verbose 解析出的
-    // 用例名用 ` > ` 分隔。原判断只认 `b + '::'`，永远不成立 —— 门禁退化成「零失败」。
-    // 现在同时接受 `::` 与 ` > ` 两种分隔符，文件级条目即可覆盖该文件下所有用例。
-    if (b === f || f.startsWith(`${b}::`) || f.startsWith(`${b} > `)) {
-      known = true;
-      break;
-    }
-  }
-  if (!known) newFailed.push(f);
+  // 匹配规则见 scripts/lib/vitest-output.mjs 的 isCoveredByBaseline：
+  // 支持文件级与用例级条目、`::` 与 ` > ` 两种分隔符，并跳过 ::TODO 占位。
+  if (!isCoveredByBaseline(f, baseline)) newFailed.push(f);
 }
 
 if (newFailed.length > 0) {
