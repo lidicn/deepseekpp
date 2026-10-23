@@ -6,11 +6,49 @@ import { wrapUntrustedMemoryContent } from './untrusted-content';
 
 export { estimateTokens } from '../token/estimator';
 
-// 相关性门控阈值（供 digest.ts 复用）
-// 方案甲：门控只做 0 分剔除，排序仍用 keywordScore
-// kwScore >= 1 才通过（即 kwScore=0 的被剔除）
+// 相关性门控阈值（供 digest.ts / augmentation.ts 等**注入侧**复用）
+//
+// 2026-10-23 复核结论：这两个阈值原先都是 1（`e99d64e` 把 global 从 5 降到 1，
+// 注释写「方案甲：门控只做 0 分剔除」）。但 `keywordScore` 里 content 命中
+// 一次就是 5 分，所以 `>= 1` 实际等价于「有任何一点点词重叠就放行」——
+// 真机实测 114 条记忆里有 24 条通过门控，门控形同虚设。
+//
+// 更关键的是**语境差异**：注入侧（L2 digest / prompt augmentation）是模型
+// 自己决定塞进系统提示的，塞错就是噪音 + 烧 token，应当**严格**；
+// 而显式检索（`memory_search`，用户主动提问）宽松才对——
+// 用户问了就该给结果，不该被门控拦空。
+//
+// 所以这里恢复 global 的严格阈值，并新增 `minKeywordScore` 覆盖项，
+// 供 `memory_search` 显式放宽（见 `core/tool/memory.ts`）。
+//
+// 阈值取 10 的语义（对应 keywordScore 的权重：tag 20 / name 15 / content 5/词）：
+//   · 一个标签命中 (20)     → 通过
+//   · 一个名字命中 (15)     → 通过
+//   · 一个内容词命中 (5)    → **不通过**（太弱，纯噪音）
+//   · 两个内容词命中 (10)   → 通过
+// 注意不能取 5：那正好等于单次内容命中的权重，`>= 5` 会让一次弱命中就放行，
+// 等于没门控（本次实测发现，已用测试锁住）。
 export const MIN_KEYWORD_SCORE_PROJECT = 1;
-export const MIN_KEYWORD_SCORE_GLOBAL = 1;
+export const MIN_KEYWORD_SCORE_GLOBAL = 10;
+
+/**
+ * 内容命中的长度归一基准（分词后的词数）。
+ *
+ * 问题：`contentHits` 统计「记忆内容里有多少个**不同词**命中了 prompt」。
+ * 长记忆词更多，命中机会天然更多——不归一化会让长记忆系统性压过
+ * 精确但简短的记忆。实测（`memory_search` 真机数据）：#84（1646 token，
+ * 长内容）排在 #113（351 token，精确匹配）之上。
+ *
+ * 做法：词数在基准以内不压制；超出后按 `sqrt` 比例压制。
+ * 用 sqrt 而不是全比例，是为了不把「内容全面且确实相关」的长记忆压死。
+ */
+const CONTENT_LENGTH_NORM_BASE_WORDS = 16;
+
+/** 词数在基准内返回 1；超出后按 sqrt 次线性衰减。 */
+function lengthFactor(wordCount: number): number {
+  if (wordCount <= CONTENT_LENGTH_NORM_BASE_WORDS) return 1;
+  return Math.sqrt(CONTENT_LENGTH_NORM_BASE_WORDS / wordCount);
+}
 
 const segmenter =
   typeof Intl !== 'undefined' && Intl.Segmenter
@@ -66,7 +104,11 @@ export function keywordScore(promptWords: string[], memory: Memory): number {
     if (promptSet.has(w)) contentHits++;
   }
 
-  return tagHits * 20 + nameHits * 15 + contentHits * 5;
+  // 内容分做长度归一：长内容词多、命中机会多，不归一会系统性压过简短精确的记忆。
+  // tag / name 不归一 —— 标签数量有限、名字本身就短，没有这个问题。
+  const contentScore = contentHits * 5 * lengthFactor(contentWords.length);
+
+  return tagHits * 20 + nameHits * 15 + contentScore;
 }
 
 function decayScore(memory: Memory): number {
@@ -80,6 +122,15 @@ export interface SelectOptions {
   identityOnly?: boolean;
   /** 是否包含归档的记忆（默认 false，不包含） */
   includeArchived?: boolean;
+  /**
+   * 覆盖默认门控阈值。
+   *
+   * - **不传**：注入侧语义 —— global 用 `MIN_KEYWORD_SCORE_GLOBAL`(5)，
+   *   project 用 `MIN_KEYWORD_SCORE_PROJECT`(1)。宁缺勿滥。
+   * - **显式检索传 1 或 0**：`memory_search` 这类用户主动发起的查询应宽松，
+   *   用户问了就该给结果，不该被门控拦空。
+   */
+  minKeywordScore?: number;
 }
 
 export function getMemoryBudget(promptTokens: number): number {
@@ -96,7 +147,12 @@ export function selectMemories(
 ): Memory[] {
   if (allMemories.length === 0) return [];
 
-  const { budget = MEMORY_TOKEN_BUDGET, identityOnly = false, includeArchived = false } = options ?? {};
+  const {
+    budget = MEMORY_TOKEN_BUDGET,
+    identityOnly = false,
+    includeArchived = false,
+    minKeywordScore,
+  } = options ?? {};
 
   // 先过滤 archived 的记忆（除非 includeArchived 为 true）
   const activeMemories = includeArchived
@@ -116,7 +172,9 @@ export function selectMemories(
     .map((m) => {
       const kwScore = keywordScore(promptWords, m);
       const isGlobal = m.scope === undefined || m.scope === 'global';
-      const minScore = isGlobal ? MIN_KEYWORD_SCORE_GLOBAL : MIN_KEYWORD_SCORE_PROJECT;
+      // 显式检索可用 minKeywordScore 覆盖注入侧的严格阈值（见 SelectOptions 注释）
+      const minScore = minKeywordScore
+        ?? (isGlobal ? MIN_KEYWORD_SCORE_GLOBAL : MIN_KEYWORD_SCORE_PROJECT);
       // Pinned memories bypass the relevance threshold (user explicitly pinned them)
       // Archived memories need stricter threshold (archived = weakened, should be harder to recall)
       const effectiveMin = m.archived ? minScore * 3 : minScore;

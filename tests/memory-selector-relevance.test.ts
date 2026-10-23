@@ -19,7 +19,10 @@ describe('memory selector relevance threshold', () => {
     expect(selected).toHaveLength(0);
   });
 
-  it('accepts global memory when keyword score meets threshold (>=5)', () => {
+  it('accepts global memory when keyword score meets injection threshold (>=10)', () => {
+    // 阈值语义见 core/memory/selector.ts 注释：tag 20 / name 15 / content 5 每词，
+    // 注入侧要求 >= 10（即「至少一个标签/名字命中，或两个内容词命中」）。
+    // 本用例靠 tags ['空调','卧室','使用时长'] 三个标签命中（60 分）通过。
     const globalMemory = makeMemory({
       id: 1,
       scope: 'global',

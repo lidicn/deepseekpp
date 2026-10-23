@@ -460,6 +460,15 @@ async function searchMemory(
   const selected = selectMemories(query, allMemories, {
     budget: MEMORY_SEARCH_SELECTION_BUDGET,
     includeArchived,
+    // 2026-10-23：显式检索用宽松门控（1 = 至少一个词重叠）。
+    //
+    // selectMemories 的默认门控是**注入侧**语义（global 需 >= 5），
+    // 因为 L2 digest / prompt augmentation 是模型自己决定塞进系统提示的，
+    // 塞错就是噪音 + 烧 token，应当宁缺勿滥。
+    //
+    // 但 memory_search 是**用户主动发起**的查询：用户问了「空调」就该拿到
+    // 含「空调」的记忆，不该被注入侧的标准拦空。两者语境不同，必须分开。
+    minKeywordScore: 1,
   });
 
   if (selected.length === 0) {
