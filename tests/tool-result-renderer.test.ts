@@ -177,7 +177,14 @@ describe('tool result renderer registry', () => {
     expect(target.textContent).not.toContain('html-ok');
     expect(frame).not.toBeNull();
     expect(frame?.getAttribute('sandbox')).toBe('allow-scripts');
+    // 2026-10-23 审计 X-66 反向守护：现在「没有 allow-same-origin」是**唯一**
+    // 挡住提权的东西（帧拿到同源就能读宿主页 DOM/cookie）。全仓此前对
+    // `allow-same-origin` 零断言 —— 有人为「让预览能调 API」加上它，不会有测试变红。
+    expect(frame?.getAttribute('sandbox')).not.toContain('allow-same-origin');
+    // 原文保留（预览要能渲染模型内容）+ 只钉出网向量的 CSP 已注入
     expect(frame?.srcdoc).toContain('<h1>html-ok</h1>');
+    expect(frame?.srcdoc).toContain('http-equiv="Content-Security-Policy"');
+    expect(frame?.srcdoc).toContain("connect-src 'none'");
   });
 
   it('opens transient restored HTML artifacts without a background artifact lookup', async () => {

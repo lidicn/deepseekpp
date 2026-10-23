@@ -2,6 +2,7 @@ import type { ToolCardResult } from '../types';
 import type { ArtifactOutput, ArtifactRuntimeLanguage } from '../artifact';
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
 import { injectInjectedThemeStyles } from './injected-theme';
+import { injectArtifactPreviewCsp } from './artifact-preview-csp';
 import { diagnosticLogBuffer } from '../diagnostics/log-buffer';
 
 export type ToolResultRendererInput = {
@@ -282,7 +283,11 @@ async function openArtifactPreviewPanel(
   try {
     const record = await getArtifactRecord(artifact, sendMessage, locale);
     if (!panel.isConnected) return;
-    frame.srcdoc = record.content;
+    // 审计 X-66：模型 HTML 原样进 srcdoc，而这条帧嵌在 chat.deepseek.com 页面里，
+    // 继承的是**聊天网站**的策略 —— 扩展为 sandbox_run 钉的 M13 防信标措施
+    // （wxt.config.ts 的 SANDBOX_CSP）在这条路上不生效。注入只钉出网向量的
+    // CSP meta，把「预览」恢复成「只看不发」。详见 core/ui/artifact-preview-csp.ts。
+    frame.srcdoc = injectArtifactPreviewCsp(record.content);
   } catch (error) {
     if (!panel.isConnected) return;
     frame.remove();
