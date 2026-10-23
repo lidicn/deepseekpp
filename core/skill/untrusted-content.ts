@@ -36,16 +36,6 @@ export function neutralizeUntrustedSkillMarkers(content: string): string {
 }
 
 /**
- * 内容里是否出现了不可信边界标记（仅作**诊断/断言**用，不再参与包裹决策）。
- *
- * 保留这个谓词是为了让测试与调用方可以「断言正文里没有残留真实标记」，
- * 但**包裹函数不再用它做短路** —— 那正是 X-65 的成因。
- */
-export function containsUntrustedSkillBoundary(content: string): boolean {
-  return content.includes(UNTRUSTED_SKILL_OPEN) || content.includes(UNTRUSTED_SKILL_CLOSE);
-}
-
-/**
  * 无条件包裹一份不可信 Skill 正文。
  *
  * 没有「已包裹就跳过」的分支：任何早退都可能被攻击者用来跳过告示与中和。

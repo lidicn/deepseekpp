@@ -109,12 +109,54 @@ describe('XmlToolStreamFilter', () => {
     );
   });
 
+  // 2026-10-23 补（元宝 §5.4 给出的「最刁钻形状」）：闭合标签**在标签名内部**被切断。
+  //
+  //   frame1: '前面<artifact_create>{...}</artifact_cr'
+  //   frame2: 'eate>后面文字'
+  //
+  // 切点是 `</artifact_cr` + `eate>` —— 切断发生在标签名里，不是在标签边界。
+  // 若过滤器的跨帧「闭合搜索尾巴」逻辑被弱化（元宝的变异 D：getCloseSearchTail 恒返回空），
+  // `后面文字` 会被永久吞掉。此前的跨帧用例是「标签在 frame1 完整、内容在 frame2」，
+  // 测不到这个形状。
+  //
+  // 注：元宝原文用的是 `shell_exec`，但本过滤器的工具表来自
+  // `createArtifactToolDescriptors`，只认 artifact 工具 —— 用未注册的工具名会被
+  // 原样透传（那也是一种正确行为，但不是这条用例要测的）。
+  const SPLIT_PAYLOAD = JSON.stringify({ filename: 'x.html', content: '<p>x</p>', language: 'html' });
+
+  it('keeps text after a closing tag that is split inside the tag name', () => {
+    const output = runFilter([
+      sseText(`前面<artifact_create>${SPLIT_PAYLOAD}</artifact_cr`),
+      sseText('eate>后面文字'),
+    ]);
+
+    const visible = readVisibleText(output);
+    // 工具调用被剥掉，但**两侧正文都必须保留**
+    expect(visible).toContain('前面');
+    expect(visible).toContain('后面文字');
+    expect(visible).not.toContain('artifact_create');
+    expect(visible).not.toContain('</artifact_cr');
+  });
+
+  it('keeps text after a closing tag split inside the tag name across three frames', () => {
+    // 同一形状再收窄一档：`</` 落在一帧末尾，标签名跨两帧
+    const output = runFilter([
+      sseText(`甲<artifact_create>${SPLIT_PAYLOAD}</`),
+      sseText('artifact_'),
+      sseText('create>乙'),
+    ]);
+
+    const visible = readVisibleText(output);
+    expect(visible).toContain('甲');
+    expect(visible).toContain('乙');
+    expect(visible).not.toContain('artifact_create');
+  });
+
   it('collapses blank lines between consecutive stripped tool calls', () => {
     const payload = JSON.stringify({ filename: 'two.html', content: '<p>x</p>', language: 'html' });
     const output = runFilter([
       sseText('第一段。\n\n<artifact_create>'),
-      sseText(payload),
-      sseText('</artifact_create>\n\n<artifact_create>'),
+      sseText(payload),      sseText('</artifact_create>\n\n<artifact_create>'),
       sseText(payload),
       sseText('</artifact_create>\n\n第二段。\n\n第三段。'),
     ]);

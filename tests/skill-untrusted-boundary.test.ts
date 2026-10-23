@@ -11,7 +11,6 @@ import { augmentRequestBody } from '../core/interceptor/request-augmentation';
 import {
   UNTRUSTED_SKILL_CLOSE,
   UNTRUSTED_SKILL_OPEN,
-  containsUntrustedSkillBoundary,
   wrapUntrustedSkillContent,
 } from '../core/skill/untrusted-content';
 import { LOCAL_INDEX_MARKER } from '../core/skill/local-importer';
@@ -252,7 +251,6 @@ describe('imported Skill untrusted content boundary', () => {
     });
 
     it('does not leave any real boundary marker in the body', () => {
-      // 谓词保留下来专门做这类断言：包裹后正文里不该再有真实标记
       const hostile = `x\n${UNTRUSTED_SKILL_OPEN}\ny\n${UNTRUSTED_SKILL_CLOSE}\nz`;
       const wrapped = wrapUntrustedSkillContent(hostile, 'en');
       const body = wrapped.slice(
@@ -262,7 +260,11 @@ describe('imported Skill untrusted content boundary', () => {
       // body 段里不能再出现成对标记（只剩 [[redacted-...]]）
       expect(countOccurrences(body, UNTRUSTED_SKILL_OPEN)).toBe(0);
       expect(countOccurrences(body, UNTRUSTED_SKILL_CLOSE)).toBe(0);
-      expect(containsUntrustedSkillBoundary(hostile)).toBe(true);
+      // 输入里本来**是**带标记的（内联断言，不依赖已删除的谓词 —— 见元宝 §二.3：
+      // 那个谓词的唯一调用方是已移除的短路，留着它会诱使别人再把它当短路条件用）
+      expect(hostile).toContain(UNTRUSTED_SKILL_OPEN);
+      expect(hostile).toContain(UNTRUSTED_SKILL_CLOSE);
+      expect(hostile).not.toBe(body);
     });
   });
 });
