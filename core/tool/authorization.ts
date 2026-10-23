@@ -22,6 +22,7 @@ export {
   authorizeExternalToolPayloadChunk,
   completeToolExecutionAuthorization,
   closeToolAuthorization,
+  revokeToolAuthorizationsForProvider,
   getGrantLocalSkillDir,
   getToolAuthorizationAuditTrigger,
   createToolAuthorizationResult,

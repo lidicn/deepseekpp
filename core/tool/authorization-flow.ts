@@ -269,6 +269,34 @@ export async function closeToolAuthorization(
 }
 
 /**
+ * 撤销某个 provider（MCP serverId）名下的**全部**活跃授权（审计 X-67）。
+ *
+ * 用途：`UPDATE_MCP_SERVER` 发现端点 origin 变了时调用 —— 授权快照不含端点
+ * （见 `core/mcp/server-origin.ts` 头部说明），所以换地址后旧 grant 会被静默
+ * 续用到新端点。这里主动清掉，让下一次调用重新征求同意。
+ *
+ * **故意不校验 subject**：这是后台内部的配置变更路径，不是页面发起的关闭操作；
+ * 要求 subject 反而会让 MCP 处理器无法在无页面上下文时撤销。
+ *
+ * 一个 grant 若同时覆盖多台服务器的工具，也会被整体撤销 —— 保守但安全：
+ * 用户多点一次「允许」比「同意被静默转移到别的端点」代价小得多。
+ *
+ * @returns 被撤销的 grant 数量（0 表示本来就没有活跃授权）
+ */
+export async function revokeToolAuthorizationsForProvider(providerId: string): Promise<number> {
+  return mutateState((state) => {
+    const targets = Object.entries(state.grants)
+      .filter(([, grant]) => grant.descriptors.some((descriptor) => descriptor.provider.id === providerId))
+      .map(([grantId]) => grantId);
+    if (targets.length === 0) return { result: 0, changed: false };
+    for (const grantId of targets) {
+      delete state.grants[grantId];
+    }
+    return { result: targets.length, changed: true };
+  });
+}
+
+/**
  * Read the background-validated local-skill directory on the grant (Review #2).
  * Execution-time cwd is derived solely from this; any page/model-supplied
  * localSkillDir is ignored. Only this field is exposed, not the whole grant.

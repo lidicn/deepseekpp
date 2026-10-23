@@ -17,6 +17,7 @@ import type {
   McpCapabilitySettingsPatch,
 } from '../../core/mcp/capability-types';
 import { defineToolPayloadRuntimeCommandHandler } from './runtime-handler';
+import { mcpServerOriginChanged } from '../../core/mcp/server-origin';
 
 export interface McpRuntimeHandlerDependencies {
   getAllMcpServers(): Promise<McpServerConfig[]>;
@@ -31,6 +32,16 @@ export interface McpRuntimeHandlerDependencies {
   createMcpServer(input: McpServerCreateInput): Promise<McpServerConfig>;
   updateMcpServer(id: string, patch: McpServerUpdateInput): Promise<McpServerConfig | null>;
   deleteMcpServer(id: string): Promise<void>;
+  /**
+   * 撤销某个 MCP server 名下的全部活跃工具授权（审计 X-67）。
+   *
+   * 授权快照不含端点地址（`ToolProviderIdentity` 就没有 url 字段），所以换地址
+   * 后旧 grant 会被静默续用到新端点。`UPDATE_MCP_SERVER` 发现 origin 变化时调它，
+   * 让下一次调用重新征求同意。
+   *
+   * 返回被撤销的 grant 数量。
+   */
+  revokeToolAuthorizationsForProvider(providerId: string): Promise<number>;
   getMcpToolCache(serverId: string): Promise<McpToolCacheEntry | null>;
   refreshMcpServerDiscovery(serverId: string): Promise<McpToolCacheEntry>;
   getMcpOriginPattern(server: McpServerConfig): string;
@@ -73,7 +84,18 @@ export function createMcpRuntimeHandlers(
       return server;
     }),
     defineToolPayloadRuntimeCommandHandler('UPDATE_MCP_SERVER', async (payload, context) => {
+      // 审计 X-67：先取旧配置，更新后比较端点 origin。
+      // 授权快照不含端点（`ToolProviderIdentity` 没有 url 字段），所以换地址后
+      // 旧 grant 会被静默续用到新端点 —— 必须在这里主动撤销。
+      // 落点选编排层而不是 `core/mcp/store.ts`：授权态在 `core/tool/`，
+      // 让存储层反向依赖授权层会把 `core/mcp` ↔ `core/tool` 变成双向依赖。
+      const previous = await dependencies.getMcpServerById(payload.id);
       const server = await dependencies.updateMcpServer(payload.id, payload.patch);
+      // 比较时**不加**「旧端点必须非 null」：stdio ↔ http 的传输切换也改变了
+      // 数据的实际去向（origin 从 null 变成某个 host），同样必须撤销。
+      if (previous && server && mcpServerOriginChanged(previous, server)) {
+        await dependencies.revokeToolAuthorizationsForProvider(payload.id);
+      }
       await notifyMcpAndTools(context.tabId);
       return server;
     }),

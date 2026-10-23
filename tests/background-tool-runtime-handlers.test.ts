@@ -274,6 +274,92 @@ describe('MCP runtime handlers', () => {
     expect(dependencies.broadcastMcpServersUpdate).toHaveBeenCalledWith(17);
     expect(dependencies.broadcastToolDescriptorsUpdate).toHaveBeenCalledWith(17);
   });
+
+  // 2026-10-23 审计 X-67
+  describe('UPDATE_MCP_SERVER 在端点 origin 变化时撤销授权', () => {
+    it('换 host ⇒ 撤销该 server 的活跃授权', async () => {
+      const dependencies = createMcpDependencies();
+      vi.mocked(dependencies.getMcpServerById).mockResolvedValue(
+        createMcpServer({ transport: { kind: 'http', url: 'https://a.example/mcp' } }),
+      );
+      vi.mocked(dependencies.updateMcpServer).mockResolvedValue(
+        createMcpServer({ transport: { kind: 'http', url: 'https://b.example/mcp' } }),
+      );
+      const handlers = createMcpRuntimeHandlers(dependencies);
+
+      await dispatch(handlers, {
+        type: 'UPDATE_MCP_SERVER',
+        payload: { id: 'server-1', patch: { transport: { kind: 'http', url: 'https://b.example/mcp' } } },
+      });
+
+      expect(dependencies.revokeToolAuthorizationsForProvider).toHaveBeenCalledWith('server-1');
+    });
+
+    it('换端口 ⇒ 撤销', async () => {
+      const dependencies = createMcpDependencies();
+      vi.mocked(dependencies.getMcpServerById).mockResolvedValue(
+        createMcpServer({ transport: { kind: 'http', url: 'https://a.example:443/mcp' } }),
+      );
+      vi.mocked(dependencies.updateMcpServer).mockResolvedValue(
+        createMcpServer({ transport: { kind: 'http', url: 'https://a.example:8443/mcp' } }),
+      );
+      const handlers = createMcpRuntimeHandlers(dependencies);
+
+      await dispatch(handlers, {
+        type: 'UPDATE_MCP_SERVER',
+        payload: { id: 'server-1', patch: {} },
+      });
+
+      expect(dependencies.revokeToolAuthorizationsForProvider).toHaveBeenCalledWith('server-1');
+    });
+
+    it('只改备注 ⇒ **不**撤销（否则用户改个名字就被打断）', async () => {
+      const dependencies = createMcpDependencies();
+      const server = createMcpServer();
+      vi.mocked(dependencies.getMcpServerById).mockResolvedValue(server);
+      vi.mocked(dependencies.updateMcpServer).mockResolvedValue({ ...server, displayName: 'Renamed' });
+      const handlers = createMcpRuntimeHandlers(dependencies);
+
+      await dispatch(handlers, {
+        type: 'UPDATE_MCP_SERVER',
+        payload: { id: 'server-1', patch: { displayName: 'Renamed' } },
+      });
+
+      expect(dependencies.revokeToolAuthorizationsForProvider).not.toHaveBeenCalled();
+    });
+
+    it('同 origin 改 path ⇒ **不**撤销', async () => {
+      const dependencies = createMcpDependencies();
+      vi.mocked(dependencies.getMcpServerById).mockResolvedValue(
+        createMcpServer({ transport: { kind: 'http', url: 'https://a.example/mcp' } }),
+      );
+      vi.mocked(dependencies.updateMcpServer).mockResolvedValue(
+        createMcpServer({ transport: { kind: 'http', url: 'https://a.example/mcp/v2' } }),
+      );
+      const handlers = createMcpRuntimeHandlers(dependencies);
+
+      await dispatch(handlers, {
+        type: 'UPDATE_MCP_SERVER',
+        payload: { id: 'server-1', patch: {} },
+      });
+
+      expect(dependencies.revokeToolAuthorizationsForProvider).not.toHaveBeenCalled();
+    });
+
+    it('服务器不存在（更新返回 null）⇒ 不撤销', async () => {
+      const dependencies = createMcpDependencies();
+      vi.mocked(dependencies.getMcpServerById).mockResolvedValue(null);
+      vi.mocked(dependencies.updateMcpServer).mockResolvedValue(null);
+      const handlers = createMcpRuntimeHandlers(dependencies);
+
+      await dispatch(handlers, {
+        type: 'UPDATE_MCP_SERVER',
+        payload: { id: 'missing', patch: {} },
+      });
+
+      expect(dependencies.revokeToolAuthorizationsForProvider).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('browser and web runtime handlers', () => {
@@ -803,6 +889,8 @@ function createMcpDependencies(): McpRuntimeHandlerDependencies {
     createMcpServer: vi.fn(async () => createMcpServer()),
     updateMcpServer: vi.fn(async () => createMcpServer()),
     deleteMcpServer: vi.fn(async () => undefined),
+    // 审计 X-67：换端点 origin 时撤销活跃授权。默认返回 0（无活跃 grant）。
+    revokeToolAuthorizationsForProvider: vi.fn(async () => 0),
     getMcpToolCache: vi.fn(async () => createMcpCache()),
     refreshMcpServerDiscovery: vi.fn(async () => createMcpCache()),
     getMcpOriginPattern: vi.fn(() => 'https://example.test/*'),

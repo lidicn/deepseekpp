@@ -96,6 +96,7 @@ import {
   closeToolAuthorization,
   createToolAuthorization,
   createToolAuthorizationResult,
+  revokeToolAuthorizationsForProvider,
 } from '../core/tool/authorization';
 import { ExternalPayloadAuthorizationCache } from '../core/tool/external-payload-authorization-cache';
 import {
@@ -642,6 +643,10 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         createMcpServer,
         updateMcpServer,
         deleteMcpServer,
+        // 审计 X-67：换端点 origin 时撤销该服务器的活跃工具授权。
+        // 授权快照不含端点（ToolProviderIdentity 没有 url 字段），不撤销的话
+        // 旧 grant 会被静默续用到新端点。
+        revokeToolAuthorizationsForProvider,
         getMcpToolCache,
         refreshMcpServerDiscovery,
         getMcpOriginPattern,
