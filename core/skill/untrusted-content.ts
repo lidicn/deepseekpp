@@ -5,6 +5,24 @@
 // already neutralizes the description field; the body was the remaining opening. This module wraps that body
 // in a pair of markers plus a localized notice, and neutralizes any marker the body carries itself so a document
 // cannot close its own block early.
+//
+// 2026-10-23 安全修复（审计 X-65 / 本仓 P1）：
+//
+// 原实现有一条短路 —— `if (containsUntrustedSkillBoundary(content)) return content;`
+// 即「正文任何位置出现 OPEN 标记就原样返回」。后果是恶意 SKILL.md 只要自带一枚
+// `[[DEEPSEEK_PP_UNTRUSTED_SKILL_CONTENT]]`，整段内容既不包裹也不中和就进入 prompt，
+// 攻击者于是可以自己造出「真」边界对，让 CLOSE 之后的文本落在块外、与第一方指令同层级。
+// 这正是本模块头注声称要防的事（"so a document cannot close its own block early"），
+// 而实现只防了 CLOSE 一侧、没防 OPEN 一侧。
+//
+// 第一版修法把短路条件收紧为「结构完整的信封」（首 OPEN 尾 CLOSE）才跳过。但审计 R18
+// 指出这仍留一条缝：攻击者写一对**完整**的 OPEN…CLOSE 依然能拿到「无 notice 的合法信封」
+// —— 边界在、告示不在，模型可能因此把它当第一方文本读。
+//
+// 最终修法（采纳审计建议）：**取消短路，无条件包裹**，并把 `neutralize` 放在最前。
+// 幂等性不再靠早退，而由标记中和自然保证 —— 二次包裹时内层的 OPEN/CLOSE 已变成
+// `[[redacted-skill-content-marker]]`，因此不会出现第二对功能边界，只是多一份告示。
+// 调用面唯一（`request-augmentation.ts:440`，每请求一次），重复包裹在实践中不会发生。
 
 import { translate, type SupportedLocale } from '../i18n';
 
@@ -17,31 +35,23 @@ export function neutralizeUntrustedSkillMarkers(content: string): string {
     .split(UNTRUSTED_SKILL_CLOSE).join(REDACTED_MARKER);
 }
 
+/**
+ * 内容里是否出现了不可信边界标记（仅作**诊断/断言**用，不再参与包裹决策）。
+ *
+ * 保留这个谓词是为了让测试与调用方可以「断言正文里没有残留真实标记」，
+ * 但**包裹函数不再用它做短路** —— 那正是 X-65 的成因。
+ */
 export function containsUntrustedSkillBoundary(content: string): boolean {
-  return content.includes(UNTRUSTED_SKILL_OPEN);
+  return content.includes(UNTRUSTED_SKILL_OPEN) || content.includes(UNTRUSTED_SKILL_CLOSE);
 }
 
 /**
- * 判断内容是否**已经是一个完整信封**（首尾都是标记）。
+ * 无条件包裹一份不可信 Skill 正文。
  *
- * 2026-10-23 安全修复：原实现用 `containsUntrustedSkillBoundary(content)`
- * （即「任何位置出现 OPEN 标记」）作为短路条件，于是恶意 SKILL.md 只要在正文里
- * 写一行 `[[DEEPSEEK_PP_UNTRUSTED_SKILL_CONTENT]]`，整段内容就被原样返回 ——
- * 既没有 notice，也没有做标记中和，敌意内容以"看似已包裹"的形式进入 prompt。
- * 这就是审计总汇总第三轮记录的 P1，但当时落地的提交不在本仓，
- * 漏洞在本仓依然存在（实测：90 字符敌意输入 → 90 字符原样输出、notice=false）。
- *
- * 现在改为只看「**结构上是否完整**」：必须**以 OPEN 开头且以 CLOSE 结尾**。
- * 仅在中途带上标记不再短路，因此会被正常包裹 + 中和。
+ * 没有「已包裹就跳过」的分支：任何早退都可能被攻击者用来跳过告示与中和。
+ * 重复调用只会多一份告示，不会产生第二对功能边界（内层标记已先被中和）。
  */
-export function isWrappedUntrustedSkillContent(content: string): boolean {
-  const trimmed = content.trim();
-  return trimmed.startsWith(UNTRUSTED_SKILL_OPEN) && trimmed.endsWith(UNTRUSTED_SKILL_CLOSE);
-}
-
-/** Wrap one untrusted Skill payload. A already-complete envelope is returned untouched, so composing twice cannot nest a second block. */
 export function wrapUntrustedSkillContent(content: string, locale: SupportedLocale): string {
-  if (isWrappedUntrustedSkillContent(content)) return content;
   const notice = translate(locale, 'prompt.skillUntrustedContentNotice');
   return [
     UNTRUSTED_SKILL_OPEN,
