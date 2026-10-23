@@ -1,9 +1,23 @@
 # 测试失败基线（P0-3）
-# 日期：2026-10-20（更新）
+# 日期：2026-10-23（清空）
 # 来源：vitest run 全量
-# 总数：1 文件（2026-10-20 第二轮档4；memory-indexeddb-compatibility、remote-agent-watcher、
-# runtime-command-contract、tool-block-style 转绿后移除）
+# 总数：0 文件（原 2026-10-20 的第二轮档4 那枚已于 2026-10-23 修复转绿）
 # 用途：CI 只检查"有没有新增 failed"，不阻塞已知红
 # 修复一个就从这里删一行，不要新增这里的条目
-
-tests/persistence-burst-budget.test.ts
+#
+# 2026-10-23 清空记录（审计 W7 裁决）：
+#   移除 tests/persistence-burst-budget.test.ts
+#   该文件唯一红的腿是「整批失败要整批拒绝」，期望两次 recordUsageTurn 都 rejected。
+#   裁决：**测试期望错，产品代码不动** —— core/usage/store.ts:126-134 的
+#   saveUsageRecordsAlreadyOwned 明确吞掉写失败（"A quota exceeded error must
+#   not bubble up and break the agent loop"），usage 是 best-effort 遥测，
+#   这是有文档记录的有意设计。测试已改为期望 fulfilled，并**加强**为
+#   「降级必须留下可观测痕迹」（断言 console.warn 带具体错误），
+#   避免把「静默吞掉」写死成允许的行为。对照 core/tool/history.ts 不降级，
+#   其「整批拒绝」的期望保留。
+#
+# ⚠ 已知风险（非本次引入）：同文件的时间预算腿
+#   `SYNC_STATUS_MAX_ELAPSED_MS`（win32 6000ms）在高负载机器上可能超阈
+#   （实测：内存可用 0.9 GB 时 7850ms 超阈；可用 3 GB 时连续两次全绿）。
+#   这是负载敏感性（审计 B5 族），不是功能缺陷；若 CI 偶发红，先看机器负载
+#   再谈改预算，不要直接放宽阈值。

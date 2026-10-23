@@ -229,13 +229,37 @@ describe('persistence 100-mutation trace', () => {
 
     const usageFailure = new Error('usage write failed');
     local.failNextWrite(usageFailure);
+    // 2026-10-23 裁决（审计 W7）：**期望改为 fulfilled，产品代码不动**。
+    //
+    // 原期望是两条都 `rejected`。但 `core/usage/store.ts:126-134` 的
+    // `saveUsageRecordsAlreadyOwned` 明确吞掉写失败：
+    //
+    //   // Graceful degradation: usage stats are best-effort telemetry. A quota
+    //   // exceeded error must not bubble up and break the agent loop.
+    //   console.warn('[DeepSeek++] usage turn persistence failed (degraded):', error);
+    //
+    // 这是**有文档记录的有意设计**：usage 是遥测，配额爆掉不能打断 agent loop。
+    // 所以此处的红是「测试期望 vs 产品语义冲突」，不是产品缺陷。
+    // 对照：`core/tool/history.ts` 不降级（只做 trimToFit 避免配额），
+    // 其「整批拒绝」的期望是对的，见本文件下半段。
+    //
+    // 改期望的同时**加强**了断言：不只看 fulfilled，还要求降级可观测
+    // （console.warn 带具体错误），避免把「静默吞掉」写死成允许的行为。
+    const usageWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     await expect(Promise.allSettled([
       recordUsageTurn(usageInput(1)),
       recordUsageTurn(usageInput(2)),
     ])).resolves.toEqual([
-      { status: 'rejected', reason: usageFailure },
-      { status: 'rejected', reason: usageFailure },
+      { status: 'fulfilled', value: expect.objectContaining({ id: 'usage-001' }) },
+      { status: 'fulfilled', value: expect.objectContaining({ id: 'usage-002' }) },
     ]);
+    // 降级必须留下可观测痕迹 —— 静默吞掉才是缺陷
+    expect(usageWarn).toHaveBeenCalledWith(
+      expect.stringContaining('usage turn persistence failed (degraded)'),
+      usageFailure,
+    );
+    usageWarn.mockRestore();
+    // 失败的那次物理写没有落盘（整批丢弃，无部分状态）
     await expect(getUsageRecords()).resolves.toEqual([]);
     await expect(recordUsageTurn(usageInput(3))).resolves.toMatchObject({ id: 'usage-003' });
 
