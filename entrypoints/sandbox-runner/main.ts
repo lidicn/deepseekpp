@@ -173,15 +173,18 @@ function runHtmlSandbox(request: SandboxRunnerRequest): Promise<SandboxExecution
       if (value.type === SANDBOX_MESSAGE_TYPES.htmlDone) {
         const stdout = limitText(logs.join('\n'), HTML_OUTPUT_LIMIT);
         const stderr = limitText(errors.join('\n'), HTML_OUTPUT_LIMIT);
-        const html = typeof value.html === 'string' ? value.html : '';
+        // X-69：之前只置 truncated 标志不切片，5e7 字符 html 会原样经 offscreen→SW
+        // 进模型上下文。真正切片，并把 html.truncated 并入总标志。上限沿用
+        // HTML_OUTPUT_LIMIT，不缩小。
+        const html = limitText(typeof value.html === 'string' ? value.html : '', HTML_OUTPUT_LIMIT);
         finish({
           ok: errors.length === 0,
           stdout: stdout.text,
           stderr: stderr.text,
           result: typeof value.title === 'string' && value.title ? value.title : 'HTML rendered',
-          html,
+          html: html.text,
           previewText: typeof value.text === 'string' ? limitText(value.text, HTML_OUTPUT_LIMIT).text : '',
-          truncated: stdout.truncated || stderr.truncated || html.length > HTML_OUTPUT_LIMIT,
+          truncated: stdout.truncated || stderr.truncated || html.truncated,
           error: errors.length > 0 ? 'sandbox_html_error' : undefined,
         });
       }

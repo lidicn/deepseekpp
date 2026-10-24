@@ -22,6 +22,16 @@ export const SANDBOX_MESSAGE_TYPES = {
 
 export type SandboxMessageType = typeof SANDBOX_MESSAGE_TYPES[keyof typeof SANDBOX_MESSAGE_TYPES];
 
+// X-69：出参长度上界（接收器兜底）。生产侧（worker-runner / sandbox-runner）已对
+// stdout/stderr/result/previewText/html/error 各自戴帽，但沙箱内模型可自 postMessage
+// 一个伪造信封直抵本边界（requestId 对它可见），所以边界不能信生产侧已截断。
+// 上界故意取「生产帽 + 余量」：既挡住 5e7 字符这种攻击，又不误杀合法的、
+// 被生产帽截过并追加截断后缀的结果（limitText 会多约 16 字符后缀）。
+export const SANDBOX_RESULT_BOUNDARY_MAX_CHARS = 600_000; // 生产帽 512KiB + 余量
+export const SANDBOX_ERROR_BOUNDARY_MAX_CHARS = 128_000; // 生产帽 64KiB + 余量
+export const SANDBOX_HTML_BOUNDARY_MAX_CHARS = 64_000; // 生产帽 HTML_OUTPUT_LIMIT=12000 + 余量
+export const SANDBOX_PREVIEW_BOUNDARY_MAX_CHARS = 64_000;
+
 export interface SandboxEnvelope {
   type: SandboxMessageType;
   requestId: string;
@@ -160,14 +170,19 @@ function isSandboxExecutionResult(value: unknown): value is SandboxExecutionResu
     !isNonNegativeFiniteNumber(value.durationMs) ||
     typeof value.truncated !== 'boolean'
   ) return false;
-  return optionalString(value.result) &&
-    optionalString(value.html) &&
-    optionalString(value.previewText) &&
-    optionalString(value.error);
+  return boundedString(value.result, SANDBOX_RESULT_BOUNDARY_MAX_CHARS) &&
+    boundedString(value.html, SANDBOX_HTML_BOUNDARY_MAX_CHARS) &&
+    boundedString(value.previewText, SANDBOX_PREVIEW_BOUNDARY_MAX_CHARS) &&
+    boundedString(value.error, SANDBOX_ERROR_BOUNDARY_MAX_CHARS);
 }
 
 function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === 'string';
+}
+
+/** 可选字符串且长度不超过上界（X-69 边界兜底；超限视为非法结果）。 */
+function boundedString(value: unknown, maxChars: number): boolean {
+  return value === undefined || (typeof value === 'string' && value.length <= maxChars);
 }
 
 function isNonNegativeFiniteNumber(value: unknown): value is number {

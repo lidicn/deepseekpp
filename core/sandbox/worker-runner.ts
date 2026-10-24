@@ -163,13 +163,21 @@ function normalizeWorkerResult(value: unknown): Omit<SandboxExecutionResult, 'du
   const stderr = limitText(typeof result.stderr === 'string' ? result.stderr : '', WORKER_STDERR_MAX_CHARS);
   const rawResult = typeof result.result === 'string' ? result.result : undefined;
   const resultText = limitText(rawResult ?? '', WORKER_RESULT_MAX_CHARS);
+  // X-69：error 之前漏过 limitText（与 stdout/stderr/result 自相矛盾）。worker 内
+  // 模型可自 postMessage 一个超长 error 直接进模型上下文，这里一并戴上帽子。
+  const rawError = typeof result.error === 'string' ? result.error : undefined;
+  const errorText = limitText(rawError ?? '', WORKER_STDERR_MAX_CHARS);
   return {
     ok: result.ok === true,
     stdout: stdout.text,
     stderr: stderr.text,
     result: rawResult === undefined ? undefined : resultText.text,
-    truncated: result.truncated === true || stdout.truncated || stderr.truncated || resultText.truncated,
-    error: typeof result.error === 'string' ? result.error : undefined,
+    truncated: result.truncated === true
+      || stdout.truncated
+      || stderr.truncated
+      || resultText.truncated
+      || errorText.truncated,
+    error: rawError === undefined ? undefined : errorText.text,
   };
 }
 

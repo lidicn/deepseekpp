@@ -9,6 +9,7 @@ import {
   parseSandboxEnvelope,
   readSandboxRequestId,
   SANDBOX_FRAME_TARGET_ORIGIN,
+  SANDBOX_HTML_BOUNDARY_MAX_CHARS,
   SANDBOX_MESSAGE_TYPES,
   SANDBOX_OFFSCREEN_PORT,
 } from '../core/sandbox';
@@ -265,6 +266,55 @@ describe('sandbox compatibility contract', () => {
       ok: false,
       detail: 'language must be javascript, typescript, python, or html',
     });
+  });
+
+  // X-69：出参长度边界兜底。沙箱内模型可自 postMessage 伪造信封，边界不能信
+  // 生产侧已截断。5e7 字符的 html/result/previewText/error 必须被拒（非法结果）。
+  it('rejects oversized optional result fields (X-69 boundary cap)', () => {
+    const base = {
+      ok: true,
+      stdout: 'x',
+      stderr: '',
+      durationMs: 1,
+      truncated: false,
+    };
+    const huge = 'x'.repeat(50_000_000);
+    for (const field of ['html', 'result', 'previewText', 'error'] as const) {
+      expect(() => normalizeSandboxExecutionResult({ ...base, [field]: huge }))
+        .toThrow('Invalid sandbox execution result.');
+    }
+  });
+
+  it('accepts an optional result field sized exactly at the boundary cap (X-69)', () => {
+    const base = {
+      ok: true,
+      stdout: 'x',
+      stderr: '',
+      durationMs: 1,
+      truncated: false,
+    };
+    // html 取到上界长度仍合法（<=），多一字符才拒
+    const atCap = 'h'.repeat(SANDBOX_HTML_BOUNDARY_MAX_CHARS);
+    expect(normalizeSandboxExecutionResult({ ...base, html: atCap }).html)
+      .toHaveLength(SANDBOX_HTML_BOUNDARY_MAX_CHARS);
+    expect(() => normalizeSandboxExecutionResult({
+      ...base,
+      html: 'h'.repeat(SANDBOX_HTML_BOUNDARY_MAX_CHARS + 1),
+    })).toThrow('Invalid sandbox execution result.');
+  });
+
+  it('producer-side: worker error is capped and html is actually sliced (X-69)', () => {
+    // normalizeWorkerResult / sandbox-runner main 不导出，用源码结构断言守护：
+    // error 必须过 limitText；html 必须 limitText 切片且 truncated 并入 html.truncated。
+    const worker = sandboxSources.find((s) => s.includes('WORKER_RESULT_MAX_CHARS = 512'))
+      ?? combinedSandboxSource;
+    expect(worker).toMatch(/limitText\(rawError/);
+    expect(worker).toMatch(/errorText\.truncated/);
+
+    const htmlRunner = sandboxSources.find((s) => s.includes('HTML_OUTPUT_LIMIT = 12_000'))
+      ?? combinedSandboxSource;
+    expect(htmlRunner).toMatch(/const html = limitText\(typeof value\.html/);
+    expect(htmlRunner).toMatch(/html\.truncated/);
   });
 });
 
