@@ -99,6 +99,7 @@ export const tool = {
       previewFailed: '预览失败',
       previewAriaLabel: '预览产物',
       closePreview: '关闭预览',
+      previewOfflineNotice: '外部图片、脚本和字体会被拦截；内联资源可正常显示。',
       run: '运行',
       running: '运行中...',
       runAgain: '再次运行',

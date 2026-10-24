@@ -99,6 +99,7 @@ export const tool = {
       previewFailed: 'Preview failed',
       previewAriaLabel: 'Artifact preview',
       closePreview: 'Close preview',
+      previewOfflineNotice: 'External images, scripts, and fonts are blocked; inline resources work normally.',
       run: 'Run',
       running: 'Running...',
       runAgain: 'Run again',

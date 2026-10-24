@@ -266,7 +266,15 @@ async function openArtifactPreviewPanel(
   closeButton.setAttribute('aria-label', translate(locale, 'tool.artifact.result.closePreview'));
   closeButton.textContent = 'x';
   closeButton.addEventListener('click', closeArtifactPreviewPanel);
-  header.append(title, closeButton);
+  // X-66：产品已决定预览不允许出网，CSP 已钉死，但界面此前没有任何说明 ——
+  // 用户看到 <img src="https://..."> 静默不加载会以为扩展坏了。header 追加一行小字告知。
+  const notice = document.createElement('div');
+  notice.className = 'dpp-artifact-preview-panel-notice';
+  notice.textContent = translate(locale, 'tool.artifact.result.previewOfflineNotice');
+  const titleGroup = document.createElement('div');
+  titleGroup.className = 'dpp-artifact-preview-panel-title-group';
+  titleGroup.append(title, notice);
+  header.append(titleGroup, closeButton);
 
   const stage = document.createElement('div');
   stage.className = 'dpp-artifact-preview-panel-stage';
@@ -589,6 +597,19 @@ function ensureResultStyles(): void {
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
+}
+.dpp-artifact-preview-panel-title-group {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dpp-artifact-preview-panel-notice {
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 15px;
+  color: var(--dpp-ui-text-muted);
+  overflow-wrap: break-word;
 }
 .dpp-artifact-preview-panel-close {
   display: inline-flex;

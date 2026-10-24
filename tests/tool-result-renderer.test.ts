@@ -187,6 +187,88 @@ describe('tool result renderer registry', () => {
     expect(frame?.srcdoc).toContain("connect-src 'none'");
   });
 
+  // X-66 反向守护：产品已决定预览不允许出网且 CSP 已钉死，但界面必须告知用户
+  // 「外部资源不会加载」。断言写成结构形式：notice 必须被包在 title-group 内、
+  // 与 title 配对挂在 header 下，不是任意一段游离文本。en / zh-CN 各一条。
+  it('preview panel header shows the offline-resource notice in English', async () => {
+    registerDefaultToolResultRenderers();
+    const target = document.createElement('div');
+    const result: ToolCardResult = {
+      ok: true,
+      summary: 'File ready',
+      output: {
+        kind: 'artifact',
+        artifactId: 'artifact-html-notice-en',
+        artifactKind: 'file',
+        filename: 'demo.html',
+        mimeType: 'text/html',
+        sizeBytes: 64,
+        view: { previewMode: 'html', language: 'html' },
+      },
+    };
+    const sendMessageMock = vi.fn(async () => ({
+      ok: true,
+      artifact: {
+        filename: 'demo.html',
+        mimeType: 'text/html',
+        content: '<!doctype html><html><body><h1>ok</h1></body></html>',
+        kind: 'file',
+      },
+    }));
+    const sendMessage = sendMessageMock as unknown as <T = unknown>(message: unknown) => Promise<T | undefined>;
+
+    renderToolResultWithRegistry({ target, result, locale: 'en', sendMessage });
+    trustedClick(target.querySelector<HTMLButtonElement>('.dpp-artifact-preview'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const header = document.body.querySelector('.dpp-artifact-preview-panel-header');
+    const group = header?.querySelector('.dpp-artifact-preview-panel-title-group');
+    const notice = group?.querySelector('.dpp-artifact-preview-panel-notice');
+    expect(header).not.toBeNull();
+    // 结构：title 与 notice 必须同处一个 title-group 内（配对，不是游离节点）
+    expect(group?.querySelector('.dpp-artifact-preview-panel-title')).not.toBeNull();
+    expect(notice).not.toBeNull();
+    expect(notice?.textContent ?? '').toContain('External images, scripts, and fonts are blocked');
+  });
+
+  it('preview panel header shows the offline-resource notice in Chinese', async () => {
+    registerDefaultToolResultRenderers();
+    const target = document.createElement('div');
+    const result: ToolCardResult = {
+      ok: true,
+      summary: 'File ready',
+      output: {
+        kind: 'artifact',
+        artifactId: 'artifact-html-notice-zh',
+        artifactKind: 'file',
+        filename: 'demo.html',
+        mimeType: 'text/html',
+        sizeBytes: 64,
+        view: { previewMode: 'html', language: 'html' },
+      },
+    };
+    const sendMessageMock = vi.fn(async () => ({
+      ok: true,
+      artifact: {
+        filename: 'demo.html',
+        mimeType: 'text/html',
+        content: '<!doctype html><html><body><h1>ok</h1></body></html>',
+        kind: 'file',
+      },
+    }));
+    const sendMessage = sendMessageMock as unknown as <T = unknown>(message: unknown) => Promise<T | undefined>;
+
+    renderToolResultWithRegistry({ target, result, locale: 'zh-CN', sendMessage });
+    trustedClick(target.querySelector<HTMLButtonElement>('.dpp-artifact-preview'));
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const group = document.body.querySelector('.dpp-artifact-preview-panel-header .dpp-artifact-preview-panel-title-group');
+    const notice = group?.querySelector('.dpp-artifact-preview-panel-notice');
+    expect(notice?.textContent ?? '').toContain('外部图片、脚本和字体会被拦截');
+  });
+
   it('opens transient restored HTML artifacts without a background artifact lookup', async () => {
     registerDefaultToolResultRenderers();
     const target = document.createElement('div');
