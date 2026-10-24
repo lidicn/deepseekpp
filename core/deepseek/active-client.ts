@@ -781,6 +781,11 @@ function normalizeHistoryMessage(raw: unknown): DeepSeekHistoryMessage {
 }
 
 function readDeepSeekUserToken(): string | null {
+  // 审计 P2-2：MV3 service worker 全局没有 localStorage，直接访问会抛
+  // ReferenceError。显式 typeof 守卫，SW 上下文直接返回 null（token 走
+  // chrome.storage 的 loadClientHeadersFromStorage 路径），不再依赖 try/catch
+  // 兜底吞错。
+  if (typeof localStorage === 'undefined') return null;
   try {
     const raw = localStorage.getItem(USER_TOKEN_STORAGE_KEY);
     if (!raw) return null;

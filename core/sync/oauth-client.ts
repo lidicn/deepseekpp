@@ -213,11 +213,18 @@ export async function authedFetch(
   if (res.status === 401) {
     invalidateToken(cacheKey);
     const fresh = await getAccessToken(cacheKey, refreshToken, refreshUrl, refreshParams, t);
-    return fetch(input, {
+    const retry = await fetch(input, {
       ...init,
       headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${fresh}` },
       signal: authSignal(init),
     });
+    // 审计 P2-46：重试后仍 401 时原实现把错误 Response 原样返回，调用方若只看
+    // ok 分支会把鉴权失败当正常响应处理。这里显式 invalidate 并抛错。
+    if (retry.status === 401) {
+      invalidateToken(cacheKey);
+      throw new Error(t('background.sync.oauthRefreshFailed', { status: 401, detail: '' }));
+    }
+    return retry;
   }
   return res;
 }

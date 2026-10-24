@@ -745,7 +745,18 @@ async function fetchGitHubJson<T>(path: string): Promise<T> {
       }
       throw new Error(`GitHub 请求失败 (HTTP ${response.status})${detail ? `: ${detail.slice(0, 180)}` : ''}`);
     }
-    return await response.json() as T;
+    // 审计 P2-57：200 也可能返回错误形状（如仓库被重命名/权限变更后的 {message}），
+    // 原实现直接 as T 让 undefined 字段静默下游传播。这里识别带 message 且缺常见
+    // 数据字段的响应体并显式抛错。
+    const parsed = await response.json() as unknown;
+    if (
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      && typeof (parsed as { message?: unknown }).message === 'string'
+      && !('content' in parsed) && !('sha' in parsed) && !('tree' in parsed) && !('entries' in parsed)
+    ) {
+      throw new Error(`GitHub 返回错误信息: ${String((parsed as { message: string }).message).slice(0, 180)}`);
+    }
+    return parsed as T;
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new Error('GitHub 请求超时');
