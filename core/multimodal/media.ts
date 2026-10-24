@@ -348,6 +348,21 @@ export async function downloadImageAsDataUrl(
       throw new Error(`HTTP ${response.status} ${response.statusText} for ${url.substring(0, 80)}`);
     }
 
+    // 审计 P2-54：初始 https 若被 302 跳到 http://，response.url 是最终地址。
+    // 拦截协议降级，避免经 https 入口间接探测内网 http 地址（SSRF 面）。
+    if (/^https:\/\//i.test(url) && response.url && /^http:\/\//i.test(response.url)) {
+      throw new Error(`Refused redirect from https to http: ${response.url.substring(0, 80)}`);
+    }
+
+    // 审计 P2-55：先用 Content-Length 预判，超限直接 abort，避免超大流全量进内存
+    const declaredLength = Number(response.headers.get('content-length') ?? NaN);
+    if (Number.isFinite(declaredLength) && declaredLength > URL_IMAGE_MAX_BYTES) {
+      controller.abort();
+      throw new Error(
+        `Image is ${formatLimit(declaredLength)}, exceeds URL image limit of ${formatLimit(URL_IMAGE_MAX_BYTES)}`,
+      );
+    }
+
     // 检查 MIME 类型
     const contentType = response.headers.get('content-type') ?? '';
     const mimeType = contentType.split(';')[0]?.trim() ?? '';

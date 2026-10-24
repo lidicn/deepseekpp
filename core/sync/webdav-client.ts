@@ -51,7 +51,10 @@ export async function webdavMkcol(config: WebdavSyncConfig): Promise<void> {
     method: 'MKCOL',
     headers: headers(config),
   });
-  if (res.status === 405 || res.status === 301 || res.ok) return;
+  // 审计 P2-49：301 是重定向（远程路径被移走），原实现当"目录已存在"放行，
+  // 后续 PUT 到旧路径会继续跟随/失败却不报错。移除 301，仅 405(已存在) 或
+  // 2xx(创建成功) 视为成功，其余落到错误分支。
+  if (res.status === 405 || (res.status >= 200 && res.status < 300)) return;
   if (res.status === 409) throw new Error(`无法创建远程目录，请确认父目录存在: ${config.remotePath}`);
   throw new Error(`创建远程目录失败 (HTTP ${res.status})`);
 }

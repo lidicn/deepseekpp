@@ -13,6 +13,10 @@ export async function setChatEnabled(enabled: boolean): Promise<void> {
   if (!enabled) {
     try {
       await chrome.storage.local.remove(STORAGE_HEADERS_KEY);
-    } catch {}
+    } catch (err) {
+      // 审计 P2-10：持久化/清理失败原来完全静默，重启后状态丢失且无感知。
+      // 保留不阻断主流程，但打 warn 让问题可观测。
+      console.warn('[DPP-chat] 清理缓存 headers 失败:', err);
+    }
   }
 }

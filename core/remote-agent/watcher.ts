@@ -427,7 +427,6 @@ async function readResendReceipt(
 
 async function fetchHistoryMessages(chatSessionId: string): Promise<HistoryMessage[]> {
   const url = `${DEEPSEEK_WEB_ROUTES.history}?chat_session_id=${encodeURIComponent(chatSessionId)}&limit=20&_t=${Date.now()}`;
-  console.log('[DPP-REMOTE] Fetching history:', url);
 
   const clientHeaders = createClientHeaders();
   const controller = new AbortController();
@@ -443,26 +442,20 @@ async function fetchHistoryMessages(chatSessionId: string): Promise<HistoryMessa
       signal: controller.signal,
     });
 
-    console.log('[DPP-REMOTE] Response status:', response.status);
-
     if (!response.ok) {
-      const text = await response.text();
-      console.error('[DPP-REMOTE] Response error:', text.slice(0, 500));
       throw new Error(`HTTP ${response.status}`);
     }
 
-    const data = await response.json();
-  console.log('[DPP-REMOTE] Response keys:', Object.keys(data));
-  
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      return [];
+    }
 
   // Actual format: { code: 0, data: { biz_data: { chat_messages: [...] } } }
-  
-  
-  
-  
-  const messages = data?.data?.biz_data?.chat_messages ?? [];
-  
-  console.log('[DPP-REMOTE] Messages count:', messages?.length);
+  const messages = (data as { data?: { biz_data?: { chat_messages?: HistoryMessage[] } } })
+    ?.data?.biz_data?.chat_messages ?? [];
 
   return messages;
   } finally {
