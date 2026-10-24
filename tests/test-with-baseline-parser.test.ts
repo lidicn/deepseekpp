@@ -10,6 +10,7 @@
 // 逻辑已抽到 `scripts/lib/vitest-output.mjs`，本文件是它的守护。
 import { describe, expect, it } from 'vitest';
 import {
+  findStaleBaselineEntries,
   isCoveredByBaseline,
   parseFailedCases,
   stripAnsi,
@@ -120,5 +121,33 @@ describe('gate end-to-end shape (regex ⇄ baseline)', () => {
     const failed = parseFailedCases(output);
     const newFailed = [...failed].filter((f) => !isCoveredByBaseline(f, baseline));
     expect(newFailed).toEqual(['tests/regression.test.ts > suite > leg']);
+  });
+});
+
+// P0-3 反向校验：基线里指向不存在测试文件的条目必须被揪出来。
+describe('findStaleBaselineEntries (reverse check)', () => {
+  const existing = ['tests/a.test.ts', 'tests/b.test.ts'];
+
+  it('file-level entry pointing to a deleted file is stale', () => {
+    expect(findStaleBaselineEntries(['tests/deleted.test.ts'], existing))
+      .toEqual(['tests/deleted.test.ts']);
+  });
+
+  it('case-level entry still resolves to its leading test file', () => {
+    expect(findStaleBaselineEntries(
+      ['tests/deleted.test.ts > suite > case'],
+      existing,
+    )).toEqual(['tests/deleted.test.ts > suite > case']);
+  });
+
+  it('existing file-level and case-level entries are NOT stale', () => {
+    expect(findStaleBaselineEntries(
+      ['tests/a.test.ts', 'tests/b.test.ts > suite > case'],
+      existing,
+    )).toEqual([]);
+  });
+
+  it('ignores placeholders and non-path entries', () => {
+    expect(findStaleBaselineEntries(['::TODO', '::', ''], existing)).toEqual([]);
   });
 });

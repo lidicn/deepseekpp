@@ -45,3 +45,29 @@ export function isCoveredByBaseline(failedCase, baseline) {
   }
   return false;
 }
+
+/**
+ * 反向校验（P0-3）：找出基线里指向「已不存在的测试文件」的条目。
+ *
+ * 门禁原本只做「实际失败 ⊄ 基线 ⇒ 报错」，不做反向。于是有人把已修好的
+ * 条目写回去、或手滑写了个不存在的路径，不会有任何提示 —— 那条死条目会
+ * 永远静默放行将来真正的回归。
+ *
+ * 规则：从每条基线里抽出它指向的测试文件（分隔符 ` > ` 或 `::` 之前的部分），
+ * 与 `existingTestFiles`（git ls-files tests 的产物）比对；抽出来不是一个
+ * tests/… 路径、或占位条目（::TODO / 空）的，跳过不算 stale。
+ *
+ * 返回「stale 条目」数组（保持原字符串）；空数组 = 全部命中真实文件。
+ */
+export function findStaleBaselineEntries(baselineEntries, existingTestFiles) {
+  const existing = new Set(existingTestFiles);
+  const stale = [];
+  for (const entry of baselineEntries) {
+    if (!entry || entry.endsWith('::TODO') || entry.endsWith('::')) continue;
+    const filePart = entry.split(/\s*>\s*|::/)[0].trim();
+    // 只对形如 tests/... 的路径做存在性校验；其它（纯用例名、占位）放过。
+    if (!filePart.startsWith('tests/')) continue;
+    if (!existing.has(filePart)) stale.push(entry);
+  }
+  return stale;
+}

@@ -8,7 +8,7 @@ import { execSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isCoveredByBaseline, parseFailedCases } from './lib/vitest-output.mjs';
+import { isCoveredByBaseline, parseFailedCases, findStaleBaselineEntries } from './lib/vitest-output.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
@@ -25,6 +25,22 @@ if (existsSync(baselinePath)) {
 }
 
 console.log(`[baseline] 已知 failed: ${baseline.size} 条`);
+
+// P0-3 反向校验：基线里写了不存在的测试文件 ⇒ 立即报错退出，不跑全量。
+// 防「修好忘了删」/ 手滑写了死路径，让死条目静默放行将来的真回归。
+let existingTestFiles = [];
+try {
+  existingTestFiles = execSync('git ls-files tests', { cwd: root, encoding: 'utf8' })
+    .split('\n').map((s) => s.trim()).filter(Boolean);
+} catch {
+  console.warn('[baseline] ⚠ 取不到 git ls-files tests，跳过基线反向校验');
+}
+const staleEntries = findStaleBaselineEntries(baseline, existingTestFiles);
+if (staleEntries.length > 0) {
+  console.error(`[baseline] ⚠ 基线里有 ${staleEntries.length} 条指向不存在的测试文件（修好忘了删？）:`);
+  for (const e of staleEntries) console.error(`  - ${e}`);
+  process.exit(1);
+}
 
 // 跑 vitest，收集输出
 let output = '';

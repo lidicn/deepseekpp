@@ -13,3 +13,9 @@ export function parseFailedCases(output: string): Set<string>;
 
 /** 判断失败用例是否被基线条目覆盖。 */
 export function isCoveredByBaseline(failedCase: string, baseline: Iterable<string>): boolean;
+
+/** 反向校验：返回基线里指向「已不存在测试文件」的条目列表（空 = 全部命中）。 */
+export function findStaleBaselineEntries(
+  baselineEntries: Iterable<string>,
+  existingTestFiles: Iterable<string>,
+): string[];
