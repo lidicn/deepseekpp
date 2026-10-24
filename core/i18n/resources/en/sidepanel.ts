@@ -1,4 +1,7 @@
 export const sidepanel = {
+  markdown: {
+    externalImageBlocked: 'External image blocked',
+  },
   subTabs: {
     scrollLeft: 'Scroll tabs left',
     scrollRight: 'Scroll tabs right',

@@ -1,4 +1,7 @@
 export const sidepanel = {
+  markdown: {
+    externalImageBlocked: '外部图片已拦截',
+  },
   subTabs: {
     scrollLeft: '向左滚动标签',
     scrollRight: '向右滚动标签',
