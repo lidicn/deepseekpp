@@ -733,13 +733,26 @@ export function createChatRuntimeService(
     const url = typeof request.url === 'string' ? request.url : '';
     if (url && /^https?:\/\//i.test(url)) {
       try {
-        const response = await fetch(url, { signal: controller.signal });
+        // 审计 P2-62：与调用方 controller.signal 组合独立下载超时，防止某调用方
+        // 未挂超时导致下载无限悬挂阻塞 SW。
+        const DOWNLOAD_TIMEOUT_MS = 60_000;
+        const downloadSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS)]);
+        const response = await fetch(url, { signal: downloadSignal });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const contentType = response.headers.get('content-type') ?? 'image/png';
-        const mimeType = contentType.split(';')[0]?.trim() ?? 'image/png';
-        let arrayBuffer = await response.arrayBuffer();
-        let sizeBytes = arrayBuffer.byteLength;
+        const contentType = response.headers.get('content-type') ?? '';
+        const mimeType = contentType.split(';')[0]?.trim() ?? '';
+        // 审计 P1-59：MIME 白名单 + 大小上限，避免把 text/html 等任意内容当图片
+        // 传上游，也避免超大流在判大小前全量进内存。
+        const ALLOWED_IMAGE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+        const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+        if (!ALLOWED_IMAGE_MIME.has(mimeType)) throw new Error(`Unsupported image MIME: ${mimeType || '(empty)'}`);
+        const sourceBuffer = await response.arrayBuffer();
+        if (sourceBuffer.byteLength > MAX_IMAGE_BYTES) {
+          throw new Error(`Image too large: ${sourceBuffer.byteLength} bytes`);
+        }
+        let sizeBytes = sourceBuffer.byteLength;
         let finalMimeType = mimeType;
+        let arrayBuffer = sourceBuffer;
 
         // M-URL 优化：图片降采样，避免大图占用过多上下文
         // 用户实测 width=256 时最稳妥，这里限制最大宽度 512px
@@ -758,7 +771,7 @@ export function createChatRuntimeService(
               arrayBuffer = await resizedBlob.arrayBuffer();
               sizeBytes = arrayBuffer.byteLength;
               finalMimeType = 'image/png';
-              console.log('[M-URL-SW] 图片降采样:', { originalWidth: imageBitmap.width, originalHeight: imageBitmap.height, newWidth, newHeight, originalSize: sizeBytes, newSize: arrayBuffer.byteLength });
+              // 审计 P2-61：删除生产 console.log 调试输出
             }
           }
           imageBitmap.close();

@@ -148,14 +148,36 @@ export async function getAccessToken(
       detail: detail ? `: ${detail}` : '',
     }));
   }
-  const token = await res.json() as { access_token: string; expires_in: number };
+  const raw = (await res.json()) as unknown;
+  // 审计 P1-45：provider 返回 200 但缺 access_token / expires_in 时，直接断言会
+  // 让 expiresAt=NaN、Authorization 头塞 undefined，同步静默失败。这里显式校验。
+  const token = (raw ?? {}) as { access_token?: unknown; expires_in?: unknown };
+  const accessToken = typeof token.access_token === 'string' ? token.access_token.trim() : '';
+  const expiresInMs =
+    typeof token.expires_in === 'number' && Number.isFinite(token.expires_in) && token.expires_in >= 0
+      ? token.expires_in * 1000
+      : NaN;
+  if (!accessToken || !Number.isFinite(expiresInMs)) {
+    throw new Error(t('background.sync.oauthRefreshFailed', {
+      status: res.status,
+      detail: ': malformed token response',
+    }));
+  }
   const entry: CachedToken = {
-    accessToken: token.access_token,
-    expiresAt: Date.now() + token.expires_in * 1000,
+    accessToken,
+    expiresAt: Date.now() + expiresInMs,
     credentialFingerprint,
   };
   tokenCache.set(cacheKey, entry);
   return entry.accessToken;
+}
+
+function authSignal(init: RequestInit): AbortSignal {
+  // 审计 P2-100：调用方自带 signal 时原来直接丢弃 timeout，长请求无超时兜底。
+  // 组合调用方 signal 与独立超时，任一触发即 abort。
+  const timeout = AbortSignal.timeout(OAUTH_AUTHED_FETCH_TIMEOUT_MS);
+  if (init.signal) return AbortSignal.any([init.signal, timeout]);
+  return timeout;
 }
 
 async function fingerprintCredential(value: string): Promise<string> {
@@ -186,7 +208,7 @@ export async function authedFetch(
   const res = await fetch(input, {
     ...init,
     headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${token}` },
-    signal: init.signal ?? AbortSignal.timeout(OAUTH_AUTHED_FETCH_TIMEOUT_MS),
+    signal: authSignal(init),
   });
   if (res.status === 401) {
     invalidateToken(cacheKey);
@@ -194,7 +216,7 @@ export async function authedFetch(
     return fetch(input, {
       ...init,
       headers: { ...(init.headers as Record<string, string> | undefined), Authorization: `Bearer ${fresh}` },
-      signal: init.signal ?? AbortSignal.timeout(OAUTH_AUTHED_FETCH_TIMEOUT_MS),
+      signal: authSignal(init),
     });
   }
   return res;

@@ -457,7 +457,9 @@ async function waitForUploadedFileReady(
 ): Promise<DeepSeekUploadedFile> {
   assertUploadedFileNotRejected(uploaded);
   if (isUploadedFileReady(uploaded)) return uploaded;
-  if (!uploaded.status) return uploaded;
+  // 审计 P2-6：原 `if (!uploaded.status) return uploaded;` 会把"缺 status"
+  // 的上传结果直接当就绪返回，跳过轮询与审计校验。改为继续轮询直至拿到
+  // SUCCESS+审计通过，或到达超时抛出可重试错误。
 
   const deadline = Date.now() + FILE_READY_TIMEOUT_MS;
   let latest = uploaded;
@@ -656,6 +658,9 @@ async function readCompletionStreamWithCallbacks(
   const STALL_POLL_MS = 10_000;
   let lastFrameAt = Date.now();
   let lastStallLoggedAt = 0;
+  // 审计 P2-8：retainAssistantText:false 时 summary.assistantText 永不累积，
+  // stall 日志里 text_len 恒为 0。本地累计可见文本长度，供停滞诊断使用。
+  let visibleTextLen = 0;
   const stallTimer = setInterval(() => {
     const now = Date.now();
     const decision = evaluateStreamStall(now, lastFrameAt, lastStallLoggedAt, STALL_WARN_MS);
@@ -665,7 +670,7 @@ async function readCompletionStreamWithCallbacks(
         level: 'warn',
         source: 'stream',
         message: 'stream_stall',
-        details: `no_frame_ms=${now - lastFrameAt} text_len=${summary.assistantText.length}`,
+        details: `no_frame_ms=${now - lastFrameAt} text_len=${visibleTextLen}`,
       });
     }
   }, STALL_POLL_MS);
@@ -715,6 +720,7 @@ async function readCompletionStreamWithCallbacks(
       });
       if (newText) {
         receivedAnyVisibleChunk = true;
+        visibleTextLen += newText.length;
         callbacks.onTextChunk?.(newText, summary.assistantText);
       }
     }
@@ -726,6 +732,7 @@ async function readCompletionStreamWithCallbacks(
     });
     if (finalText) {
       receivedAnyVisibleChunk = true;
+      visibleTextLen += finalText.length;
       callbacks.onTextChunk?.(finalText, summary.assistantText);
     }
     // Audit fix Q-2: the byte stream ended (done===true) but the server never
@@ -809,7 +816,12 @@ function getDeepSeekAppVersion(): string {
 }
 
 function getDeepSeekLocale(): string {
-  return document.documentElement.lang || navigator.language || 'en-US';
+  // MV3 service worker 全局无 document，自动化/扩写路径在此实例化客户端时
+  // 会抛 ReferenceError。无 document 时退回 navigator.language。
+  if (typeof document !== 'undefined' && document.documentElement?.lang) {
+    return document.documentElement.lang;
+  }
+  return navigator.language || 'en-US';
 }
 
 async function createPowChallenge(

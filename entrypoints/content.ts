@@ -5730,10 +5730,11 @@ function updateAgentStatusBar(
       break;
     }
     case "complete":
-      html = `<strong>deepseek++</strong> 任务完成 ${options?.message ?? ""}`;
+      // 审计 P1-56：message 可能含错误链路/LLM 输出片段，必须转义再拼 innerHTML
+      html = `<strong>deepseek++</strong> 任务完成 ${escapeHtml(String(options?.message ?? ""))}`;
       break;
     case "error":
-      html = `<strong>deepseek++</strong> 执行出错 ${options?.message ?? ""}`;
+      html = `<strong>deepseek++</strong> 执行出错 ${escapeHtml(String(options?.message ?? ""))}`;
       break;
     case "stopped":
       html = `<strong>deepseek++</strong> 已停止`;
