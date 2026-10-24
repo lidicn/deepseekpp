@@ -16,6 +16,7 @@
 //   D. 长度归一不影响标签命中（标签是强信号，不压制）
 import { describe, expect, it } from 'vitest';
 import {
+  expandSynonyms,
   keywordScore,
   segmentText,
   selectMemories,
@@ -156,3 +157,34 @@ function makeMemory(overrides: Partial<Memory> & { id: number }): Memory {
     ...overrides,
   };
 }
+
+describe('P2-11 同义词扩展', () => {
+  it('prompt 含「截断」时，记忆名含 truncate 能命中（修复前为 0）', () => {
+    // 记忆名只含 truncate/engine，prompt 词不含任何记忆词，命中只能靠同义词扩展
+    const mem = makeMemory({
+      id: 1,
+      name: 'truncate engine',
+      content: 'content here',
+      tags: [],
+    });
+    const score = keywordScore(segmentText('截断配置问题'), mem);
+    expect(score).toBeGreaterThan(0);
+  });
+
+  it('prompt 含「截断」但记忆完全无关时仍为 0（同义词不是万能钥匙）', () => {
+    const mem = makeMemory({
+      id: 2,
+      name: '晚饭菜谱',
+      content: '做红烧肉多加糖',
+      tags: [],
+    });
+    expect(keywordScore(segmentText('截断配置问题'), mem)).toBe(0);
+  });
+
+  it('expandSynonyms 去重，同一词不重复计权重', () => {
+    const out = expandSynonyms(['截断', 'truncate']);
+    expect(out).toContain('截断');
+    expect(out).toContain('truncate');
+    expect(new Set(out).size).toBe(out.length);
+  });
+});

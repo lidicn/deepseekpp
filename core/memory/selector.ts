@@ -44,6 +44,50 @@ export const MIN_KEYWORD_SCORE_GLOBAL = 10;
  */
 const CONTENT_LENGTH_NORM_BASE_WORDS = 16;
 
+/**
+ * 术语同义扩展（P2-11）。
+ *
+ * 用户说「截断」而记忆里写的是 truncate、说「额度」而记忆写 quota，
+ * 分词后完全匹配不上。这里在「分词之后、打分之前」给 prompt 词做一层
+ * 双向扩展：prompt 含「截断」时，promptSet 同时包含 truncate，于是记忆名/
+ * 内容里的 truncate 能命中。
+ *
+ * 表要小而准：只收高频、无歧义对。一个错误的同义词会让无关记忆常态化
+ * 误命中（6c71afb 修过的那个病）——宁可漏，不可错。
+ * 不改变权重、阈值、长度归一，只扩大 prompt 侧的命中集合。
+ */
+const SYNONYM_GROUPS: readonly (readonly string[])[] = [
+  ['截断', 'truncate'],
+  ['额度', 'quota'],
+  ['记忆', 'memory'],
+  ['断流', 'stream', 'interruption'],
+  ['授权', 'authorization'],
+  ['工具', 'tool'],
+  ['技能', 'skill'],
+  ['超时', 'timeout'],
+  ['刷新', '重载'],
+];
+
+const SYNONYM_INDEX = new Map<string, string[]>();
+for (const group of SYNONYM_GROUPS) {
+  for (const word of group) {
+    const lower = word.toLowerCase();
+    const existing = SYNONYM_INDEX.get(lower);
+    const added = group.filter((w) => w !== word).map((w) => w.toLowerCase());
+    SYNONYM_INDEX.set(lower, existing ? [...new Set([...existing, ...added])] : added);
+  }
+}
+
+/** 返回「原词 + 同义扩展词」并去重；输入已是分词后的小写词。 */
+export function expandSynonyms(words: readonly string[]): string[] {
+  const out = new Set<string>();
+  for (const word of words) {
+    out.add(word);
+    for (const syn of SYNONYM_INDEX.get(word) ?? []) out.add(syn);
+  }
+  return [...out];
+}
+
 /** 词数在基准内返回 1；超出后按 sqrt 次线性衰减。 */
 function lengthFactor(wordCount: number): number {
   if (wordCount <= CONTENT_LENGTH_NORM_BASE_WORDS) return 1;
@@ -81,7 +125,7 @@ export function segmentText(text: string): string[] {
 }
 
 export function keywordScore(promptWords: string[], memory: Memory): number {
-  const promptSet = new Set(promptWords);
+  const promptSet = new Set(expandSynonyms(promptWords));
 
   let tagHits = 0;
   for (const tag of memory.tags) {
