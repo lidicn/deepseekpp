@@ -112,6 +112,10 @@ export interface IndexedDbQuery {
 export interface IndexedDbWhereQuery {
   equals(value: IDBValidKey): {
     delete(): Promise<number>;
+    toArray(): Promise<Record<string, unknown>[]>;
+    primaryKeys(): Promise<IDBValidKey[]>;
+    count(): Promise<number>;
+    first(): Promise<Record<string, unknown> | undefined>;
   };
 }
 
@@ -654,9 +658,31 @@ class IndexedDbTableImpl implements IndexedDbTable {
 
   where(indexName: string): IndexedDbWhereQuery {
     return {
-      equals: (value) => ({
-        delete: () => this.run('readwrite', (store) => deleteWhere(store, indexName, value)),
-      }),
+      equals: (value) => {
+        const range = () => IDBKeyRange.only(value);
+        return {
+          delete: () => this.run('readwrite', (store) => deleteWhere(store, indexName, value)),
+          toArray: () => this.run('readonly', (store) => (
+            readEqual(store, indexName, range(), false) as Promise<Record<string, unknown>[]>
+          )),
+          primaryKeys: () => this.run('readonly', (store) => (
+            readEqual(store, indexName, range(), true) as Promise<IDBValidKey[]>
+          )),
+          count: () => this.run('readonly', (store) => new Promise((resolve, reject) => {
+            const request = store.index(indexName).count(range());
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          })),
+          first: () => this.run('readonly', (store) => new Promise((resolve, reject) => {
+            const request = store.index(indexName).openCursor(range());
+            request.onsuccess = () => {
+              const cursor = request.result;
+              resolve(cursor ? (cursor.value as Record<string, unknown>) : undefined);
+            };
+            request.onerror = () => reject(request.error);
+          })),
+        };
+      },
     };
   }
 
@@ -737,6 +763,29 @@ function readOrdered(
       results.push(keysOnly
         ? (source === store ? cursor.key : cursor.primaryKey)
         : cursor.value);
+      cursor.continue();
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function readEqual(
+  store: IDBObjectStore,
+  indexName: string,
+  range: IDBKeyRange,
+  keysOnly: boolean,
+): Promise<unknown[]> {
+  return new Promise((resolve, reject) => {
+    const results: unknown[] = [];
+    const source = indexName === store.keyPath ? store : store.index(indexName);
+    const request = (keysOnly ? source.openKeyCursor(range) : source.openCursor(range));
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor) {
+        resolve(results);
+        return;
+      }
+      results.push(keysOnly ? cursor.primaryKey : (cursor as IDBCursorWithValue).value);
       cursor.continue();
     };
     request.onerror = () => reject(request.error);

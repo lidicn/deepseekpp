@@ -323,6 +323,46 @@ describe('IndexedDb thin wrapper', () => {
     expect(await memories.count()).toBe(4);
   });
 
+  it('B2: reads rows by index equality (toArray / primaryKeys / count / first) without deleting', async () => {
+    const db = freshDb();
+    const memories = db.table('memories');
+    await memories.bulkAdd([
+      { id: 1, type: 'topic', name: 'a', pinned: false, scope: 'project', projectId: 'p1', syncId: 's1' },
+      { id: 2, type: 'topic', name: 'b', pinned: false, scope: 'project', projectId: 'p1', syncId: 's2' },
+      { id: 3, type: 'topic', name: 'c', pinned: false, scope: 'project', projectId: 'p1', syncId: 's3' },
+      { id: 4, type: 'topic', name: 'd', pinned: false, scope: 'global', projectId: 'p2', syncId: 's4' },
+      { id: 5, type: 'topic', name: 'e', pinned: false, scope: 'global', projectId: 'p2', syncId: 's5' },
+    ]);
+
+    const p1 = memories.where('projectId').equals('p1');
+    const rows = await p1.toArray();
+    expect(rows.map((r) => r.id)).toEqual([1, 2, 3]);
+    expect(await p1.primaryKeys()).toEqual([1, 2, 3]);
+    expect(await p1.count()).toBe(3);
+    expect(await p1.first()).toMatchObject({ id: 1 });
+    // read must not delete
+    expect(await memories.count()).toBe(5);
+
+    const missing = memories.where('projectId').equals('nope');
+    expect(await missing.toArray()).toEqual([]);
+    expect(await missing.primaryKeys()).toEqual([]);
+    expect(await missing.count()).toBe(0);
+    expect(await missing.first()).toBeUndefined();
+  });
+
+  it('B2 regression: equals().delete() still removes exactly the matched rows', async () => {
+    const db = freshDb();
+    const memories = db.table('memories');
+    await memories.bulkAdd([
+      { id: 1, type: 'topic', name: 'a', pinned: false, scope: 'project', projectId: 'p1', syncId: 's1' },
+      { id: 2, type: 'topic', name: 'b', pinned: false, scope: 'project', projectId: 'p1', syncId: 's2' },
+      { id: 3, type: 'topic', name: 'c', pinned: false, scope: 'global', projectId: 'p2', syncId: 's3' },
+    ]);
+    expect(await memories.where('projectId').equals('p1').delete()).toBe(2);
+    expect(await memories.orderBy('id').toArray()).toEqual([expect.objectContaining({ id: 3 })]);
+    expect(await memories.where('projectId').equals('p1').count()).toBe(0);
+  });
+
   it('bulk-deletes, clears, and persists across close/reopen', async () => {
     const db = freshDb();
     const memories = db.table('memories');
