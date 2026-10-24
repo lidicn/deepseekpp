@@ -616,6 +616,7 @@ export const sidepanel = {
       serviceUrl: '服务 URL',
       bridgeEndpointUrl: '桥接端点 URL',
       bridgeEndpointHint: '这里填写 stdio 桥接服务暴露的 HTTP MCP 地址，不是本地 exe 路径；本地 Shell/stdio 能力请优先使用 Shell Native Host 预设。',
+      originChangedHint: '修改端点 origin 会撤销该服务器已有的授权；保存后需要重新授权。',
       command: '命令',
       args: '参数',
       cwd: '工作目录',

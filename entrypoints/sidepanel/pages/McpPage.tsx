@@ -5,6 +5,7 @@ import {
 } from '../../../core/multimodal';
 import type { LocaleMessageKey, MessageParams, SupportedLocale } from '../../../core/i18n';
 import { parseNativeHostOutdatedNote } from '../../../core/mcp/native-host-version';
+import { originOfUrl } from '../../../core/mcp/server-origin';
 import type {
   McpCapabilityExposureMode,
   McpCapabilitySettings,
@@ -398,6 +399,13 @@ function McpServerForm({
     setForm((prev) => ({ ...prev, transportKind: kind }));
   };
 
+  // X-67：只在「编辑已有服务器」且草稿 URL 的 origin 与原端点不同时提示。
+  // 新建（initial=null）没有旧授权可被撤销，不提示；只改 displayName / allowlist
+  // 不触及 url，origin 不变，也不提示。口径与 background 撤销授权一致（originOfUrl）。
+  const originalOrigin = initial ? originOfUrl(initial.transport.url) : null;
+  const draftOrigin = originOfUrl(form.url);
+  const originChanged = initial !== null && originalOrigin !== draftOrigin;
+
   const save = async () => {
     const result = payloadFromForm(form, t, platform);
     if ('error' in result) {
@@ -477,6 +485,15 @@ function McpServerForm({
               className="ds-input w-full rounded-lg px-3 py-2 text-sm"
               placeholder={form.transportKind === 'stdio_bridge' ? 'http://127.0.0.1:8765/mcp' : 'https://example.com/mcp'}
             />
+            {originChanged && (
+              <div
+                role="status"
+                className="block text-[11px] mt-1"
+                style={{ color: 'var(--ds-warning, var(--ds-text-secondary))' }}
+              >
+                {t('sidepanel.mcpPage.form.originChangedHint')}
+              </div>
+            )}
           </Field>
         )}
 

@@ -27,13 +27,15 @@
 import type { McpServerConfig } from './types';
 
 /**
- * 取服务器的端点 origin（`scheme://host:port`）。
+ * 取任意原始 URL 字符串的 origin（`scheme://host:port`）。
  *
- * - 非 URL 型传输（`stdio_bridge` / `native_messaging`）或没有 url → `null`
+ * - 空 / 非字符串 → `null`
  * - URL 非法 → 返回原始字符串的 trim（宁可判「变了」也不要漏判）
+ *
+ * 抽成独立函数，供表单在「编辑中的草稿 URL」与「已保存的端点」之间
+ * 用同一口径比较（审计 X-67 的 UI 提示与 background 撤销逻辑必须同口径）。
  */
-export function mcpServerOrigin(server: McpServerConfig): string | null {
-  const raw = server.transport?.url;
+export function originOfUrl(raw: string | null | undefined): string | null {
   if (typeof raw !== 'string' || raw.trim() === '') return null;
   const trimmed = raw.trim();
   try {
@@ -41,6 +43,16 @@ export function mcpServerOrigin(server: McpServerConfig): string | null {
   } catch {
     return trimmed;
   }
+}
+
+/**
+ * 取服务器的端点 origin（`scheme://host:port`）。
+ *
+ * - 非 URL 型传输（`stdio_bridge` / `native_messaging`）或没有 url → `null`
+ * - URL 非法 → 返回原始字符串的 trim（宁可判「变了」也不要漏判）
+ */
+export function mcpServerOrigin(server: McpServerConfig): string | null {
+  return originOfUrl(server.transport?.url);
 }
 
 /**

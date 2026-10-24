@@ -616,6 +616,7 @@ export const sidepanel = {
       serviceUrl: 'Service URL',
       bridgeEndpointUrl: 'Bridge endpoint URL',
       bridgeEndpointHint: 'Use the HTTP MCP endpoint exposed by a stdio bridge service, not a local executable path. For local shell/stdio capabilities, prefer the Shell Native Host preset.',
+      originChangedHint: 'Changing the endpoint origin revokes the existing authorization for this server; you will need to re-authorize it after saving.',
       command: 'Command',
       args: 'Arguments',
       cwd: 'Working directory',

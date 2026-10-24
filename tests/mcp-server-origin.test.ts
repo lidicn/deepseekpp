@@ -16,7 +16,7 @@
 //   B. stdio 与 http 之间切换 ⇒ 算变（数据去向变了）
 //   C. 撤销函数按 provider.id 精确匹配、返回撤销数量、非目标不误伤
 import { describe, expect, it } from 'vitest';
-import { mcpServerOrigin, mcpServerOriginChanged } from '../core/mcp/server-origin';
+import { mcpServerOrigin, mcpServerOriginChanged, originOfUrl } from '../core/mcp/server-origin';
 import type { McpServerConfig } from '../core/mcp/types';
 
 function makeServer(
@@ -103,5 +103,31 @@ describe('X-67: mcpServerOriginChanged', () => {
 
   it('完全相同 ⇒ 不变（负控）', () => {
     expect(mcpServerOriginChanged(makeServer(HTTP_A), makeServer(HTTP_A))).toBe(false);
+  });
+});
+
+// X-67 UI 提示口径：表单用 originOfUrl(原url) !== originOfUrl(草稿url) 决定是否
+// 显示「换端点会撤销授权」。锁定关键边界：同 origin 改 path 不提示（否则噪音），
+// 换 host / 草稿清空 要提示。
+describe('X-67 UI: originOfUrl 供表单比较', () => {
+  it('同 origin 改 path/query ⇒ 相等（不触发提示）', () => {
+    expect(originOfUrl('https://mcp.a.example/mcp'))
+      .toBe(originOfUrl('https://mcp.a.example/mcp/v2?x=1'));
+  });
+
+  it('换 host / scheme / port ⇒ 不等（触发提示）', () => {
+    expect(originOfUrl('https://mcp.a.example/mcp'))
+      .not.toBe(originOfUrl('https://mcp.b.example/mcp'));
+    expect(originOfUrl('https://mcp.a.example/mcp'))
+      .not.toBe(originOfUrl('http://mcp.a.example/mcp'));
+  });
+
+  it('草稿清空 ⇒ null，与有端点不等（数据去向消失，触发提示）', () => {
+    expect(originOfUrl('')).not.toBe(originOfUrl('https://mcp.a.example/mcp'));
+    expect(originOfUrl(null)).toBeNull();
+  });
+
+  it('非法 url 与合法 url 不同（宁可提示也不漏判）', () => {
+    expect(originOfUrl('not a url')).toBe('not a url');
   });
 });
