@@ -1,5 +1,5 @@
 export const MEMORY_DATABASE_NAME = 'DeepSeekPP';
-export const MEMORY_DATABASE_VERSION = 6 as const;
+export const MEMORY_DATABASE_VERSION = 7 as const;
 export const MEMORY_TABLE_NAME = 'memories';
 export const ANCHOR_TABLE_NAME = 'chain_anchors';
 export const INDEX_TABLE_NAME = 'memory_index';

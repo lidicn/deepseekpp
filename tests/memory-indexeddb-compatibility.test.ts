@@ -4,6 +4,9 @@ import {
   MEMORY_DATABASE_NAME,
   MEMORY_TABLE_NAME,
   MEMORY_TABLE_SCHEMAS,
+  ANCHOR_TABLE_NAME,
+  INDEX_TABLE_NAME,
+  INDEX_TABLE_SCHEMA,
 } from '../core/memory/schema';
 import {
   MEMORY_V1_ADDITIVE_RECORD,
@@ -130,7 +133,8 @@ describe('Memory historical IndexedDB compatibility', () => {
       ...MEMORY_V3_RECORD,
       futureDatabaseField: { preserve: true },
     };
-    await createIndexedDbAtVersion(MEMORY_DATABASE_NAME, 70, (db) => {
+    // 现在线上库是 v7（backendDB().version === 70）；比它更高的 80 才是「未来版本」。
+    await createIndexedDbAtVersion(MEMORY_DATABASE_NAME, 80, (db) => {
       createStore(db, MEMORY_TABLE_NAME, memorySeedSpec(3));
     });
     await addIndexedDbRecords(MEMORY_DATABASE_NAME, MEMORY_TABLE_NAME, [futureRecord]);
@@ -150,6 +154,55 @@ describe('Memory historical IndexedDB compatibility', () => {
     expect(await readIndexedDbRecords(MEMORY_DATABASE_NAME, MEMORY_TABLE_NAME))
       .toEqual([futureRecord]);
   });
+
+  it('B1: a fresh v7 database has no memory_index table', async () => {
+    const { db } = await import('../core/memory/store');
+    await db.open();
+    const names = db.backendDB().objectStoreNames;
+    expect(names.contains(MEMORY_TABLE_NAME)).toBe(true);
+    expect(names.contains(ANCHOR_TABLE_NAME)).toBe(true);
+    expect(names.contains(INDEX_TABLE_NAME)).toBe(false);
+    db.close();
+  });
+
+  it('B1: upgrades a v6(=60) db by deleting memory_index while preserving memories/anchors', async () => {
+    // 造一个 v6（=60）老库：memories(v4) + chain_anchors + memory_index，各塞一行。
+    await createIndexedDbAtVersion(MEMORY_DATABASE_NAME, 60, (db, tx) => {
+      const memSpec = memorySeedSpec(4);
+      createStore(db, MEMORY_TABLE_NAME, memSpec);
+      createStore(db, ANCHOR_TABLE_NAME, { keyPath: 'sessionId', autoIncrement: false });
+      // memory_index: '++id, term, memoryId'
+      createStore(db, INDEX_TABLE_NAME, {
+        keyPath: 'id',
+        autoIncrement: true,
+        indexes: ['term', 'memoryId'],
+      });
+      void tx;
+    });
+    await addIndexedDbRecords(MEMORY_DATABASE_NAME, MEMORY_TABLE_NAME, [{ ...MEMORY_V3_RECORD }]);
+    await addIndexedDbRecords(MEMORY_DATABASE_NAME, ANCHOR_TABLE_NAME, [{
+      sessionId: 'anchor-1', mode: 'chat', updatedAt: 1,
+    }]);
+    await addIndexedDbRecords(MEMORY_DATABASE_NAME, INDEX_TABLE_NAME, [{
+      term: 'truncate', memoryId: MEMORY_V3_RECORD.id,
+    }]);
+
+    const { db, getAllMemories } = await import('../core/memory/store');
+    await db.open(); // 触发 60→70 升级
+    const names = db.backendDB().objectStoreNames;
+    expect(names.contains(INDEX_TABLE_NAME)).toBe(false);
+    expect(names.contains(MEMORY_TABLE_NAME)).toBe(true);
+    expect(names.contains(ANCHOR_TABLE_NAME)).toBe(true);
+
+    // memories 数据完好
+    const mems = await getAllMemories();
+    expect(mems.map((m) => m.id)).toContain(MEMORY_V3_RECORD.id);
+    db.close();
+
+    // chain_anchors 行仍在（直接读原始库）
+    expect(await readIndexedDbRecords(MEMORY_DATABASE_NAME, ANCHOR_TABLE_NAME))
+      .toEqual([{ sessionId: 'anchor-1', mode: 'chat', updatedAt: 1 }]);
+  });
 });
 
 async function seedMemoryDatabase(version: 1 | 2, record: Record<string, unknown>): Promise<void> {
@@ -159,7 +212,7 @@ async function seedMemoryDatabase(version: 1 | 2, record: Record<string, unknown
   await addIndexedDbRecords(MEMORY_DATABASE_NAME, MEMORY_TABLE_NAME, [{ ...record }]);
 }
 
-function memorySeedSpec(version: 1 | 2 | 3): {
+function memorySeedSpec(version: 1 | 2 | 3 | 4): {
   keyPath: string;
   autoIncrement: boolean;
   indexes: readonly string[];

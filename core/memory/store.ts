@@ -77,6 +77,18 @@ const db = new IndexedDb(MEMORY_DATABASE_NAME, [
       });
     },
   },
+  {
+    // memory_index 已废弃（ef2988b 删除三份倒排索引实现）。本封装不像 Dexie
+    // 自动删表，必须显式 drop 才能让老库（v50/v60）里的表在升级时被移除；
+    // 新库走全量升级链，drop 对不存在的表是 no-op。INDEX_TABLE_NAME/SCHEMA
+    // 保留在 schema.ts 仅供历史 50/60 步引用；两处历史步不许改。
+    version: 70,
+    stores: {
+      [MEMORY_TABLE_NAME]: MEMORY_TABLE_SCHEMAS[4],
+      [ANCHOR_TABLE_NAME]: ANCHOR_TABLE_SCHEMA,
+    },
+    drop: [INDEX_TABLE_NAME],
+  },
 ]);
 
 export const memoryDb = db;

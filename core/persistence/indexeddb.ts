@@ -79,6 +79,14 @@ export interface IndexedDbUpgradeStep {
   version: number;
   /** Table name -> dexie schema string at this version. */
   stores: Record<string, string>;
+
+  /**
+   * Object stores to delete during this upgrade step. The wrapper only ever
+   * creates/updates stores listed in `stores`; a store that is simply omitted
+   * from a later step is NOT auto-dropped (unlike raw Dexie). Declare retired
+   * tables here so they are explicitly removed inside the versionchange tx.
+   */
+  drop?: readonly string[];
   /**
    * Deterministic row migration for databases passing through this step.
    * Runs inside the versionchange transaction and is awaited before the
@@ -373,6 +381,11 @@ export class IndexedDb {
       if (step.version <= oldVersion || step.version > newVersion) continue;
       for (const [tableName, schemaString] of Object.entries(step.stores)) {
         this.applyTableSchema(db, tx, tableName, parseDexieSchema(schemaString));
+      }
+      for (const retiredName of step.drop ?? []) {
+        if (tx.objectStoreNames.contains(retiredName)) {
+          db.deleteObjectStore(retiredName);
+        }
       }
       if (step.migrate) {
         // Await the step's row migration before the next step runs so
