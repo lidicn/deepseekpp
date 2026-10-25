@@ -1,5 +1,5 @@
 import { useLayoutEffect } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import type { Components } from 'react-markdown';
 import { useI18n } from '../i18n';
 
@@ -56,6 +56,25 @@ export function markdownImageComponent(blockedLabel: string) {
   };
 }
 
+/**
+ * 审计 #31（2026-10-24 报告 P1）：B4 为了让内联图能过，把 `urlTransform` 改成了
+ * **全局恒等** `(url) => url`。这连带关掉了 react-markdown 自带的协议净化，
+ * 而 `components` 只覆写了 `img` —— **链接 `<a href>` 走的是默认组件 + 恒等 transform**，
+ * 于是 `[点我](javascript:alert(1))` 的 href 会被原样保留。
+ * 侧栏是扩展自己的页面，点一下就在扩展上下文里执行脚本。
+ *
+ * 修法：**只对图片的 `src` 放行内联资源**，其余一律走 `defaultUrlTransform`
+ * （它的安全协议白名单是 `https?|ircs?|mailto|xmpp`，其它一律置空）。
+ *
+ * `key` 是属性名（react-markdown 的 `UrlTransform` 签名第二个参数）：图片是 `src`、
+ * 链接是 `href`。**必须按 key 区分** —— 只按前缀判断会把
+ * `[x](data:text/html,<script>)` 这类 data: 链接也放行。
+ */
+export function previewUrlTransform(url: string, key?: string): string {
+  if (key === 'src' && isAllowedInlineImageSrc(url)) return url;
+  return defaultUrlTransform(url);
+}
+
 export default function RichMessageContent({ text, onRendered }: RichMessageContentProps) {
   const { t } = useI18n();
 
@@ -67,5 +86,5 @@ export default function RichMessageContent({ text, onRendered }: RichMessageCont
     img: markdownImageComponent(t('sidepanel.markdown.externalImageBlocked')),
   };
 
-  return <ReactMarkdown components={components} urlTransform={(url) => url}>{text}</ReactMarkdown>;
+  return <ReactMarkdown components={components} urlTransform={previewUrlTransform}>{text}</ReactMarkdown>;
 }

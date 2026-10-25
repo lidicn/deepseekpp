@@ -44,7 +44,13 @@ function normalizeHeaders(
 }
 
 function getDeepSeekLocale(): string {
-  return document.documentElement.lang || navigator.language || "en-US";
+  // 审计 #3（2026-10-24 报告 P1）：`active-client.ts` 里同名函数已加 document 守卫，
+  // 这份是另一份拷贝、当时没同步。MV3 service worker 全局无 document，直接访问会抛
+  // ReferenceError，把请求增强链路整个打断。
+  if (typeof document !== 'undefined' && document.documentElement?.lang) {
+    return document.documentElement.lang;
+  }
+  return navigator.language || "en-US";
 }
 
 export function createRequestContext(

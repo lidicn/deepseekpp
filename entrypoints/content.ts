@@ -5724,7 +5724,10 @@ function updateAgentStatusBar(
       break;
     case "running": {
       const parts = [`<strong>deepseek++</strong> 执行中`, `第 ${step + 1} 步`];
-      if (tool) parts.push(`<span class="dpp-status-bar-tool">${tool}</span>`);
+      // 审计 #30（2026-10-24 报告 P1）：tool 名来自 msg.call.name，MCP 工具名由
+      // **外部服务器**提供，属不可信数据；直接拼 innerHTML 即注入口。
+      // 同函数的 complete/error 分支此前已补 escapeHtml，此处是漏掉的一处。
+      if (tool) parts.push(`<span class="dpp-status-bar-tool">${escapeHtml(tool)}</span>`);
       if (elapsed > 0) parts.push(`${formatElapsedSeconds(elapsed)}`);
       html = parts.join(" · ");
       break;

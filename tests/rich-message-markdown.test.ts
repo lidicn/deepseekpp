@@ -6,14 +6,48 @@ import {
   isAllowedInlineImageSrc,
   isExternalImageSrc,
   markdownImageComponent,
+  previewUrlTransform,
 } from '../entrypoints/sidepanel/components/RichMessageContent';
 
 function render(markdown: string, blockedLabel = '外部图片已拦截'): string {
   const components = { img: markdownImageComponent(blockedLabel) };
+  // 用**真实的** transform，不能再用恒等 —— 恒等会掩盖「链接协议未净化」这类缺陷
+  // （审计 #31：测试助手曾经硬编码 `(u) => u`，所以测不到 javascript: 链接）。
   return renderToStaticMarkup(
-    createElement(ReactMarkdown, { components, urlTransform: (u: string) => u }, markdown),
+    createElement(ReactMarkdown, { components, urlTransform: previewUrlTransform }, markdown),
   );
 }
+
+// 审计 #31（2026-10-24 报告 P1）：B4 曾把 urlTransform 改成全局恒等，连带关掉了
+// react-markdown 的协议净化。侧栏是扩展自己的页面，点一个 javascript: 链接就在扩展
+// 上下文里执行脚本。修法：只对 data:/blob: 放行，其余回到 defaultUrlTransform。
+describe('审计 #31：链接协议必须净化（urlTransform 不再全局恒等）', () => {
+  it('javascript: 链接的 href 必须被剥离', () => {
+    const out = render('[点我](javascript:alert(1))');
+    expect(out).not.toContain('javascript:');
+  });
+
+  it('data: 链接同样不让通过（只对图片放行）', () => {
+    const out = render('[点我](data:text/html,<script>alert(1)</script>)');
+    expect(out).not.toContain('data:text/html');
+  });
+
+  it('普通 http/https 链接仍然可用（负控：别改过头）', () => {
+    const out = render('[点我](https://example.test/doc)');
+    expect(out).toContain('href="https://example.test/doc"');
+  });
+
+  it('内联图片仍然放行（负控：B4 的能力不能丢）', () => {
+    const out = render('![x](data:image/png;base64,AAA)');
+    expect(out).toContain('src="data:image/png;base64,AAA"');
+  });
+
+  it('外链图片仍被拦（负控：B6 的能力不能丢）', () => {
+    const out = render('![x](https://evil.example/p.gif)');
+    expect(out).not.toContain('src="https://evil.example/p.gif"');
+    expect(out).toContain('外部图片已拦截');
+  });
+});
 
 describe('P1-6 拦截 Markdown 外链图片（B6 白名单返工）', () => {
   it('白名单谓词：data:/blob: 放行，其余一律 false', () => {

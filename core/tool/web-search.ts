@@ -17,6 +17,14 @@ export const WEB_SEARCH_TOOL_PROVIDER: ToolProviderIdentity = {
 
 export const WEB_SEARCH_TOOL_NAMES = ['web_search', 'web_fetch'] as const;
 
+/**
+ * web_fetch / web_search 单次响应体的字节上限（审计 #14）。
+ *
+ * 取 1 MiB：远超正常 HTML/JSON 页面所需，又能挡住「返回 500MB 撑爆 SW」这类攻击。
+ * 注意这与结果里 50_000 字符的**展示截断**是两回事 —— 那是给模型看的，这是给内存的。
+ */
+const WEB_FETCH_MAX_RESPONSE_BYTES = 1024 * 1024;
+
 export type WebSearchToolName = typeof WEB_SEARCH_TOOL_NAMES[number];
 
 export function createWebSearchToolProviderIdentity(
@@ -380,11 +388,37 @@ async function performWebFetch(
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
 
+      // 审计 #13（2026-10-24 报告 P1）：fetch 默认 `redirect: 'follow'`。上面只对
+      // **初始** URL 做了 scheme 白名单，302 之后的目标 URL 从未校验 —— 一个已授权的
+      // 公网 URL 可以被导向 `http://169.254.169.254/latest/meta-data/` 这类内网地址。
+      // 这里对**最终 URL**（response.url）重新校验，并拒绝 https→http 降级。
+      // ⚠ 已知边界：本检查只挡住「重定向到非法 scheme / 协议降级」，不挡
+      // 「重定向到另一个 http 私有 IP」—— 后者需要 DNS 层解析 + 私有网段判定，
+      // 属独立设计项（审计 #13 的完整修法）。
+      const finalUrl = response.url || url;
+      let finalParsed: URL | null = null;
+      try {
+        finalParsed = new URL(finalUrl);
+      } catch {
+        finalParsed = null;
+      }
+      if (!finalParsed || (finalParsed.protocol !== 'http:' && finalParsed.protocol !== 'https:')) {
+        await cancelUnusedWebResponseBody(response);
+        throw new Error(`Redirected to unsupported URL: ${finalUrl}`);
+      }
+      if (parsedUrl.protocol === 'https:' && finalParsed.protocol === 'http:') {
+        await cancelUnusedWebResponseBody(response);
+        throw new Error(`Refused redirect from https to http: ${finalUrl}`);
+      }
+
       const contentType = response.headers.get('content-type') || '';
       let text: string;
 
       if (contentType.includes('text/html') || contentType.includes('text/plain') || contentType.includes('application/json')) {
-        text = await response.text();
+        // 审计 #14（2026-10-24 报告 P1）：原来是 `await response.text()` ——
+        // 既不查 Content-Length 也不限长，50_000 的截断发生在**整段读完之后**，
+        // 恶意/异常 server 返回 500MB 就能撑爆 SW 内存。改成边读边限。
+        text = await readTextWithByteLimit(response, WEB_FETCH_MAX_RESPONSE_BYTES);
       } else {
         await cancelUnusedWebResponseBody(response);
         return {
@@ -451,6 +485,44 @@ async function cancelUnusedWebResponseBody(response: Response): Promise<void> {
     await response.body.cancel();
   } catch (error) {
     console.warn('[DeepSeek++] Failed to cancel an unused web response body:', error);
+  }
+}
+
+/**
+ * 审计 #14（2026-10-24 报告 P1）：按字节上限读取文本响应体。
+ *
+ * 原实现直接 `await response.text()`，既不查 Content-Length 也不限长 ——
+ * `maxLength = 50_000` 的截断发生在**整段读完之后**，恶意/异常 server 返回 500MB
+ * 就能把 SW 内存撑爆。这里边读边累计，超限即取消流并停止。
+ */
+async function readTextWithByteLimit(response: Response, maxBytes: number): Promise<string> {
+  const declared = Number(response.headers.get('content-length') ?? NaN);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await cancelUnusedWebResponseBody(response);
+    throw new Error(`Response is larger than ${maxBytes} bytes (declared ${declared}).`);
+  }
+  if (!response.body) return response.text();
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let received = 0;
+  let text = '';
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      received += chunk.value.byteLength;
+      if (received > maxBytes) {
+        // 超限：立刻停读并取消余下流，避免把剩余字节继续拉进内存
+        await reader.cancel().catch(() => {});
+        throw new Error(`Response exceeded ${maxBytes} bytes; truncated read.`);
+      }
+      text += decoder.decode(chunk.value, { stream: true });
+    }
+    text += decoder.decode();
+    return text;
+  } finally {
+    reader.releaseLock();
   }
 }
 

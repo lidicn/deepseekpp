@@ -1109,7 +1109,17 @@ function normalizeConversationHref(conversation: ProjectConversation): string {
 
 function normalizeConversationHrefForSession(sessionId: string, url: string): string {
   const trimmed = url.trim();
-  if (trimmed && parseSessionId(trimmed) === sessionId) return trimmed;
+  // 审计 #98（2026-10-24 报告 P1）：原实现只校验 sessionId 匹配就把 url 直接当 href
+  // 用 —— 外部域只要构造 `https://evil.example/a/chat/s/<真实 sessionId>` 就能让侧栏
+  // 渲染出站链接。sessionId 并不秘密（它会出现在页面 DOM 里），所以这不是充分条件。
+  // 再加一道同源校验：只有与当前页面同源的 URL 才原样采用，否则回退到安全拼接。
+  if (trimmed && parseSessionId(trimmed) === sessionId) {
+    try {
+      if (new URL(trimmed, location.origin).origin === location.origin) return trimmed;
+    } catch {
+      // 非法 URL —— 落到下面的安全兜底
+    }
+  }
   return new URL(`/a/chat/s/${encodeURIComponent(sessionId)}`, location.origin).href;
 }
 
