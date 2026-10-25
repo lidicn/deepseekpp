@@ -260,12 +260,23 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
       turnDefaults: {
         modelType: promptOptions.modelType,
         // M-URL 修复：动态合并待处理的图片 file_id
+        //
+        // 审计 #27（2026-10-24 报告 P1）——**按需加载，挂载一次即消费**。
+        //
+        // 本文件的设计注释（见 :747「file_id 会被加入 pendingImageFileIds，
+        // 在**下一次请求**时通过 refFileIds 传递给模型」、以及 :121）写得很清楚：
+        // 这些 id 只需要进**紧接着的那一次**请求。但原实现只合并、从不清空 ——
+        // 于是第 N 轮的图片会被第 N+1、N+2…轮的请求**反复重挂**，
+        // 循环越长请求体越大（每多一轮就多挂一次全部历史图片）。
+        //
+        // 现在合并后立刻清空：**本次请求拿到的就是全部待挂载图片，下一轮不会重复**。
+        // 历史轮次的图片由服务端会话保留，不需要客户端重复上传。
+        //
+        // ⚠ 已知边界：若同一轮请求**重试**，重试时 pending 已空 ⇒ 拿不到这些图片。
+        //    权衡：重试路径罕见，而"每轮重复挂载全部历史图片"是每轮必发生。
+        //    若将来重试变常见，改成"按 step 记已认领快照"即可（约 30 行）。
         get refFileIds() {
-          const merged = [...promptOptions.refFileIds, ...pendingImageFileIds];
-          if (pendingImageFileIds.length > 0) {
-            console.log('[M-URL] 注入 refFileIds:', { original: promptOptions.refFileIds.length, pending: pendingImageFileIds.length, total: merged.length });
-          }
-          return merged;
+          return takePendingImageFileIds(promptOptions.refFileIds, pendingImageFileIds);
         },
         thinkingEnabled: promptOptions.thinkingEnabled,
         searchEnabled: promptOptions.searchEnabled,
@@ -738,6 +749,32 @@ function contextHasAssistantMessage(context: { messages: ReadonlyArray<{ role: s
   return context.messages.some((message) => message.role === 'assistant');
 }
 
+/**
+ * 审计 #27（2026-10-24 报告 P1）——**按需加载：挂载一次即消费**。
+ *
+ * 背景：工具结果里的图片会被物化成 deepseek `file_id` 放进 `pending`，
+ * 等**下一次** LLM 请求时通过 `refFileIds` 传给模型
+ * （本文件 `materializeAndUploadToolResultImages` 的注释原话就是「在下一次请求时」）。
+ * 但原实现只合并、从不清空 ⇒ 第 N 轮上传的图片会被 N+1、N+2…轮**反复重挂**，
+ * 循环越长请求体越大。
+ *
+ * 现在合并后立刻清空 pending：本次请求拿到全部待挂载图片，下一轮不会重复。
+ * 历史轮次的图片由服务端会话保留，客户端不需要重复上传。
+ *
+ * ⚠ 已知边界：同一轮请求**重试**时 pending 已空 ⇒ 重试拿不到这些图片。
+ *   权衡：重试罕见，而「每轮重复挂载全部历史图片」每轮必发生。
+ *   若将来重试变常见，改成「按 step 记已认领快照」即可（约 30 行）。
+ *
+ * 导出以便测试直接断言（纯函数、无副作用，副作用只有清空传入的 pending 数组）。
+ */
+export function takePendingImageFileIds(
+  base: readonly string[],
+  pending: string[],
+): string[] {
+  const merged = [...base, ...pending];
+  if (pending.length > 0) pending.length = 0;
+  return merged;
+}
 function buildInlineAgentBudgetNotice(locale: SupportedLocale, completedSteps: number): string {
   return translate(locale, 'content.agent.budgetReached', { count: completedSteps });
 }
