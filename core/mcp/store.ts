@@ -432,7 +432,13 @@ function shouldInvalidateMcpToolCache(previous: McpServerConfig, next: McpServer
   return mcpDiscoveryFingerprint(previous) !== mcpDiscoveryFingerprint(next);
 }
 
-function mcpDiscoveryFingerprint(server: McpServerConfig): string {
+/**
+ * 发现指纹：决定「服务器配置变了之后，已缓存的工具列表还能不能用」。
+ *
+ * 导出以便测试直接断言（纯函数，无副作用）。⚠ 它**不含密钥值**，只含「有没有值」——
+ * 见下面 secrets 段的说明（审计 #22）。
+ */
+export function mcpDiscoveryFingerprint(server: McpServerConfig): string {
   return JSON.stringify({
     // Older valid records omit optional transport and secret fields. Mutating
     // status after discovery normalizes those omissions, which must not
@@ -452,7 +458,17 @@ function mcpDiscoveryFingerprint(server: McpServerConfig): string {
       kind: secret.kind,
       headerName: secret.headerName ?? '',
       username: secret.username ?? '',
-      value: secret.value,
+      // 审计 #22（2026-10-24 报告 P1）：原来这里取 `value: secret.value`，
+      // 于是**每次轮换密钥都会清空工具缓存**（用户看到工具列表变空，要等重新发现）。
+      // 密钥值本身不影响「服务器能提供哪些工具」，只影响鉴权是否通过。
+      //
+      // 改记「有没有值」而不是值本身：
+      //   · 轮换密钥（两边都非空）⇒ 指纹不变 ⇒ 保留工具列表 ✓
+      //   · 新增/删除密钥（空 ↔ 非空）⇒ 指纹变 ⇒ 正常失效 ✓
+      //
+      // 与 X-60 的分工：**连接缓存**（client-cache.ts）的哈希仍含 value，
+      // 所以轮换密钥时连接会用新凭据重建；这里只保证工具列表不被无谓清掉。
+      hasValue: stringValue(secret.value).length > 0,
     })),
     timeouts: server.timeouts,
     limits: server.limits,

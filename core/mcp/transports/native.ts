@@ -151,6 +151,19 @@ async function sendNativeMessage<TParams extends Record<string, unknown> | undef
   } else {
     throwIfNativeSignalAborted(signal);
     const state = getPortState(nativeHost);
+    // 审计 #19（2026-10-24 报告 P1）：通知分支（无 id）在 getPortState 之后直接
+    // postMessage，**没有检查 state.alive** —— 请求路径的 sendAndWait 有这个检查，
+    // 通知路径绕过了。MV3 里 postMessage 到已断开的端口是**异步静默失败**，
+    // 于是 MCP 服务器主动推送（工具列表变更、进度通知）无声丢失，且无任何日志。
+    // 这里与 sendAndWait 对齐：先判 alive，不活就清缓存并抛可重试错误。
+    if (!state.alive) {
+      nativePortStates.delete(nativeHost);
+      throw new McpTransportError(
+        'mcp_native_host_disconnected',
+        'Native host port was disconnected before the notification could be sent.',
+        { retryable: true },
+      );
+    }
     state.port.postMessage(envelope);
     return undefined as any;
   }

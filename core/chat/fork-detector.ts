@@ -1,4 +1,4 @@
-﻿// M1-2c: fork-detector — 分叉检测
+// M1-2c: fork-detector — 分叉检测
 // 对比页面会话链尾的 tailMessageId 与 marker.parentMessageId
 
 export interface SessionChainTail {
@@ -53,7 +53,13 @@ export async function probeForkWithTimeout(
   timeoutMs: number,
 ): Promise<ForkEvaluationResult> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  // 审计 #9（2026-10-24 报告 P1）：裸 `controller.abort()` 按规范把 signal.reason
+  // 设为 AbortError，而 evaluateFork 判的是 `error.name === 'TimeoutError'` ——
+  // 于是**超时分支是死代码**，所有超时都被归成 probe_failed，诊断信息失真。
+  // 显式传一个 name='TimeoutError' 的 DOMException，让两条分支各自可达。
+  const timeoutId = setTimeout(() => {
+    controller.abort(new DOMException('Fork probe timed out.', 'TimeoutError'));
+  }, timeoutMs);
 
   try {
     const tail = await probe.readSessionChainTail(input, controller.signal);

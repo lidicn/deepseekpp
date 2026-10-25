@@ -915,29 +915,38 @@ export default defineBackground(() => {
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // 前置处理：自动提取记忆消息
-    console.log('[memory-extractor] background 收到消息', { type: message?.type });
     if (message && message.type === 'EXTRACT_MEMORY_FROM_CONVERSATION') {
-      console.log('[memory-extractor] 收到 EXTRACT_MEMORY_FROM_CONVERSATION 消息', message.payload);
-      const { chatSessionId, userMessage, assistantMessage } = message.payload;
-      // 异步调用 runExtractionHook，不等待结果
+      // 审计 #25（2026-10-24 报告 P1）：这条消息走的是 `authorizeRuntimeMessage`
+      // **之前**的旁路（它虽然列在 DEEPSEEK_CONTENT_RUNTIME_COMMANDS 白名单里，
+      // 但这个 if 分支在鉴权之前就 return 了，白名单根本没跑到）。原实现因此有两个洞：
+      //   ① 不校验发送方 —— 任意内容脚本（任意站点/标签页）都能触发记忆提取
+      //   ② 不校验 payload —— 直接解构，缺字段就带着 undefined 进 runExtractionHook
+      // 现要求：发送方必须是 chat.deepseek.com 页面 + 三个字段均为非空字符串。
+      if (!isDeepSeekPageUrl(sender?.url)) {
+        sendResponse({ ok: false, error: 'unauthorized_sender' });
+        return false;
+      }
+      const rawPayload = (message.payload ?? {}) as Record<string, unknown>;
+      const chatSessionId = typeof rawPayload.chatSessionId === 'string' ? rawPayload.chatSessionId.trim() : '';
+      const userMessage = typeof rawPayload.userMessage === 'string' ? rawPayload.userMessage : '';
+      const assistantMessage = typeof rawPayload.assistantMessage === 'string' ? rawPayload.assistantMessage : '';
+      if (!chatSessionId || !userMessage || !assistantMessage) {
+        sendResponse({ ok: false, error: 'invalid_payload' });
+        return false;
+      }
+      // 异步调用 runExtractionHook，不等待结果。
+      // 审计 #78：原实现这里有 4 条 console.log 把消息体和 payload **正文**打到控制台，
+      // 生产环境会泄漏会话内容；已移除，只在失败时记录错误对象（不含正文）。
       void (async () => {
         try {
-          console.log('[memory-extractor] 开始调用 runExtractionHook');
           const { runExtractionHook } = await import('../core/memory/extractor-hook');
-          const result = await runExtractionHook(
+          await runExtractionHook(
             chatSessionId,
             userMessage,
             assistantMessage,
             2, // turnCount（满足 minTurns=2 的门控）
             null, // lastExtractionTurn（简化版）
           );
-          console.log('[memory-extractor] 自动提取记忆完成', {
-            chatSessionId,
-            triggered: result.triggered,
-            reason: result.reason,
-            savedCount: result.savedCount,
-            skippedCount: result.skippedCount,
-          });
         } catch (error) {
           console.error('[memory-extractor] 自动提取记忆失败', error);
         }
