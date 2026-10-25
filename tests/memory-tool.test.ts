@@ -190,3 +190,70 @@ describe('web tool localization', () => {
     expect(englishFetch.summary).toBe('URL cannot be empty');
   });
 });
+
+
+// 审计 #50（2026-10-24 报告 P1）：`topK` 非数字时原来得到 NaN，一路传进
+// selectMemories 的 budget 计算 ⇒ **返回空结果但 ok:true**，用户看到「没有相关记忆」，
+// 其实一条都没检索到。修法：只接受有限正数，非法值回落默认 5 并夹到 [1,50]。
+describe('审计 #50：memory_search 的 topK 必须是有限正数', () => {
+  function makeRuntime(): MemoryToolRuntime {
+    const memories = Array.from({ length: 8 }, (_, index) => ({
+      id: index + 1,
+      type: 'fact',
+      scope: 'global',
+      name: `alpha beta ${index}`,
+      description: 'alpha beta 相关内容',
+      content: 'alpha beta 相关内容，用于检索验证。',
+      tags: ['alpha', 'beta'],
+      pinned: false,
+      archived: false,
+      createdAt: index + 1,
+      updatedAt: index + 1,
+      lastAccessedAt: index + 1,
+    })) as unknown as Awaited<ReturnType<MemoryToolRuntime['getAllMemories']>>;
+    return {
+      saveMemory: async () => null,
+      getMemoryById: async () => null,
+      updateMemory: async () => {},
+      deleteMemory: async () => {},
+      archiveMemory: async () => {},
+      unarchiveMemory: async () => {},
+      getAllMemories: async () => memories,
+    };
+  }
+
+  function searchCall(topK: unknown): ToolCall {
+    return {
+      name: 'memory_search',
+      payload: topK === undefined ? { query: 'alpha beta' } : { query: 'alpha beta', topK },
+      raw: '<memory_search />',
+    } as unknown as ToolCall;
+  }
+
+  it('topK 为非法字符串 ⇒ 仍能检索出结果（修复前是 slice(0, NaN) ⇒ 找到 0 条）', async () => {
+    const result = await executeMemoryToolCall(makeRuntime(), searchCall('abc'), 'zh-CN');
+    expect(result.ok).toBe(true);
+    // 修复前的实际表现是 `找到 0 条与"…"相关的记忆`（slice(0, NaN) === []），
+    // 注意它**不含**「没有」字样 —— 所以断言必须盯「找到 0 条」而不是「没有」。
+    expect(String(result.summary)).not.toContain('找到 0 条');
+    expect(String(result.summary)).not.toMatch(/没有|未找到/);
+  });
+
+  it('topK 为 0 / 负数 / Infinity / NaN / null ⇒ 都回落默认值，仍能检索', async () => {
+    for (const bad of [0, -3, Number.POSITIVE_INFINITY, Number.NaN, null]) {
+      const result = await executeMemoryToolCall(makeRuntime(), searchCall(bad), 'zh-CN');
+      expect(result.ok).toBe(true);
+      expect(String(result.summary)).not.toContain('找到 0 条');
+    }
+  });
+
+  it('合法 topK 正常生效（负控）', async () => {
+    const result = await executeMemoryToolCall(makeRuntime(), searchCall(3), 'zh-CN');
+    expect(result.ok).toBe(true);
+  });
+
+  it('缺省 topK 仍是 5（负控：别把默认值改了）', async () => {
+    const result = await executeMemoryToolCall(makeRuntime(), searchCall(undefined), 'zh-CN');
+    expect(result.ok).toBe(true);
+  });
+});

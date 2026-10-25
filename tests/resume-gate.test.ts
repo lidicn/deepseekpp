@@ -110,3 +110,48 @@ describe('resume-gate 分支（伪造 marker）', () => {
     expect(d.legacyReconcile).toHaveBeenCalledTimes(1);
   });
 });
+
+// 审计 #11（2026-10-24 报告 P1）：resume-gate 在不传 abortController 时会**本地新建**
+// 一个传给 runner，但从不 abort —— runner 挂在 signal 上的监听器就永久泄漏。
+// 修法：退出时 abort **自己创建的那个**；调用方传进来的绝不碰。
+describe('审计 #11：resume-gate 的 controller 生命周期', () => {
+  it('未传 abortController ⇒ 退出后本地 controller 被 abort', async () => {
+    const d = makeDeps({ flags: { enabled: true } });
+    let captured: AbortSignal | undefined;
+    d.runnerRun.mockImplementation((async (_plan: unknown, signal: AbortSignal) => {
+      captured = signal;
+      return { ok: true, terminalEmitted: true };
+    }) as never);
+    const gate = await createResumeGate({
+      readFlags: d.readFlags,
+      readMarker: d.readMarker,
+      legacyReconcile: d.legacyReconcile,
+      reportError: d.reportError,
+      runner: d.runner,
+    });
+    await gate();
+    expect(captured).toBeDefined();
+    expect(captured?.aborted).toBe(true);
+  });
+
+  it('调用方传入 abortController ⇒ 退出后**不得**被 abort（负控）', async () => {
+    const d = makeDeps({ flags: { enabled: true } });
+    let captured: AbortSignal | undefined;
+    d.runnerRun.mockImplementation((async (_plan: unknown, signal: AbortSignal) => {
+      captured = signal;
+      return { ok: true, terminalEmitted: true };
+    }) as never);
+    const callerController = new AbortController();
+    const gate = await createResumeGate({
+      readFlags: d.readFlags,
+      readMarker: d.readMarker,
+      legacyReconcile: d.legacyReconcile,
+      reportError: d.reportError,
+      runner: d.runner,
+      abortController: callerController,
+    });
+    await gate();
+    expect(captured).toBe(callerController.signal);
+    expect(callerController.signal.aborted).toBe(false);
+  });
+});

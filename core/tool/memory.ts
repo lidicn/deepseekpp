@@ -425,7 +425,19 @@ async function searchMemory(
     return failure(call, 'memory_invalid_query', '检索关键词不能为空', undefined, false);
   }
 
-  const topK = Number(call.payload.topK ?? 5);
+  // 审计 #50（2026-10-24 报告 P1）：原来直接 `Number(call.payload.topK ?? 5)`。
+  // 模型传 `"abc"` / `null` / 对象时得到 NaN，一路传进 selectMemories 的 budget
+  // 计算 ⇒ **返回空结果但 ok:true**，用户看到「没有相关记忆」，其实一条都没检索。
+  // 现在只接受有限正数；非法值回落默认 5，并夹到 [1, 50]。
+  const rawTopK = call.payload.topK;
+  const parsedTopK = typeof rawTopK === 'number'
+    ? rawTopK
+    : typeof rawTopK === 'string' && rawTopK.trim() !== ''
+      ? Number(rawTopK)
+      : Number.NaN;
+  const topK = Number.isFinite(parsedTopK) && parsedTopK > 0
+    ? Math.min(50, Math.max(1, Math.floor(parsedTopK)))
+    : 5;
   const includeArchived = Boolean(call.payload.includeArchived ?? false);
 
   // 1. 拉取所有记忆

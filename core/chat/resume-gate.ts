@@ -113,6 +113,12 @@ export async function createResumeGate(deps: ResumeGateDeps): Promise<() => Prom
     };
 
     // 跑 runner
+    // 审计 #11（2026-10-24 报告 P1）：调用方不传 abortController 时这里会**本地新建**
+    // 一个，但从不 abort。runner 内部若把 listener 挂在 signal 上、而 signal 永不触发，
+    // 那些监听器就永久泄漏（SW 反复唤醒后越积越多）。
+    // 注意：只有「本函数自己创建」时才 abort —— 调用方传进来的 controller 属于调用方
+    // 的作用域，擅自 abort 会取消它的后续工作。
+    const ownsController = deps.abortController === undefined;
     const controller = deps.abortController ?? new AbortController();
     try {
       const result = await deps.runner.run(plan, controller.signal);
@@ -122,6 +128,10 @@ export async function createResumeGate(deps: ResumeGateDeps): Promise<() => Prom
       deps.reportError('resume_runner_failed', new Error(result.reason));
     } catch (error) {
       deps.reportError('resume_runner_threw', error);
+    } finally {
+      if (ownsController && !controller.signal.aborted) {
+        controller.abort(new DOMException('Resume gate finished.', 'AbortError'));
+      }
     }
 
     return deps.legacyReconcile();

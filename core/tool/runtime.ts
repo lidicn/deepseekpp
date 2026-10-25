@@ -200,18 +200,14 @@ async function executeRuntimeToolCall(
 
   // P0-2: 静默失败检测——工具执行超过 90 秒还没完成，记一条 warn
   // （默认超时是 120 秒，90 秒能在超时前就发现问题）
-  const toolStartTime = Date.now();
-  const stalledTimer = setTimeout(() => {
-    const elapsed = Math.round((Date.now() - toolStartTime) / 1000);
-    diagnosticLogBuffer.record({
-      level: 'warn',
-      source: 'tool-runtime',
-      message: `tool running long: ${identifiedCall.name} (${elapsed}s)`,
-      details: '可能卡住了，等待超时或 MCP host 无响应',
-    });
-  }, 90_000);
-  // D-08: 不要 unref。MV3 SW 本身就在等待事件，unref 会让该 stalled 告警定时器
-  // 不被调度、或随 SW 回收一起消失，导致 90s 超时前的卡住告警永不出现。
+  //
+  // 审计 #46（2026-10-24 报告 P1）：这个定时器原来在**授权之前**就起，导致两个问题：
+  //   ① `identifiedCall.parseError` 早退（下方）与授权失败分支（catch）都在
+  //      `clearTimeout(stalledTimer)` 之前 return ⇒ 定时器留 90 秒空转，
+  //      之后打出一条「tool running long」的**假告警**（那个工具压根没执行）；
+  //   ② 授权可能需要用户确认，用户斟酌两三分钟是很正常的，从授权前起算会把
+  //      这段等待算进"执行慢"。
+  // 现在把定时器移到**授权成功之后**再起（见下方 auth 之后），两个问题一并消失。
 
   if (identifiedCall.parseError) {
     const result = createParseErrorToolResult(identifiedCall, locale);
@@ -247,6 +243,22 @@ async function executeRuntimeToolCall(
     await appendAuthorizedFailureHistory(identifiedCall, result, context);
     return result;
   }
+
+  // P0-2 / 审计 #46：执行阶段的「卡住」告警定时器。
+  // 放在授权**之后**起算 —— 授权耗时（含用户确认）不算执行慢；且此位置之后
+  // 的所有 return 都在 :344/:362 的 clearTimeout 覆盖内，不会留下空转定时器。
+  const toolStartTime = Date.now();
+  const stalledTimer = setTimeout(() => {
+    const elapsed = Math.round((Date.now() - toolStartTime) / 1000);
+    diagnosticLogBuffer.record({
+      level: 'warn',
+      source: 'tool-runtime',
+      message: `tool running long: ${identifiedCall.name} (${elapsed}s)`,
+      details: '可能卡住了，等待超时或 MCP host 无响应',
+    });
+  }, 90_000);
+  // D-08: 不要 unref。MV3 SW 本身就在等待事件，unref 会让该 stalled 告警定时器
+  // 不被调度、或随 SW 回收一起消失，导致 90s 超时前的卡住告警永不出现。
 
   let result: ToolResult;
   let resolvedCall = authorized.call;
