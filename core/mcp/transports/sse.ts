@@ -65,7 +65,15 @@ async function sendSseMessage<TParams extends Record<string, unknown> | undefine
   const reader = sseResponse.body.getReader();
   const decoder = new TextDecoder();
   const postUrl = await readSseEndpoint(server, reader, decoder, timeoutMs, maxResponseBytes, signal);
-  await postSseMessage(server, postUrl, message, timeoutMs, signal);
+  // 审计 #18（2026-10-24 报告 P1）：POST 抛错时控制流直接从 :68 跳出，
+  // **reader 从未 cancel()** —— GET 连接会挂在服务端半开状态，浏览器侧 reader 泄漏。
+  // 原有的 try/finally 只覆盖后面的「读响应」阶段，不含这次 POST。
+  try {
+    await postSseMessage(server, postUrl, message, timeoutMs, signal);
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  }
 
   if (!('id' in message)) {
     reader.cancel().catch(() => undefined);
@@ -171,8 +179,15 @@ async function postSseMessage(
   }, timeoutMs);
 
   if (!response.ok) {
+    // 审计 #17（2026-10-24 报告 P1）：失败分支原来直接 throw，
+    // **响应体既不消费也不取消** —— 未消费的 body 会让底层连接在浏览器连接池里
+    // 挂到 GC 为止。高频 MCP 调用下连接池会被耗尽，后续 SSE 请求排队超时。
+    await response.body?.cancel().catch(() => undefined);
     throw new McpTransportError('mcp_sse_post_failed', `MCP SSE POST failed with HTTP ${response.status}.`);
   }
+  // 成功分支同样要处理：MCP SSE 的 POST 响应体是**空体或一次性 ACK**，
+  // 真正的数据走 GET 流。不消费就会占住连接，所以显式读完并忽略。
+  await response.body?.cancel().catch(() => undefined);
 }
 
 async function readSseResponseFromReader<TResult>(

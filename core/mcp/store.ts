@@ -268,10 +268,26 @@ export function buildMcpRequestHeaders(server: McpServerConfig): Record<string, 
   for (const header of server.headers) {
     if (header.name.trim()) headers[header.name.trim()] = header.value;
   }
+  // 审计 #20（2026-10-24 报告 P1）：多个 bearer/basic 秘密会**互相覆盖** Authorization，
+  // 后写赢、前一个静默丢失。配置里本不该出现多个 Authorization 来源，
+  // 但这里不能静默：只采用第一个并告警，让用户能定位为什么某个 key 没生效。
+  let authorizationSource: string | null = null;
   for (const secret of server.secrets) {
     if (!secret.value) continue;
-    if (secret.kind === 'bearer') headers.Authorization = `Bearer ${secret.value}`;
-    if (secret.kind === 'basic') headers.Authorization = `Basic ${secret.value}`;
+    if (secret.kind === 'bearer' || secret.kind === 'basic') {
+      if (authorizationSource !== null) {
+        console.warn(
+          `[DeepSeek++][mcp] 服务器 ${server.id} 配置了多个 Authorization 来源`
+          + `（已采用 ${authorizationSource}，忽略 ${secret.kind}），请只保留一个 bearer/basic 秘密。`,
+        );
+        continue;
+      }
+      headers.Authorization = secret.kind === 'bearer'
+        ? `Bearer ${secret.value}`
+        : `Basic ${secret.value}`;
+      authorizationSource = secret.kind;
+      continue;
+    }
     if (secret.kind === 'header' && secret.headerName?.trim()) {
       headers[secret.headerName.trim()] = secret.value;
     }
@@ -387,9 +403,14 @@ function redactSecret(secret: McpSecretValue): McpSecretValue {
   };
 }
 
-function mergeRedactedSecrets(previous: McpSecretValue[], next: McpSecretValue[]): McpSecretValue[] {
+/**
+ * 把「已脱敏」的秘密（值被替换成 `REDACTED_SECRET_VALUE`）恢复成原值。
+ *
+ * 导出以便测试直接断言（纯函数）。审计 #21 修了「匹配不到就静默清空」的问题。
+ */
+export function mergeRedactedSecrets(previous: McpSecretValue[], next: McpSecretValue[]): McpSecretValue[] {
   const usedPreviousIndexes = new Set<number>();
-  return next.map((incoming) => {
+  return next.map((incoming, incomingIndex) => {
     const secret = ensureSecretId(incoming);
     if (secret.value !== REDACTED_SECRET_VALUE) return secret;
 
@@ -411,6 +432,25 @@ function mergeRedactedSecrets(previous: McpSecretValue[], next: McpSecretValue[]
       return { ...secret, value: metadataMatch.item.value };
     }
 
+    // 审计 #21（2026-10-24 报告 P1）：元数据匹配到 0 条或 2+ 条时原来**静默**返回空值，
+    // 用户下次请求就 401，且完全不知道密钥被清空了。
+    // 先按「列表位置」兜一次（同一份配置重复保存时位置通常不变），
+    // 仍不行才返回空值，但**必须告警**，把「静默失败」变成「可观测失败」。
+    const positional = previous[incomingIndex];
+    if (
+      positional
+      && !usedPreviousIndexes.has(incomingIndex)
+      && secretMetadataMatches(secret, positional)
+    ) {
+      usedPreviousIndexes.add(incomingIndex);
+      return { ...secret, value: positional.value };
+    }
+
+    console.warn(
+      '[DeepSeek++][mcp] 未能把已脱敏的秘密匹配回原值（元数据匹配到 '
+      + `${metadataMatches.length} 条），该密钥会被清空，请重新填写。`
+      + ` kind=${secret.kind} headerName=${secret.headerName ?? ''}`,
+    );
     return { ...secret, value: '' };
   });
 }

@@ -1,4 +1,4 @@
-﻿// M1-2c: resume-tool-loop — 续跑核心循环
+// M1-2c: resume-tool-loop — 续跑核心循环
 // Phase A: 执行剩余工具调用
 // Phase B: 发 LLM 请求续轮
 // H3: 续跑可用步数 = MAX_CHAT_TOOL_STEPS - (depth+1)
@@ -101,13 +101,20 @@ export async function runResumeToolLoop(
   }
 
   // Phase B: 发 LLM 请求续轮
-  const toolResultsText = serializeToolExecutions(executions.slice(resumeIndex));
+  //
+  // 审计 #1（2026-10-24 报告 P1）：`toolResultsText` 原来只在**进入循环前**算一次。
+  // 循环体里会把新一轮执行的工具 push 进 `executions`，但这段文本从不重算 ——
+  // 于是 step>=1 的续轮请求里，**上一步刚跑完的工具结果根本没发出去**，
+  // 模型看不到自己刚发起的调用结果，会重复调用同一工具或上下文断裂。
+  // 改为每轮开头按当前 executions 重新序列化。
 
   for (let step = 0; step < remainingSteps; step++) {
     if (signal.aborted) {
       await deps.finalize();
       return { ok: false, reason: 'aborted' };
     }
+
+    const toolResultsText = serializeToolExecutions(executions.slice(resumeIndex));
 
     deps.broadcastChunk({
       type: 'AGENT_TURN_STARTED',

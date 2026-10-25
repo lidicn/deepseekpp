@@ -110,12 +110,39 @@ export async function fetchWithNetworkPolicy(
   return wrapResponseBody(response, scope, policy);
 }
 
+/**
+ * 审计 #10（2026-10-24 报告 P1）：原来只对 **string** body 计字节数，
+ * `Blob` / `FormData` / `ArrayBuffer` 全部绕过 `maxRequestBytes` 预算 ——
+ * `uploadDeepSeekFile` 传 FormData、多模态路径传 Blob，都能突破内存上限。
+ *
+ * 尽量量出真实字节数；量不出来（ReadableStream 等）返回 `null`，
+ * 由调用方保持原有「不阻断未知形状」的行为。
+ */
+function measureBodyBytes(body: BodyInit): number | null {
+  if (typeof body === 'string') return new TextEncoder().encode(body).byteLength;
+  if (body instanceof Blob) return body.size;
+  if (body instanceof ArrayBuffer) return body.byteLength;
+  if (ArrayBuffer.isView(body)) return body.byteLength;
+  if (body instanceof URLSearchParams) return new TextEncoder().encode(body.toString()).byteLength;
+  if (body instanceof FormData) {
+    let total = 0;
+    for (const [, value] of body.entries()) {
+      if (typeof value === 'string') total += new TextEncoder().encode(value).byteLength;
+      else total += value.size;
+    }
+    return total;
+  }
+  // ReadableStream 等无法预知长度：不做估算（流式路径另有上限保护）
+  return null;
+}
+
 function assertRequestWithinPolicy(
   body: BodyInit | null | undefined,
   policy: NetworkRequestPolicy,
 ): void {
-  if (typeof body !== 'string' || policy.maxRequestBytes === undefined) return;
-  const byteLength = new TextEncoder().encode(body).byteLength;
+  if (body == null || policy.maxRequestBytes === undefined) return;
+  const byteLength = measureBodyBytes(body);
+  if (byteLength === null) return;
   if (byteLength <= policy.maxRequestBytes) return;
   throw new NetworkPolicyError(
     'network_request_too_large',

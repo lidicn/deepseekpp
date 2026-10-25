@@ -43,6 +43,46 @@ describe('assertRequestWithinPolicy · byte boundary', () => {
       policy({ maxRequestBytes: 1, fetchImpl }));
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
+
+  // 审计 #10（2026-10-24 报告 P1）：原来只对 string body 计字节数，
+  // Blob / FormData / ArrayBuffer 全部绕过 maxRequestBytes 预算。
+  it('rejects an oversized Blob body without calling fetch', async () => {
+    const fetchImpl = vi.fn(async () => emptyResponse);
+    await expect(fetchWithNetworkPolicy('https://x.test', {
+      method: 'POST',
+      body: new Blob([new Uint8Array(64)]),
+    }, policy({ maxRequestBytes: 16, fetchImpl }))).rejects.toBeInstanceOf(NetworkPolicyError);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects an oversized ArrayBuffer body', async () => {
+    const fetchImpl = vi.fn(async () => emptyResponse);
+    await expect(fetchWithNetworkPolicy('https://x.test', {
+      method: 'POST',
+      body: new Uint8Array(64).buffer,
+    }, policy({ maxRequestBytes: 16, fetchImpl }))).rejects.toBeInstanceOf(NetworkPolicyError);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects an oversized FormData body', async () => {
+    const form = new FormData();
+    form.append('file', new Blob([new Uint8Array(64)]), 'a.bin');
+    const fetchImpl = vi.fn(async () => emptyResponse);
+    await expect(fetchWithNetworkPolicy('https://x.test', {
+      method: 'POST',
+      body: form,
+    }, policy({ maxRequestBytes: 16, fetchImpl }))).rejects.toBeInstanceOf(NetworkPolicyError);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('still allows a small Blob body (负控：别把正常附件挡了)', async () => {
+    const fetchImpl = vi.fn(async () => emptyResponse);
+    await fetchWithNetworkPolicy('https://x.test', {
+      method: 'POST',
+      body: new Blob([new Uint8Array(8)]),
+    }, policy({ maxRequestBytes: 16, fetchImpl }));
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('classifyNetworkFailure · caller signal / deadline / ordinary error', () => {
