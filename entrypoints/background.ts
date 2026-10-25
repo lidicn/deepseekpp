@@ -258,6 +258,7 @@ import {
   createRuntimeBoundaryErrorResponse,
   createRuntimeMessageContext,
   decodeRuntimeMessageEnvelope,
+  NATIVE_BRIDGE_ALLOWED_COMMANDS,
   RuntimeBoundaryError,
   type RuntimeMessageContext,
   type RuntimeMessageEnvelope,
@@ -1861,6 +1862,12 @@ function setupDppBridge() {
     port.onMessage.addListener((msg) => {
       // 收到来自 dpp-bridge.mjs 的请求
       if (msg && msg.type === 'request' && msg.requestId && msg.commandType) {
+        // 审计 #28：native bridge 不走授权流程，commandType 必须先过白名单。
+        // 不在白名单内的命令拒绝并告警（不静默丢弃，否则排查不到）。
+        if (!NATIVE_BRIDGE_ALLOWED_COMMANDS.has(msg.commandType as string)) {
+          console.warn('[dpp-bridge] 拒绝未授权的 commandType:', msg.commandType);
+          return;
+        }
         // 构造 runtime 消息
         const envelope = {
           type: msg.commandType,

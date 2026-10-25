@@ -91,6 +91,24 @@ export const DEEPSEEK_CONTENT_RUNTIME_COMMANDS: ReadonlySet<string> = new Set([
   'UPLOAD_DEEPSEEK_IMAGE',
 ]);
 
+/**
+ * 审计 #28：native bridge（dpp-bridge.mjs）→ port.onMessage → runtime 消息的命令白名单。
+ *
+ * native messaging 直连后台且不走授权流程，若把 msg.commandType 直接当 envelope.type，
+ * 被攻破的 native host 即可触发任意 runtime 命令。这里只放行 dpp-bridge.mjs 实际会发的
+ * 8 个记忆/自动化命令（见 scripts/bridge/dpp-bridge.mjs 的路由表），其余一律拒绝并告警。
+ */
+export const NATIVE_BRIDGE_ALLOWED_COMMANDS: ReadonlySet<string> = new Set([
+  'GET_MEMORIES',
+  'PARSE_NATURAL_LANGUAGE_MEMORY',
+  'APPLY_MEMORY_ORGANIZE_DRAFT',
+  'SAVE_MEMORY',
+  'DELETE_MEMORY',
+  'GET_AUTOMATIONS',
+  'CREATE_AUTOMATION',
+  'RUN_AUTOMATION_NOW',
+]);
+
 export const BACKGROUND_RUNTIME_PATHNAMES = [
   '/background.js',
   '/_generated_background_page.html',
