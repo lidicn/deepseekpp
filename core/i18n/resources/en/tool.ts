@@ -70,6 +70,8 @@ export const tool = {
     fetchComplete: 'Fetched {url}',
     fetchTruncatedDetail: 'Page length {length} characters, truncated to {maxLength} characters',
     fetchLengthDetail: 'Page length {length} characters',
+    unsupportedContentTypeSummary: 'Cannot extract text: {contentType}',
+    unsupportedContentTypeDetail: 'Content-Type {contentType} is not a document type we can read.\nURL: {url}',
     fetchFailed: 'Failed to fetch page',
     missingHostPermission: 'Cannot access {url}; host permission is missing.',
   },

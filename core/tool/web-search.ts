@@ -420,14 +420,22 @@ async function performWebFetch(
         // 恶意/异常 server 返回 500MB 就能撑爆 SW 内存。改成边读边限。
         text = await readTextWithByteLimit(response, WEB_FETCH_MAX_RESPONSE_BYTES);
       } else {
+        // 审计 #62：非文本 Content-Type（octet-stream / 图片 / PDF 等）无法提取文本。
+        // 旧实现返回 ok:true 但 output 里没有内容 —— 模型会以为抓取成功，接着基于
+        // 空内容胡说。改为 ok:false + 明确 error.code，让模型知道「抓到了但读不了」。
         await cancelUnusedWebResponseBody(response);
         return {
-          ok: true,
+          ok: false,
           name: call.name,
           provider: call.provider ?? createWebSearchToolProviderIdentity(locale),
-          summary: translate(locale, 'tool.web.contentType', { contentType }),
-          detail: translate(locale, 'tool.web.contentTypeDetail', { contentType, url }),
-          output: { url, contentType } as unknown as JsonValue,
+          summary: translate(locale, 'tool.web.unsupportedContentTypeSummary', { contentType }),
+          detail: translate(locale, 'tool.web.unsupportedContentTypeDetail', { contentType, url }),
+          error: {
+            code: 'UNSUPPORTED_CONTENT_TYPE',
+            message: `Cannot extract text from non-document content-type: ${contentType || '(unknown)'}`,
+            retryable: false,
+            details: { url, contentType },
+          },
         };
       }
 

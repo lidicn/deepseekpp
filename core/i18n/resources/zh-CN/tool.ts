@@ -70,6 +70,8 @@ export const tool = {
     fetchComplete: '已获取 {url}',
     fetchTruncatedDetail: '页面长度 {length} 字符，已截断至 {maxLength} 字符',
     fetchLengthDetail: '页面长度 {length} 字符',
+    unsupportedContentTypeSummary: '无法提取文本：{contentType}',
+    unsupportedContentTypeDetail: 'Content-Type {contentType} 不是可读取的文档类型。\nURL：{url}',
     fetchFailed: '获取页面失败',
     missingHostPermission: '无法访问 {url}，缺少主机权限。',
   },
