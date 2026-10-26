@@ -591,17 +591,35 @@ function sanitizeStoredFragmentGroup(
   fragments: Array<{ content: string }>,
   options: { replaceTaskComplete: boolean },
 ): void {
-  const joined = fragments.map((fragment) => fragment.content).join('');
-  const sanitizedJoined = sanitizeStoredControlText(joined, options);
-  if (sanitizedJoined !== joined) {
-    fragments.forEach((fragment, index) => {
-      fragment.content = index === 0 ? sanitizedJoined : '';
-    });
+  // 审计 #42：旧实现把所有分片 join 成一段、清洗后整体塞回 fragment[0]、其余清空，
+  // 分片结构（可能承载工具块与正文的分界）被丢弃。
+  //
+  // 新策略：把整组分片 join 后做一次完整清洗（xychart→mermaid 等规则需要看到完整
+  // 代码围栏，围栏可能被流式分片切开）。若结果与原文相同（没有跨分片规则触发），
+  // 说明各分片独立清洗即可；若有变化，按原始字符偏移把清洗后文本切回各分片，
+  // 保持分片数量与各自内容长度，不把后续分片清空。
+  const originalContents = fragments.map((f) => f.content);
+  const joined = originalContents.join('');
+  const normalized = options.replaceTaskComplete
+    ? normalizeInlineAgentNativeMarkdown(replaceTaskCompleteBlocks(sanitizeInternalPromptText(joined)))
+    : sanitizeInternalPromptText(joined);
+
+  if (normalized === joined) {
+    for (const fragment of fragments) {
+      fragment.content = sanitizeStoredControlText(fragment.content, options);
+    }
     return;
   }
 
-  for (const fragment of fragments) {
-    fragment.content = sanitizeStoredControlText(fragment.content, options);
+  let offset = 0;
+  for (let i = 0; i < fragments.length; i += 1) {
+    const len = originalContents[i].length;
+    // 最后一个分片切到 normalized 结尾：归一化后文本可能比原文长（xychart→mermaid
+    // 补回被省略的语法行），按固定偏移切会丢掉多出的尾巴。
+    fragments[i].content = i === fragments.length - 1
+      ? normalized.slice(offset)
+      : normalized.slice(offset, offset + len);
+    offset += len;
   }
 }
 

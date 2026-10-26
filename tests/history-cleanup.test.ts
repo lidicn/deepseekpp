@@ -301,7 +301,9 @@ describe('history cleanup', () => {
       '<h1>Native HTML</h1>',
       '```',
     ].join('\n'));
-    expect(restoredFragments[1].content).toBe('');
+    // 审计 #42：分片结构保留——两个分片都非空（旧实现把全部内容塞进 fragment[0]、fragment[1] 清空）。
+    expect(restoredFragments.length).toBe(2);
+    expect(restoredFragments[1].content.length).toBeGreaterThan(0);
     // Non-agent history is outside the normalization boundary.
     expect(json.data.biz_data.chat_messages[2].content).toBe(directChart);
   });
@@ -369,7 +371,48 @@ describe('history cleanup', () => {
       '```',
     ].join('\n'));
     expect(fragments[1].type).toBe('RESPONSE');
-    expect(fragments[2]).toMatchObject({ type: 'RESPONSE', content: '' });
+    // 审计 #42：RESPONSE 分片结构保留——fragments[2] 不再被清空。
+    expect(fragments[2]).toMatchObject({ type: 'RESPONSE' });
+    expect(fragments[2].content.length).toBeGreaterThan(0);
+  });
+
+  it('审计 #42：三个独立 RESPONSE 分片清洗后仍各自保留（不合并进 fragment[0]）', () => {
+    const json = {
+      data: {
+        biz_data: {
+          chat_messages: [
+            {
+              message_id: 70,
+              message_role: 'user',
+              content: [
+                '以下是工具续跑任务刚刚执行的工具结果。请像真正的 Agent 一样继续推进。',
+                '<original_task>独立分片</original_task>',
+                '<tool_results>[]</tool_results>',
+              ].join('\n'),
+            },
+            {
+              message_id: 71,
+              message_role: 'assistant',
+              parent_message_id: 70,
+              fragments: [
+                { type: 'RESPONSE', content: '第一段正文。' },
+                { type: 'RESPONSE', content: '第二段正文。' },
+                { type: 'RESPONSE', content: '第三段正文。' },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    stripToolCallsFromHistory(json, {
+      toolDescriptors: createDefaultToolDescriptors(),
+      onToolCallsRestored: () => undefined,
+    });
+    const fragments = json.data.biz_data.chat_messages[1].fragments as Array<{ content: string }>;
+    expect(fragments.length).toBe(3);
+    expect(fragments[0].content).toContain('第一段正文');
+    expect(fragments[1].content).toContain('第二段正文');
+    expect(fragments[2].content).toContain('第三段正文');
   });
 
   it('preserves user-authored task_complete examples in restored history', () => {
