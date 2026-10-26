@@ -1,5 +1,5 @@
 import type { ToolCall, ToolExecutionRecord, ToolResult } from '../types';
-import { TRUNCATION_MARKER, clampTextToBytes } from '../text/truncate-bytes';
+import { TRUNCATION_MARKER, clampJsonValueToBytes, clampTextToBytes } from '../text/truncate-bytes';
 
 export type ToolLoopExecuteTool = (call: ToolCall) => Promise<ToolExecutionRecord>;
 
@@ -108,6 +108,10 @@ export function createToolExecutionRecord(
   // 原名会让人误以为是字符数（CJK 下差 3 倍）。
   limits: { detailMaxBytes: number; outputMaxBytes: number },
 ): ToolExecutionRecord {
+  // 审计 #51：output 是结构化 JsonValue，下游（render-code-runner 等）按
+  // `typeof output === 'object'` 取 stdout/stderr。旧实现整体 JSON.stringify 压成字符串，
+  // 导致这些字段被静默丢弃。改为按字节预算裁字段、保留对象形状。
+  const clampedOutput = clampJsonValueToBytes(result.output, limits.outputMaxBytes);
   return {
     name: result.name ?? call.name,
     provider: result.provider ?? call.provider,
@@ -119,10 +123,8 @@ export function createToolExecutionRecord(
       descriptorId: result.descriptorId,
       summary: result.summary,
       detail: clampText(result.detail, limits.detailMaxBytes),
-      output: result.output === undefined
-        ? undefined
-        : clampText(JSON.stringify(result.output), limits.outputMaxBytes),
-      truncated: result.truncated,
+      output: clampedOutput.value,
+      truncated: result.truncated || clampedOutput.truncated,
       error: result.error,
     },
   };

@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   TRUNCATION_MARKER,
+  clampJsonValueToBytes,
   clampTextToBytes,
   utf8ByteLength,
 } from '../core/text/truncate-bytes';
@@ -89,5 +90,33 @@ describe('clampTextToBytes', () => {
       // 与 result-governance 的既有约定一致：装不下标记就丢标记，不丢数据。
       if (limit >= 3) expect(clamped.length).toBeGreaterThan(0);
     }
+  });
+});
+
+// 审计 #51：output 是结构化对象，必须保形状，不能整体 stringify。
+describe('clampJsonValueToBytes', () => {
+  it('未超预算时原样返回、不置 truncated', () => {
+    const value = { stdout: 'hello', stderr: '', exitCode: 0 };
+    const { value: out, truncated } = clampJsonValueToBytes(value, 10000);
+    expect(truncated).toBe(false);
+    expect(out).toEqual(value);
+  });
+
+  it('超预算时仍保留对象形状（键不丢、stdout 仍可读）', () => {
+    const value = { stdout: 'x'.repeat(5000), stderr: 'y'.repeat(5000), exitCode: 0 };
+    const { value: out, truncated } = clampJsonValueToBytes(value, 500);
+    expect(truncated).toBe(true);
+    expect(typeof out).toBe('object');
+    expect(Array.isArray(out)).toBe(false);
+    // 关键：stdout/stderr 字段还在，且是字符串
+    expect(typeof (out as Record<string, unknown>).stdout).toBe('string');
+    expect(typeof (out as Record<string, unknown>).stderr).toBe('string');
+    expect((out as Record<string, unknown>).exitCode).toBe(0);
+    // 序列化后总字节不超预算
+    expect(utf8ByteLength(JSON.stringify(out))).toBeLessThanOrEqual(500);
+  });
+
+  it('undefined 输入保持 undefined', () => {
+    expect(clampJsonValueToBytes(undefined, 100)).toEqual({ value: undefined, truncated: false });
   });
 });

@@ -126,8 +126,25 @@ describe('createToolExecutionRecord · field backfill and clamping', () => {
     expect(record.name).toBe('local_file_read');
     expect(record.descriptorId).toBe('desc-1');
     expect(record.result.detail!.endsWith('\n...[truncated]')).toBe(true);
-    const serializedOutput = record.result.output;
-    expect(typeof serializedOutput).toBe('string');
-    expect((serializedOutput as string).endsWith('\n...[truncated]')).toBe(true);
+    // 审计 #51：output 必须保持对象形状，不能整体 stringify（下游按 typeof === 'object' 取 stdout/stderr）
+    const clampedOutput = record.result.output;
+    expect(typeof clampedOutput).toBe('object');
+    expect(clampedOutput).not.toBeUndefined();
+    expect((clampedOutput as Record<string, unknown>).big).toBeTypeOf('string');
+    expect(record.result.truncated).toBe(true);
+  });
+
+  it('output 未超预算时原样保留对象形状', () => {
+    const call: ToolCall = { name: 'code_run', payload: {}, raw: '' };
+    const result: ToolResult = {
+      ok: true,
+      summary: 'ok',
+      output: { stdout: 'hello', stderr: '', exitCode: 0 },
+    };
+    const record = createToolExecutionRecord(call, result, { detailMaxBytes: 4000, outputMaxBytes: 8000 });
+    expect(typeof record.result.output).toBe('object');
+    expect((record.result.output as Record<string, unknown>).stdout).toBe('hello');
+    expect((record.result.output as Record<string, unknown>).exitCode).toBe(0);
+    expect(record.result.truncated).toBe(false);
   });
 });

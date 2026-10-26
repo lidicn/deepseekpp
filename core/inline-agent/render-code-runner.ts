@@ -32,7 +32,7 @@ export type AgentCodeRunner = (
   language: 'javascript' | 'typescript' | 'python',
 ) => Promise<AgentCodeRunResult>;
 
-function formatAgentCodeRunOutput(result: AgentCodeRunResult, labels?: Partial<InlineAgentRendererLabels>): string {
+export function formatAgentCodeRunOutput(result: AgentCodeRunResult, labels?: Partial<InlineAgentRendererLabels>): string {
   const output = result.output && typeof result.output === 'object'
     ? result.output as Record<string, unknown>
     : {};

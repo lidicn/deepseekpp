@@ -62,3 +62,63 @@ export function clampTextToBytes(
 export function utf8ByteLength(value: string): number {
   return encoder.encode(value).byteLength;
 }
+
+type JsonLike = string | number | boolean | null | JsonLike[] | { [key: string]: JsonLike };
+
+/**
+ * 按字节预算裁剪结构化 JSON 值，**保留对象形状**（不整体 stringify）。
+ *
+ * 起因（审计 #51/#15/#38/#89 同根）：上游曾用 `clampText(JSON.stringify(output), budget)`
+ * 把 JsonValue 压成字符串，下游按 `typeof output === 'object'` 取 `output.stdout` 永远落空，
+ * 代码执行的 stdout/stderr 被静默丢弃。
+ *
+ * 策略：
+ *  - 未超预算：原样返回（深拷贝一份，避免改到调用方的对象）
+ *  - 超预算：递归深拷贝，并把每个字符串叶子按「预算 ÷ 字符串叶子数」截断；
+ *    非字符串叶子原样保留。这样对象的键结构、数组形状、数值都不变。
+ *
+ * 返回 `{ value, truncated }`；调用方把 `truncated` 写进 record.truncated。
+ */
+export function clampJsonValueToBytes<T extends JsonLike>(
+  value: T | undefined,
+  maxBytes: number,
+): { value: T | undefined; truncated: boolean } {
+  if (value === undefined) return { value: undefined, truncated: false };
+  if (utf8ByteLength(JSON.stringify(value)) <= maxBytes) return { value, truncated: false };
+
+  const stringLeaves: string[] = [];
+  const collectLeaves = (node: JsonLike): void => {
+    if (typeof node === 'string') {
+      stringLeaves.push(node);
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) collectLeaves(item);
+      return;
+    }
+    if (node && typeof node === 'object') {
+      for (const k of Object.keys(node)) collectLeaves((node as Record<string, JsonLike>)[k]);
+    }
+  };
+  collectLeaves(value);
+
+  // 给 JSON 结构开销（键名、括号、引号、逗号）留 25% 余量：只按叶子均分会把
+  // 序列化后的总字节推过预算（结构字节不可省）。
+  const contentBudget = Math.floor(maxBytes * 0.75);
+  const perLeafBudget = stringLeaves.length > 0
+    ? Math.max(0, Math.floor(contentBudget / stringLeaves.length))
+    : maxBytes;
+
+  const clone = (node: JsonLike): JsonLike => {
+    if (typeof node === 'string') return clampTextToBytes(node, perLeafBudget) ?? '';
+    if (Array.isArray(node)) return node.map(clone);
+    if (node && typeof node === 'object') {
+      const out: Record<string, JsonLike> = {};
+      for (const k of Object.keys(node)) out[k] = clone((node as Record<string, JsonLike>)[k]);
+      return out;
+    }
+    return node;
+  };
+
+  return { value: clone(value) as T, truncated: true };
+}
