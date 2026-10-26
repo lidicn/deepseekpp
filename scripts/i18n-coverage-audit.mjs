@@ -64,6 +64,21 @@ const pathAllowlist = new Map([
   ['core/tool/runtime.ts', 'tool runtime internal diagnostics recorded to the diagnostic log buffer'],
   ['core/trace/report.ts', 'execution trace report internal diagnostics'],
   ['entrypoints/background/chat-runtime-service.ts', 'background chat runtime internal diagnostics'],
+  // 2026-10-26: S2 i18n 债务清理第二批整文件放行。
+  // LLM 提示词：给模型的指令，不是给人看的 UI 文案；本地化会改变模型输出行为，
+  // 所以绝不抽进 i18n 资源。其中还含解析中文时间表达所需的正则字面量。
+  ['core/automation/natural-language-create.ts', 'LLM system prompt for automation drafting + zh-CN time-expression regexes; not UI copy, localizing would change model output'],
+  // 同义词匹配数据：中文字面量是匹配用户输入所必需的（如「截断」↔ truncate），
+  // 不是界面文案，翻译会破坏召回。
+  ['core/memory/selector.ts', 'zh-CN synonym pairs required to match user input; not display text, localizing would break recall'],
+  // 诊断 console.warn：写进诊断日志，不渲染产品 UI。
+  ['core/mcp/store.ts', 'MCP store diagnostics written to the console/diagnostic log, never rendered in product UI'],
+  // 该模块尚未接线（W22 待交付），不显示给用户；UI 文案映射未来接线时再走 i18n。
+  ['core/errors/user-message.ts', 'W22 user-message mapping module is not wired yet (@deferred); not surfaced to users today'],
+  // 记忆记录的 name/description 数据字段（自动提取的默认命名），不是界面文案。
+  ['core/memory/extractor-hook.ts', 'auto-extracted memory record name/description data fields, not UI copy'],
+  // 诊断 console.warn：写进日志，不渲染产品 UI。
+  ['core/chat/store.ts', 'chat store console.warn diagnostic, never rendered in product UI'],
 ]);
 
 const lineAllowlist = [
@@ -231,6 +246,164 @@ const lineAllowlist = [
     path: 'core/prompt/catalog-template.ts',
     includes: '示例体可由 schema 推导',
     reason: 'model-facing tool-catalog note about schema-derived examples; prompt content aimed at the model, not UI copy',
+  },
+  // ---- 2026-10-26 S2：natural-language-organize 剩余假阳性 ----
+  {
+    path: 'core/memory/natural-language-organize.ts',
+    includes: '记忆 ${index + 1}',
+    reason: 'fallback memory record name data field, not UI copy',
+  },
+  {
+    path: 'core/memory/natural-language-organize.ts',
+    includes: '罗列|全部|列出|清单',
+    reason: 'zh-CN instruction regex to detect "list all" commands from user input',
+  },
+  {
+    path: 'core/memory/natural-language-organize.ts',
+    includes: '罗列全部记忆',
+    reason: 'internal diagnostic reason describing which rule matched; surfaced as a technical hint, not product UI copy',
+  },
+  {
+    path: 'core/memory/natural-language-organize.ts',
+    includes: '删[除了]?',
+    reason: 'zh-CN instruction regex to detect "delete Nth" commands from user input',
+  },
+  {
+    path: 'core/memory/natural-language-organize.ts',
+    includes: '用户指定删除',
+    reason: 'internal diagnostic reason describing which rule matched; not product UI copy',
+  },
+  {
+    path: 'core/memory/natural-language-organize.ts',
+    includes: '归档\\s*第?',
+    reason: 'zh-CN instruction regex to detect "archive Nth" commands from user input',
+  },
+  {
+    path: 'core/memory/natural-language-organize.ts',
+    includes: '用户指定归档',
+    reason: 'internal diagnostic reason describing which rule matched; not product UI copy',
+  },
+  {
+    path: 'core/memory/natural-language-organize.ts',
+    includes: '清理|过期|无用|旧记忆',
+    reason: 'zh-CN instruction regex to detect "clean stale" commands from user input',
+  },
+  {
+    path: 'core/memory/natural-language-organize.ts',
+    includes: '清理 ${stale.length} 条过期记忆',
+    reason: 'internal diagnostic reason describing which rule matched; not product UI copy',
+  },
+  {
+    path: 'core/memory/natural-language-organize.ts',
+    includes: '合并|重复|去重',
+    reason: 'zh-CN instruction regex to detect "merge duplicates" commands from user input',
+  },
+  {
+    path: 'core/memory/natural-language-organize.ts',
+    includes: '合并 ${group.length} 条相似记忆',
+    reason: 'internal diagnostic reason describing which rule matched; not product UI copy',
+  },
+  // ---- 2026-10-26 S2：background.ts 诊断 console 日志 ----
+  {
+    path: 'entrypoints/background.ts',
+    includes: 'LLM 调用失败，回退到本地规则',
+    reason: 'console.warn diagnostic in the SW; never rendered in product UI',
+  },
+  {
+    path: 'entrypoints/background.ts',
+    includes: '自动提取记忆失败',
+    reason: 'console.error diagnostic in the SW; never rendered in product UI',
+  },
+  {
+    path: 'entrypoints/background.ts',
+    includes: '拒绝未授权的 commandType',
+    reason: 'console.warn for the native-bridge commandType whitelist rejection; diagnostic, not UI copy',
+  },
+  {
+    path: 'entrypoints/background.ts',
+    includes: 'native host 未配置或被拒绝',
+    reason: 'console.log native-bridge reconnect diagnostic; not UI copy',
+  },
+  {
+    path: 'entrypoints/background.ts',
+    includes: '已达重连上限',
+    reason: 'console.log native-bridge reconnect diagnostic; not UI copy',
+  },
+  {
+    path: 'entrypoints/background.ts',
+    includes: '次重连',
+    reason: 'console.log native-bridge reconnect diagnostic; not UI copy',
+  },
+  // ---- 2026-10-26 S2：content.ts 续轮正则 / console 日志 / 诊断 reason ----
+  {
+    path: 'entrypoints/content.ts',
+    includes: '继续(?:完成|往下|接着|说|写|生成)',
+    reason: 'zh-CN continuation regex detecting user "continue" commands in Chinese model output',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: '续轮启动失败',
+    reason: 'console.error diagnostic; never rendered in product UI',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: 'RESPONSE_COMPLETE 触发',
+    reason: 'console.log memory-extractor diagnostic; not UI copy',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: '已提取过，跳过重复完成事件',
+    reason: 'console.log memory-extractor diagnostic; not UI copy',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: '发送 EXTRACT_MEMORY_FROM_CONVERSATION 消息',
+    reason: 'console.log memory-extractor diagnostic; not UI copy',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: '发送消息失败',
+    reason: 'console.error memory-extractor diagnostic; not UI copy',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: '跳过：chatSessionId 或 originalPrompt 为空',
+    reason: 'console.log memory-extractor diagnostic; not UI copy',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: 'complete 被判定为本循环自己发起的续轮响应',
+    reason: 'recordAgentStartDecision diagnostic reason; internal trace, not UI copy',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: '已有 inline agent 在跑，弹并发确认框',
+    reason: 'recordAgentStartDecision diagnostic reason; internal trace, not UI copy',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: '用户在并发确认框里选择不中断',
+    reason: 'recordAgentStartDecision diagnostic reason; internal trace, not UI copy',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: '授权丢失，自动重新授权并重试',
+    reason: 'console.warn auto-reauth diagnostic; not UI copy',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: '自动重新授权失败',
+    reason: 'console.error auto-reauth diagnostic; not UI copy',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: '上传失败',
+    reason: 'console.warn media-upload diagnostic; not UI copy',
+  },
+  {
+    path: 'entrypoints/content.ts',
+    includes: '上传异常',
+    reason: 'console.warn media-upload diagnostic; not UI copy',
   },
 ];
 
