@@ -14,8 +14,15 @@ export async function interceptHistoryResponse(
   try {
     const json = await response.json();
     stripToolCallsFromHistory(json, getHistoryCleanupOptions());
+    // 审计 #8：清洗后 body 长度变了，但 response.headers 还带着服务端原来的
+    // content-length。复制一份 headers 再删掉 content-length，让浏览器自己重算。
+    // PM 真机未找到这条咬到用户的证据（两次推论均被自查推翻，账本 §44.7），
+    // 判为低危仅加固 —— 不删 content-length 在 Chrome 下通常会被浏览器忽略，
+    // 但留着旧值是隐患。
+    const headers = new Headers(response.headers);
+    headers.delete("content-length");
     return new Response(JSON.stringify(json), {
-      headers: response.headers,
+      headers,
       status: response.status,
       statusText: response.statusText,
     });
