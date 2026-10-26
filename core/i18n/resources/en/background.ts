@@ -42,4 +42,8 @@ export const background = {
     maxToolSteps: '(Maximum tool-call steps reached; conversation ended)',
     interrupted: 'The assistant was interrupted. Please send your message again.',
   },
+  memoryOrganize: {
+    notLoggedIn: 'Sign in to DeepSeek first, then use natural language organize.',
+    llmUnavailable: 'LLM unavailable, fell back to local rules',
+  },
 } as const;

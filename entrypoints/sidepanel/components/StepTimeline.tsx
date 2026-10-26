@@ -1,3 +1,4 @@
+import { useI18n } from '../i18n';
 import {
   buildStepTimeline,
   formatToolDuration,
@@ -15,6 +16,7 @@ interface StepTimelineProps {
  * 不编造"无工具"的空步。
  */
 export default function StepTimeline({ runs }: StepTimelineProps) {
+  const { t } = useI18n();
   const groups = buildStepTimeline(runs);
   if (groups.length === 0) return null;
 
@@ -27,8 +29,11 @@ export default function StepTimeline({ runs }: StepTimelineProps) {
           data-step={group.step === null ? 'flat' : group.step}
         >
           <div className="ds-step-title">
-            {group.step === null ? '工具序列' : `step ${group.step + 1}`}
-            {'  '}({formatToolDuration(group.totalMs)})  工具 {group.tools.length} 个
+            {group.step === null
+              ? t('sidepanel.stepTimeline.flatGroup')
+              : t('sidepanel.stepTimeline.groupTitle', { step: group.step + 1 })}
+            {'  '}
+            {t('sidepanel.stepTimeline.toolSummary', { duration: formatToolDuration(group.totalMs), count: group.tools.length })}
           </div>
           {group.tools.map((tool, toolIndex) => (
             <div

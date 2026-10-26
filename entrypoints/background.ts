@@ -22,6 +22,7 @@ import {
   buildOrganizeSystemPrompt,
   buildOrganizeUserPrompt,
 } from '../core/memory/organize-prompt';
+import { translate } from '../core/i18n';
 import {
   getAllSkillSources,
   getAllSkills,
@@ -454,6 +455,9 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
           try {
             const memories = await getAllMemories();
             const snapshots = buildMemorySnapshots(memories);
+            const { locale: organizeLocale } = await getResolvedLocaleState();
+            const organizeT = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) =>
+              translate(organizeLocale, key, params);
 
             // 先尝试用 LLM 生成 draft
             try {
@@ -464,7 +468,7 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
               // 用 loadOrRefreshClientHeaders 取 token（background 环境可用）
               const clientHeaders = await loadOrRefreshClientHeaders();
               if (!clientHeaders) {
-                throw new Error('未登录，无法使用自然语言整理');
+                throw new Error(translate(organizeLocale, 'background.memoryOrganize.notLoggedIn'));
               }
               const chatSessionId = await deepSeekAutomationClient.createChatSession(clientHeaders, {});
               const powHeaders = await deepSeekAutomationClient.createPowHeaders(clientHeaders, {});
@@ -481,12 +485,12 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
               }, {});
 
               // 用 LLM 输出生成 draft（失败时自动回退到本地规则）
-              const draft = organizeMemoriesFromLlm(instruction, snapshots, turn.assistantText);
+              const draft = organizeMemoriesFromLlm(instruction, snapshots, turn.assistantText, organizeT);
               return { ok: true as const, draft };
             } catch (llmError) {
               // LLM 失败，回退到本地规则
               console.warn('[memory-organize] LLM 调用失败，回退到本地规则:', llmError);
-              const draft = organizeMemoriesFromNaturalLanguageCore({ instruction, memories: snapshots });
+              const draft = organizeMemoriesFromNaturalLanguageCore({ instruction, memories: snapshots }, organizeT);
               return {
                 ok: true as const,
                 draft: {
@@ -495,7 +499,7 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
                     {
                       code: 'llm_unavailable',
                       severity: 'warning',
-                      message: 'LLM 不可用，已回退到本地规则',
+                      message: translate(organizeLocale, 'background.memoryOrganize.llmUnavailable'),
                     },
                     ...draft.issues,
                   ],

@@ -5674,7 +5674,7 @@ function ensureAgentStatusBar(): HTMLElement | null {
   const detailBtn = document.createElement("button");
   detailBtn.type = "button";
   detailBtn.className = "dpp-status-bar-btn";
-  detailBtn.textContent = "详情";
+  detailBtn.textContent = contentT("content.agent.statusBarDetail");
   detailBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     if (inlineAgentContainer) {
@@ -5685,7 +5685,7 @@ function ensureAgentStatusBar(): HTMLElement | null {
   const stopBtn = document.createElement("button");
   stopBtn.type = "button";
   stopBtn.className = "dpp-status-bar-btn stop";
-  stopBtn.textContent = "停止";
+  stopBtn.textContent = contentT("content.agent.stop");
   stopBtn.addEventListener("click", (e) => {
     e.stopPropagation();
     stopInlineAgent();
@@ -5720,10 +5720,10 @@ function updateAgentStatusBar(
   let html = "";
   switch (phase) {
     case "starting":
-      html = `<strong>deepseek++</strong> 正在启动自动续轮…`;
+      html = `<strong>deepseek++</strong> ${contentT("content.agent.statusBarStarting")}`;
       break;
     case "running": {
-      const parts = [`<strong>deepseek++</strong> 执行中`, `第 ${step + 1} 步`];
+      const parts = [`<strong>deepseek++</strong> ${contentT("content.agent.statusBarRunning")}`, contentT("content.agent.statusBarStep", { step: step + 1 })];
       // 审计 #30（2026-10-24 报告 P1）：tool 名来自 msg.call.name，MCP 工具名由
       // **外部服务器**提供，属不可信数据；直接拼 innerHTML 即注入口。
       // 同函数的 complete/error 分支此前已补 escapeHtml，此处是漏掉的一处。
@@ -5734,13 +5734,13 @@ function updateAgentStatusBar(
     }
     case "complete":
       // 审计 P1-56：message 可能含错误链路/LLM 输出片段，必须转义再拼 innerHTML
-      html = `<strong>deepseek++</strong> 任务完成 ${escapeHtml(String(options?.message ?? ""))}`;
+      html = `<strong>deepseek++</strong> ${contentT("content.agent.statusBarComplete", { message: escapeHtml(String(options?.message ?? "")) })}`;
       break;
     case "error":
-      html = `<strong>deepseek++</strong> 执行出错 ${escapeHtml(String(options?.message ?? ""))}`;
+      html = `<strong>deepseek++</strong> ${contentT("content.agent.statusBarError", { message: escapeHtml(String(options?.message ?? "")) })}`;
       break;
     case "stopped":
-      html = `<strong>deepseek++</strong> 已停止`;
+      html = `<strong>deepseek++</strong> ${contentT("content.agent.statusBarStopped")}`;
       break;
   }
   textEl.innerHTML = html;
@@ -5893,13 +5893,13 @@ function showAgentConcurrencyConfirm(): Promise<boolean> {
     icon.textContent = "⚠️";
     const title = document.createElement("h3");
     title.className = "dpp-concurrency-title";
-    title.textContent = "任务正在执行中";
+    title.textContent = contentT("content.agent.concurrencyTitle");
     header.appendChild(icon);
     header.appendChild(title);
 
     const body = document.createElement("div");
     body.className = "dpp-concurrency-body";
-    body.innerHTML = `deepseek++ 当前有任务正在<strong>后台执行</strong>。发送新消息将中断当前任务，可能导致已完成的工作丢失。<br><br>确定要中断当前任务并发送新消息吗？`;
+    body.innerHTML = contentT("content.agent.concurrencyBody");
 
     const footer = document.createElement("div");
     footer.className = "dpp-concurrency-footer";
@@ -5907,12 +5907,12 @@ function showAgentConcurrencyConfirm(): Promise<boolean> {
     const cancelBtn = document.createElement("button");
     cancelBtn.type = "button";
     cancelBtn.className = "dpp-concurrency-btn cancel";
-    cancelBtn.textContent = "取消";
+    cancelBtn.textContent = contentT("content.agent.concurrencyCancel");
 
     const confirmBtn = document.createElement("button");
     confirmBtn.type = "button";
     confirmBtn.className = "dpp-concurrency-btn confirm";
-    confirmBtn.textContent = "中断并发送";
+    confirmBtn.textContent = contentT("content.agent.concurrencyConfirm");
 
     const cleanup = (result: boolean) => {
       overlay.remove();
@@ -6236,7 +6236,7 @@ function handleInlineAgentLoopEvent(
       schedulePetIdle(PET_FEEDBACK_DELAY_MS);
       updateAgentStatusBar("complete", {
         step: msg.totalSteps - 1,
-        message: `（${msg.totalSteps} 步 · ${msg.totalTools} 工具）`,
+        message: contentT("content.agent.stepsTools", { steps: msg.totalSteps, tools: msg.totalTools }),
       });
       scheduleRemoveAgentStatusBar(4000);
       return terminalTask;

@@ -795,8 +795,8 @@ export default function ChatPage() {
           <div style={{ marginBottom: 6 }}>
             <StatusMessage tone={budget.level === 'critical' ? 'error' : 'warning'}>
               {budget.level === 'critical'
-                ? `上下文接近建议上限（本地粗估约剩 ${budget.remaining} token），建议新建对话以避免中断。`
-                : `上下文偏长（本地粗估约剩 ${budget.remaining} token），接近建议长度。`}
+                ? t('sidepanel.chatBudget.critical', { remaining: budget.remaining })
+                : t('sidepanel.chatBudget.warn', { remaining: budget.remaining })}
             </StatusMessage>
           </div>
         )}

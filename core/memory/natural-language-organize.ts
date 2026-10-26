@@ -6,6 +6,13 @@
  * 执行必须由上层拿到用户确认后走 `applyMemoryOrganizeDraft`。
  */
 
+import { translate, type LocaleMessageKey, type MessageParams } from '../i18n';
+
+/** 本模块用于把用户可见的 summary/issue 文案翻译到当前 locale。 */
+type OrganizeT = (key: LocaleMessageKey, params?: MessageParams) => string;
+/** 测试与未注入 translator 的调用方默认走 zh-CN，保持既有行为。 */
+const defaultOrganizeT: OrganizeT = (key, params) => translate('zh-CN', key, params);
+
 export type MemoryOrganizeOperationType =
   | 'list_all'
   | 'delete'
@@ -170,6 +177,7 @@ export function selectStaleMemorySnapshots(
 export function planMemoryOrganizeLocally(
   instruction: string,
   snapshots: MemorySnapshot[],
+  t: OrganizeT = defaultOrganizeT,
 ): MemoryOrganizeDraft {
   const issues: { code: string; severity: 'info' | 'warning' | 'error'; message: string }[] = [];
   const operations: MemoryOrganizeOperation[] = [];
@@ -178,10 +186,10 @@ export function planMemoryOrganizeLocally(
   if (!text) {
     return {
       operations: [],
-      summary: '请输入整理指令',
+      summary: t('sidepanel.memoryOrganize.summaryEmpty'),
       ready: false,
       baseTime: Date.now(),
-      issues: [{ code: 'instruction_empty', severity: 'error', message: 'Instruction is empty.' }],
+      issues: [{ code: 'instruction_empty', severity: 'error', message: t('sidepanel.memoryOrganize.issueInstructionEmpty') }],
     };
   }
 
@@ -232,7 +240,7 @@ export function planMemoryOrganizeLocally(
   }
 
   if (operations.length === 0) {
-    issues.push({ code: 'unknown_instruction', severity: 'warning', message: '未识别到具体操作，请描述你想怎么整理记忆' });
+    issues.push({ code: 'unknown_instruction', severity: 'warning', message: t('sidepanel.memoryOrganize.issueUnknown') });
   }
 
   // Scope 保护：检查跨 scope 的破坏性操作
@@ -247,7 +255,7 @@ export function planMemoryOrganizeLocally(
       issues.push({
         code: 'cross_scope_operation',
         severity: 'warning',
-        message: `检测到跨 scope 操作（${Array.from(scopes).join(' / ')}），请确认`,
+        message: t('sidepanel.memoryOrganize.issueCrossScope', { scopes: Array.from(scopes).join(' / ') }),
       });
       break;
     }
@@ -255,7 +263,9 @@ export function planMemoryOrganizeLocally(
 
   return {
     operations,
-    summary: operations.length === 0 ? '未识别到具体操作' : `共 ${operations.length} 个操作`,
+    summary: operations.length === 0
+      ? t('sidepanel.memoryOrganize.summaryNoOperation')
+      : t('sidepanel.memoryOrganize.summaryCount', { count: operations.length }),
     ready: !issues.some((i) => i.severity === 'error'),
     baseTime: Date.now(),
     issues,
@@ -315,20 +325,21 @@ export function organizeMemoriesFromLlm(
   instruction: string,
   memories: MemorySnapshot[],
   llmOutput: string,
+  t: OrganizeT = defaultOrganizeT,
 ): MemoryOrganizeDraft {
   const llmDraft = parseLlmOutputAsDraft(llmOutput);
   if (llmDraft) {
     return llmDraft;
   }
   // 回退到本地规则
-  const localDraft = planMemoryOrganizeLocally(instruction, memories);
+  const localDraft = planMemoryOrganizeLocally(instruction, memories, t);
   return {
     ...localDraft,
     issues: [
       {
         code: 'llm_output_invalid',
         severity: 'warning',
-        message: 'LLM 输出不合法，已回退到本地规则',
+        message: t('sidepanel.memoryOrganize.issueLlmOutputInvalid'),
       },
       ...localDraft.issues,
     ],
@@ -348,8 +359,9 @@ export type OrganizeMemoriesDraftResult = MemoryOrganizeDraft;
 
 export function organizeMemoriesFromNaturalLanguage(
   request: NaturalLanguageOrganizeRequest,
+  t?: OrganizeT,
 ): OrganizeMemoriesDraftResult {
-  return planMemoryOrganizeLocally(request.instruction, request.memories);
+  return planMemoryOrganizeLocally(request.instruction, request.memories, t);
 }
 
 /* ------------------------------------------------------------------ *

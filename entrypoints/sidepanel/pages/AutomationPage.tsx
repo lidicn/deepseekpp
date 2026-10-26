@@ -187,7 +187,7 @@ export default function AutomationPage() {
 
   const generateDraft = async () => {
     if (!nlInput.trim()) {
-      banner.show('error', '请输入自然语言描述');
+      banner.show('error', t('sidepanel.automationPage.nlInputRequired'));
       return;
     }
     setNlLoading(true);
@@ -235,7 +235,7 @@ export default function AutomationPage() {
     setNlInput('');
     setNlDraft(null);
     void chrome.storage.local.remove('automation_nl_state');
-    banner.show('success', '已生成 draft，请在表单中进一步编辑后保存');
+    banner.show('success', t('sidepanel.automationPage.nlDraftReady'));
   };
 
   const startEdit = (automation: Automation) => {
@@ -358,12 +358,12 @@ export default function AutomationPage() {
             <button
               onClick={startNaturalLanguage}
               className="ds-btn-secondary px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-150 flex items-center gap-1"
-              title="用自然语言创建自动化"
+              title={t('sidepanel.automationPage.nlButtonTitle')}
             >
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
               </svg>
-              ✨ 自然语言
+              {t('sidepanel.automationPage.nlButton')}
             </button>
             <button
               onClick={startCreate}
@@ -385,7 +385,7 @@ export default function AutomationPage() {
       {showNLDialog && (
         <div className="animate-slide-down ds-card p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <div className="text-sm font-medium">✨ 自然语言创建自动化</div>
+            <div className="text-sm font-medium">{t('sidepanel.automationPage.nlDialogTitle')}</div>
             <button
               onClick={() => setShowNLDialog(false)}
               className="text-gray-400 hover:text-gray-600"
@@ -397,7 +397,7 @@ export default function AutomationPage() {
           <textarea
             value={nlInput}
             onChange={(e) => setNlInput(e.target.value)}
-            placeholder="例如：每天早上9点给我发深圳天气"
+            placeholder={t('sidepanel.automationPage.nlPlaceholder')}
             className="w-full h-20 px-3 py-2 text-sm border rounded-lg resize-none"
           />
 
@@ -407,7 +407,7 @@ export default function AutomationPage() {
               disabled={nlLoading || !nlInput.trim()}
               className="ds-btn-primary px-4 py-1.5 text-xs font-medium text-white rounded-lg disabled:opacity-50"
             >
-              {nlLoading ? '生成中...' : '生成并填充到表单'}
+              {nlLoading ? t('sidepanel.automationPage.nlGenerating') : t('sidepanel.automationPage.nlGenerateFill')}
             </button>
           </div>
         </div>

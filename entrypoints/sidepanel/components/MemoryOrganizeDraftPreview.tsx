@@ -1,25 +1,26 @@
 import type { MemoryOrganizeDraft, MemoryOrganizeOperationType } from '../../../core/memory/natural-language-organize';
+import { useI18n } from '../i18n';
 
 interface MemoryOrganizeDraftPreviewProps {
   draft: MemoryOrganizeDraft;
 }
 
-const OPERATION_LABELS: Record<MemoryOrganizeOperationType, string> = {
-  list_all: '列出全部',
-  delete: '删除',
-  archive: '归档',
-  pin: '置顶',
-  unpin: '取消置顶',
-  merge: '合并',
-  retitle: '重命名',
-  retag: '重新打标',
-  compress: '压缩',
-  clean_stale: '清理过期',
-};
-
 const DESTRUCTIVE_OPS: MemoryOrganizeOperationType[] = ['delete', 'merge', 'clean_stale'];
 
 export default function MemoryOrganizeDraftPreview({ draft }: MemoryOrganizeDraftPreviewProps) {
+  const { t } = useI18n();
+  const OPERATION_LABELS: Record<MemoryOrganizeOperationType, string> = {
+    list_all: t('sidepanel.memoryOrganize.listAll'),
+    delete: t('sidepanel.memoryOrganize.delete'),
+    archive: t('sidepanel.memoryOrganize.archive'),
+    pin: t('sidepanel.memoryOrganize.pin'),
+    unpin: t('sidepanel.memoryOrganize.unpin'),
+    merge: t('sidepanel.memoryOrganize.merge'),
+    retitle: t('sidepanel.memoryOrganize.retitle'),
+    retag: t('sidepanel.memoryOrganize.retag'),
+    compress: t('sidepanel.memoryOrganize.compress'),
+    clean_stale: t('sidepanel.memoryOrganize.cleanStale'),
+  };
   const destructiveOps = draft.operations.filter((op) => DESTRUCTIVE_OPS.includes(op.type));
   const hasDestructiveOps = destructiveOps.length > 0;
 
@@ -51,7 +52,7 @@ export default function MemoryOrganizeDraftPreview({ draft }: MemoryOrganizeDraf
       {/* Operations list */}
       {draft.operations.length > 0 && (
         <div className="space-y-2">
-          <div className="text-xs font-medium text-gray-500">操作列表（{draft.operations.length}）</div>
+          <div className="text-xs font-medium text-gray-500">{t('sidepanel.memoryOrganize.operationList', { count: draft.operations.length })}</div>
           <div className="space-y-1">
             {draft.operations.map((op, index) => (
               <div
@@ -71,17 +72,17 @@ export default function MemoryOrganizeDraftPreview({ draft }: MemoryOrganizeDraf
                     <span className="text-gray-500">IDs: {op.memoryIds.join(', ')}</span>
                   )}
                   {DESTRUCTIVE_OPS.includes(op.type) && (
-                    <span className="text-red-500 text-[10px]">⚠️ 破坏性</span>
+                    <span className="text-red-500 text-[10px]">{t('sidepanel.memoryOrganize.destructiveBadge')}</span>
                   )}
                 </div>
                 {op.reason && (
                   <div className="text-gray-500 mt-0.5">{op.reason}</div>
                 )}
                 {op.newTitle && (
-                  <div className="text-gray-500 mt-0.5">新标题: {op.newTitle}</div>
+                  <div className="text-gray-500 mt-0.5">{t('sidepanel.memoryOrganize.newTitle', { value: op.newTitle })}</div>
                 )}
                 {op.newTags && (
-                  <div className="text-gray-500 mt-0.5">新标签: {op.newTags.join(', ')}</div>
+                  <div className="text-gray-500 mt-0.5">{t('sidepanel.memoryOrganize.newTags', { value: op.newTags.join(', ') })}</div>
                 )}
               </div>
             ))}
@@ -92,7 +93,7 @@ export default function MemoryOrganizeDraftPreview({ draft }: MemoryOrganizeDraf
       {/* Destructive warning */}
       {hasDestructiveOps && (
         <div className="text-xs text-red-600 bg-red-50 px-2 py-1.5 rounded">
-          ⚠️ 检测到 {destructiveOps.length} 个破坏性操作，需要二次确认。
+          {t('sidepanel.memoryOrganize.destructiveWarning', { count: destructiveOps.length })}
         </div>
       )}
     </div>

@@ -56,10 +56,10 @@ export default function MemoryPage() {
     );
     if (hasDestructiveOps) {
       const approved = await confirm({
-        title: '确认执行破坏性操作',
-        message: '检测到破坏性操作（删除/合并/清理），执行后不可恢复。确认继续？',
-        confirmLabel: '确认执行',
-        cancelLabel: '取消',
+        title: t('sidepanel.memoryPage.destructiveTitle'),
+        message: t('sidepanel.memoryPage.destructiveMessage'),
+        confirmLabel: t('sidepanel.memoryPage.destructiveConfirm'),
+        cancelLabel: t('common.cancel'),
       });
       if (!approved) return;
       await applyOrganizeDraft(true);
@@ -89,7 +89,7 @@ export default function MemoryPage() {
             onClick={toggleOrganizePanel}
             className="px-3 py-1.5 text-xs font-medium text-gray-700 bg-gray-100 rounded-lg transition-all duration-150 hover:bg-gray-200"
           >
-            ✨ 自然语言整理
+            {t('sidepanel.memoryPage.organizeButton')}
           </button>
           <button
             onClick={toggleCreateForm}
@@ -114,7 +114,7 @@ export default function MemoryPage() {
               <textarea
                 value={organizeInput}
                 onChange={(e) => setOrganizeInput(e.target.value)}
-                placeholder="描述你想怎么整理记忆，如：给偏好类记忆打上 preference tag"
+                placeholder={t('sidepanel.memoryPage.organizePlaceholder')}
                 className="w-full h-20 px-3 py-2 text-sm border border-gray-200 rounded-lg resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               />
               <div className="flex items-center gap-2">
@@ -123,13 +123,13 @@ export default function MemoryPage() {
                   disabled={!organizeInput.trim() || organizeLoading}
                   className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg transition-all duration-150 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {organizeLoading ? '生成中...' : '生成整理方案'}
+                  {organizeLoading ? t('sidepanel.memoryPage.organizeGenerating') : t('sidepanel.memoryPage.organizeGenerate')}
                 </button>
                 <button
                   onClick={cancelOrganize}
                   className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-200 rounded-lg transition-all duration-150 hover:bg-gray-300"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
               </div>
             </>
@@ -142,13 +142,13 @@ export default function MemoryPage() {
                   disabled={organizeLoading || organizeDraft.operations.length === 0}
                   className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg transition-all duration-150 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {organizeLoading ? '执行中...' : '确认执行'}
+                  {organizeLoading ? t('sidepanel.memoryPage.organizeApplying') : t('sidepanel.memoryPage.organizeApply')}
                 </button>
                 <button
                   onClick={cancelOrganize}
                   className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-200 rounded-lg transition-all duration-150 hover:bg-gray-300"
                 >
-                  取消
+                  {t('common.cancel')}
                 </button>
               </div>
             </>

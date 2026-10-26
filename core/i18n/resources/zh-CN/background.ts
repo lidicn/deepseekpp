@@ -42,4 +42,8 @@ export const background = {
     maxToolSteps: '(达到最大工具调用步数，对话结束)',
     interrupted: '助手被中断，请重新发送你的消息。',
   },
+  memoryOrganize: {
+    notLoggedIn: '未登录，无法使用自然语言整理',
+    llmUnavailable: 'LLM 不可用，已回退到本地规则',
+  },
 } as const;

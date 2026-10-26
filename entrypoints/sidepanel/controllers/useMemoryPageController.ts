@@ -162,7 +162,7 @@ export function useMemoryPageController(t: Translator, confirm: Confirm, feedbac
         if (failCount === 0) {
           feedback.clear();
         } else {
-          showOperationError(`${successCount} 条成功，${failCount} 条失败`);
+          showOperationError(t('sidepanel.memoryPage.organizeResult', { success: successCount, fail: failCount }));
         }
         setOrganizeDraft(null);
         setOrganizeInput('');
