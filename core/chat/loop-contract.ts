@@ -2,6 +2,7 @@
 // chat-runtime-service.ts（原循环）与 resume-tool-loop.ts（续跑循环）共用本模块
 
 import type { ToolExecutionRecord } from '../types';
+import { clampJsonValueToBytes } from '../text/truncate-bytes';
 
 export const MAX_CHAT_TOOL_STEPS = 20;
 
@@ -20,9 +21,19 @@ export function clampSidebarText(value: string | undefined, maxLength: number): 
   return value.length > maxLength ? `${value.slice(0, maxLength)}\n...[truncated]` : value;
 }
 
+/**
+ * 审计 #38：把工具名转成合法的 XML 标签名。若含 <、>、&、空格等字符，原样插入
+ * `<name_result>` 会破坏 XML 结构，模型解析出错。非法字符一律替换成 `_`。
+ */
+function toSafeXmlTagName(name: string): string {
+  return name.replace(/[^A-Za-z0-9_.-]/g, '_');
+}
+
 export function serializeToolExecutions(executions: readonly ToolExecutionRecord[]): string {
   return executions.map((execution) => {
     const result = execution.result;
+    // 审计 #38：output 保持对象形状（不整体 stringify），按字节预算裁字段。
+    const clampedOutput = clampJsonValueToBytes(result.output, SIDEBAR_TOOL_RESULT_OUTPUT_MAX);
     const serialized = {
       ok: result.ok,
       summary: result.summary,
@@ -34,11 +45,10 @@ export function serializeToolExecutions(executions: readonly ToolExecutionRecord
             retryable: result.error.retryable,
           }
         : undefined,
-      output: result.output === undefined
-        ? undefined
-        : clampSidebarText(JSON.stringify(result.output), SIDEBAR_TOOL_RESULT_OUTPUT_MAX),
-      truncated: result.truncated === true,
+      output: clampedOutput.value,
+      truncated: result.truncated === true || clampedOutput.truncated,
     };
-    return `<${execution.name}_result>\n${JSON.stringify(serialized)}\n</${execution.name}_result>`;
+    const tag = toSafeXmlTagName(execution.name);
+    return `<${tag}_result>\n${JSON.stringify(serialized)}\n</${tag}_result>`;
   }).join('\n');
 }
