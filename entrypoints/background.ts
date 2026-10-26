@@ -15,6 +15,7 @@ import {
   organizeMemoriesFromNaturalLanguage as organizeMemoriesFromNaturalLanguageCore,
   applyMemoryOrganizeDraft as applyMemoryOrganizeDraftCore,
   buildMemorySnapshots,
+  orderSnapshotsByVisibleIds,
   organizeMemoriesFromLlm,
   type MemoryOrganizeDraft,
 } from '../core/memory/natural-language-organize';
@@ -451,10 +452,15 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
         unarchiveMemory,
         touchMemories,
         notifyCommittedStateUpdate,
-        organizeMemoriesFromNaturalLanguage: async (instruction: string) => {
+        organizeMemoriesFromNaturalLanguage: async (instruction: string, visibleMemoryIds?: number[]) => {
           try {
             const memories = await getAllMemories();
-            const snapshots = buildMemorySnapshots(memories);
+            const allSnapshots = buildMemorySnapshots(memories);
+            // 修复越权删除：用户说的「第 N 条」必须指**他在记忆页当前筛选下看到的**第 N 条。
+            // 原实现直接用全量存储顺序，且 UI 还隐藏 project scope，导致编号基准不一致、
+            // 会删错记忆。现在若前端传了可见列表，就按它重排，编号基准唯一。
+            // 传入的 id 若已不存在（并发删除），直接跳过，不让它污染下标。
+            const snapshots = orderSnapshotsByVisibleIds(allSnapshots, visibleMemoryIds);
             const { locale: organizeLocale } = await getResolvedLocaleState();
             const organizeT = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) =>
               translate(organizeLocale, key, params);
@@ -550,7 +556,7 @@ const runtimeCommandRegistry = createRuntimeCommandRegistry({
               const memory = await getMemoryById(id);
               if (memory) { memory.content = compressedContent; await updateMemory(memory); }
             },
-            cleanStale: async (_ids: number[]) => { await archiveStaleMemories(); },
+            // 修复「确认 A 执行 B」：原实现丢弃传入的确认集、改跑全库扫描。现在严格按确认集执行。`n            cleanStale: async (ids: number[]) => { await archiveStaleMemories(ids); },
           };
           return await applyMemoryOrganizeDraftCore(draft, { ...options, executor });
         },

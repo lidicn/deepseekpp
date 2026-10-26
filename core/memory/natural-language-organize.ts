@@ -26,6 +26,15 @@ export type MemoryOrganizeOperationType =
   | 'clean_stale';
 
 export interface MemoryOrganizeOperation {
+  /**
+   * 展示用：被操作记忆的名称/类型/scope 摘要。
+   *
+   * 修复「不可辨识的确认界面」：预览面板原来对破坏性操作只显示 `ID: 13`，
+   * 用户没有能力判断即将被删的到底是哪一条。由生成 draft 的一侧填入真实值，
+   * 预览直接展示，不影响执行逻辑（执行仍按 memoryId）。
+   */
+  memoryLabel?: string;
+  memoryLabels?: string[];
   type: MemoryOrganizeOperationType;
   memoryId?: number;
   memoryIds?: number[];
@@ -95,6 +104,37 @@ export function memoryTextSimilarity(a: string, b: string): number {
   }
   const union = bigramsA.size + bigramsB.size - intersection;
   return union === 0 ? 0 : intersection / union;
+}
+
+/**
+ * 按「用户可见顺序」重排记忆快照，让「第 N 条」的编号基准唯一。
+ *
+ * 修复越权删除：记忆整理里用户说的「第 N 条」，指的是**他在记忆页当前筛选下看到的**
+ * 第 N 条。但后端原本直接拿 `getAllMemories()` 的存储顺序做下标，且 UI 还隐藏
+ * `project` scope，两者偏差可能导致：
+ *
+ *   用户看着「第 1 条：项目约束」点确认 → 实际删掉的是「用户职业」。
+ *
+ * 前端把自己的 filtered 列表 ID 按显示顺序传上来，这里据此重排 ⇒ 基准唯一。
+ *
+ * @param allSnapshots 全量快照（存储顺序）
+ * @param visibleMemoryIds 用户可见的 ID 序列（显示顺序）；为空/未传则回退全量顺序
+ *
+ * 注意：传入的 id 若已不存在（并发删除），**跳过而不占位** —— 否则下标会整体偏移，
+ * 又变回「删错」。跳过是 fail-safe：少一条可选，不会错删。
+ */
+export function orderSnapshotsByVisibleIds<T extends { id: number }>(
+  allSnapshots: readonly T[],
+  visibleMemoryIds: readonly number[] | undefined,
+): T[] {
+  if (!visibleMemoryIds || visibleMemoryIds.length === 0) return [...allSnapshots];
+  const byId = new Map(allSnapshots.map((snapshot) => [snapshot.id, snapshot]));
+  const ordered: T[] = [];
+  for (const id of visibleMemoryIds) {
+    const snapshot = byId.get(id);
+    if (snapshot !== undefined) ordered.push(snapshot);
+  }
+  return ordered;
 }
 
 export function buildMemorySnapshots(
@@ -276,7 +316,54 @@ export function planMemoryOrganizeLocally(
  * 解析 LLM 输出的 JSON，验证合法性。
  * 验证失败返回 null，调用方应回退到本地规则。
  */
-export function parseLlmOutputAsDraft(llmOutput: string): MemoryOrganizeDraft | null {
+export const KNOWN_OPERATION_TYPES = new Set<string>([
+  'list_all', 'delete', 'archive', 'pin', 'unpin',
+  'merge', 'retitle', 'retag', 'compress', 'clean_stale',
+]);
+
+/**
+ * 校验 LLM 输出的 operation 是否可信。
+ *
+ * 修复越权删除的加固项：原来只判 `typeof op.type === 'string'` 就 push，
+ * 于是任意字符串都能通过；LLM 又从不产 `cross_scope_operation` issue，
+ * 导致 applyMemoryOrganizeDraft 里的 scope 守卫在 LLM 路径上是死代码。
+ *
+ * 现在：类型必须在 10 个合法枚举内；引用的 memoryId/memoryIds 必须落在
+ * 本次传上去的快照集合内（防止 LLM 编造 id 删到用户没看到的记忆）；
+ * merge 必须有非空 mergedContent。
+ */
+function isTrustedOperation(
+  op: unknown,
+  allowedIds: ReadonlySet<number>,
+): op is MemoryOrganizeOperation {
+  if (!op || typeof op !== 'object') return false;
+  const candidate = op as Record<string, unknown>;
+  const type = candidate.type;
+  if (typeof type !== 'string' || !KNOWN_OPERATION_TYPES.has(type)) return false;
+
+  // 单条 id 引用必须真实存在于本次快照集合
+  if (candidate.memoryId !== undefined) {
+    if (typeof candidate.memoryId !== 'number' || !allowedIds.has(candidate.memoryId)) return false;
+  }
+  if (candidate.memoryIds !== undefined) {
+    if (!Array.isArray(candidate.memoryIds) || candidate.memoryIds.length === 0) return false;
+    if (!candidate.memoryIds.every((id) => typeof id === 'number' && allowedIds.has(id))) return false;
+  }
+
+  // 破坏性/改写类操作必须带有效载荷
+  if (type === 'merge' && (typeof candidate.mergedContent !== 'string' || !candidate.mergedContent.trim())) {
+    return false;
+  }
+  if (type === 'retitle' && (typeof candidate.newTitle !== 'string' || !candidate.newTitle.trim())) {
+    return false;
+  }
+  if (type === 'retag' && !Array.isArray(candidate.newTags)) return false;
+  if (type === 'compress' && typeof candidate.compressedContent !== 'string') return false;
+
+  return true;
+}
+
+function parseLlmOutputAsDraft(llmOutput: string, allowedIds: ReadonlySet<number>, t: OrganizeT = defaultOrganizeT): MemoryOrganizeDraft | null {
   try {
     // 去掉可能的 markdown 代码块包裹
     let jsonStr = llmOutput.trim();
@@ -298,12 +385,20 @@ export function parseLlmOutputAsDraft(llmOutput: string): MemoryOrganizeDraft | 
     if (!Array.isArray(parsed.operations)) return null;
     if (typeof parsed.summary !== 'string') return null;
 
-    // 验证每条 operation
+    // 验证每条 operation：类型白名单 + id 必须落在本次快照集合内。
+    // 越界的 op 直接丢弃并记 issue，不静默通过（原实现只判 typeof op.type === 'string'）。
     const validOps: MemoryOrganizeOperation[] = [];
+    const rejectedIssues: { code: string; severity: 'warning'; message: string }[] = [];
     for (const op of parsed.operations) {
-      if (!op || typeof op !== 'object') continue;
-      if (typeof op.type !== 'string') continue;
-      validOps.push(op as MemoryOrganizeOperation);
+      if (isTrustedOperation(op, allowedIds)) {
+        validOps.push(op);
+      } else {
+        rejectedIssues.push({
+          code: 'llm_operation_rejected',
+          severity: 'warning',
+          message: t('sidepanel.memoryOrganize.issueLlmOperationRejected'),
+        });
+      }
     }
 
     return {
@@ -311,7 +406,7 @@ export function parseLlmOutputAsDraft(llmOutput: string): MemoryOrganizeDraft | 
       summary: parsed.summary,
       ready: parsed.ready !== false,
       baseTime: Date.now(),
-      issues: Array.isArray(parsed.issues) ? parsed.issues : [],
+      issues: [...(Array.isArray(parsed.issues) ? parsed.issues : []), ...rejectedIssues],
     };
   } catch {
     return null;
@@ -327,7 +422,11 @@ export function organizeMemoriesFromLlm(
   llmOutput: string,
   t: OrganizeT = defaultOrganizeT,
 ): MemoryOrganizeDraft {
-  const llmDraft = parseLlmOutputAsDraft(llmOutput);
+  // 传入本次快照的 id 集合：LLM 只能引用用户真实看到的记忆，防止编造 id 删到不可见记忆。
+  const allowedIds = new Set(
+    memories.map((m) => m.id).filter((id): id is number => typeof id === 'number'),
+  );
+  const llmDraft = parseLlmOutputAsDraft(llmOutput, allowedIds, t);
   if (llmDraft) {
     return llmDraft;
   }
@@ -357,11 +456,51 @@ export interface NaturalLanguageOrganizeRequest {
 
 export type OrganizeMemoriesDraftResult = MemoryOrganizeDraft;
 
+/**
+ * 给 draft 里每个操作回填「这条记忆叫什么」的展示标签。
+ *
+ * 修复「不可辨识的确认界面」：预览面板原来对破坏性操作只显示 `ID: 13`，
+ * 用户看到「第 1 条：项目约束」点确认，实际删的可能是另一条，事后连追溯线索都不完整。
+ *
+ * 只影响展示，**不改变执行语义**（执行仍严格按 memoryId / memoryIds）。
+ * 找不到对应快照时留空，预览会退化成只显示 ID（不伪造信息）。
+ */
+export function attachOperationLabels(
+  draft: MemoryOrganizeDraft,
+  snapshots: readonly MemorySnapshot[],
+): MemoryOrganizeDraft {
+  if (draft.operations.length === 0) return draft;
+  const byId = new Map(snapshots.map((snapshot) => [snapshot.id, snapshot]));
+  const labelOf = (id: number): string | undefined => {
+    const snapshot = byId.get(id);
+    if (!snapshot) return undefined;
+    const name = (snapshot.name || readMemoryText(snapshot)).trim().slice(0, 40);
+    const parts = [name, snapshot.type, snapshot.scope].filter((part) => part && part.trim());
+    return parts.length > 0 ? parts.join(' · ') : undefined;
+  };
+  return {
+    ...draft,
+    operations: draft.operations.map((op) => {
+      const next: MemoryOrganizeOperation = { ...op };
+      if (typeof op.memoryId === 'number') {
+        const label = labelOf(op.memoryId);
+        if (label) next.memoryLabel = label;
+      }
+      if (Array.isArray(op.memoryIds)) {
+        const labels = op.memoryIds.map((id) => labelOf(id)).filter((l): l is string => !!l);
+        if (labels.length > 0) next.memoryLabels = labels;
+      }
+      return next;
+    }),
+  };
+}
+
 export function organizeMemoriesFromNaturalLanguage(
   request: NaturalLanguageOrganizeRequest,
   t?: OrganizeT,
 ): OrganizeMemoriesDraftResult {
-  return planMemoryOrganizeLocally(request.instruction, request.memories, t);
+  // 回填展示标签：让用户能在预览里认出「即将被删的是哪一条」，而不只是看到一个 ID。
+  return attachOperationLabels(planMemoryOrganizeLocally(request.instruction, request.memories, t), request.memories);
 }
 
 /* ------------------------------------------------------------------ *
@@ -504,6 +643,19 @@ export async function applyMemoryOrganizeDraft(
               outcomes.push({ type: op.type, memoryIds: op.memoryIds, ok: false, error: 'Missing executor.cleanStale or memoryIds' });
             }
             break;
+          default: {
+            // 非法 op.type 原来静默跳过、不产 outcome，用户与调用方都看不出「这条没执行」。
+            // 现在记为失败项，与其它失败一样进 outcomes。
+            const unknownType: never = op.type;
+            outcomes.push({
+              type: op.type,
+              memoryId: op.memoryId,
+              memoryIds: op.memoryIds,
+              ok: false,
+              error: `Unknown operation type: ${String(unknownType)}`,
+            });
+            break;
+          }
         }
       } catch (error) {
         outcomes.push({

@@ -65,8 +65,14 @@ export default function MemoryOrganizeDraftPreview({ draft }: MemoryOrganizeDraf
               >
                 <div className="flex items-center gap-2">
                   <span className="font-medium">{OPERATION_LABELS[op.type]}</span>
+                  {op.memoryLabel && (
+                    <span className="font-medium text-gray-700">{op.memoryLabel}</span>
+                  )}
                   {op.memoryId !== undefined && (
                     <span className="text-gray-500">ID: {op.memoryId}</span>
+                  )}
+                  {op.memoryLabels && op.memoryLabels.length > 0 && (
+                    <span className="text-gray-700">{op.memoryLabels.join(' / ')}</span>
                   )}
                   {op.memoryIds !== undefined && (
                     <span className="text-gray-500">IDs: {op.memoryIds.join(', ')}</span>

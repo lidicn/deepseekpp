@@ -79,7 +79,24 @@ export const PERSISTENCE_RUNTIME_PAYLOAD_DECODERS: PersistenceRuntimePayloadDeco
     if (typeof payload.instruction !== 'string' || !payload.instruction.trim()) {
       throw new Error('ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE.payload.instruction must be a non-empty string');
     }
-    return typedPayload<'ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE'>({ instruction: payload.instruction });
+    // 可选：用户在记忆页当前筛选下看到的、按显示顺序排列的记忆 ID。
+    // 用于让「第 N 条」的编号基准唯一（见 types.ts 的 visibleMemoryIds 注释）。
+    let visibleMemoryIds: number[] | undefined;
+    if (payload.visibleMemoryIds !== undefined) {
+      if (!Array.isArray(payload.visibleMemoryIds)) {
+        throw new Error('ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE.payload.visibleMemoryIds must be an array');
+      }
+      visibleMemoryIds = payload.visibleMemoryIds.map((id, index) => {
+        if (typeof id !== 'number' || !Number.isSafeInteger(id) || id <= 0) {
+          throw new Error(`ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE.payload.visibleMemoryIds[${index}] must be a positive integer`);
+        }
+        return id;
+      });
+    }
+    return typedPayload<'ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE'>({
+      instruction: payload.instruction,
+      ...(visibleMemoryIds ? { visibleMemoryIds } : {}),
+    });
   },
   APPLY_MEMORY_ORGANIZE_DRAFT(value) {
     const payload = recordValue(value, 'APPLY_MEMORY_ORGANIZE_DRAFT.payload');

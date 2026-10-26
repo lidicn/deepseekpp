@@ -261,6 +261,7 @@ export const sidepanel = {
     issueInstructionEmpty: '指令为空。',
     issueUnknown: '未识别到具体操作，请描述你想怎么整理记忆',
     issueCrossScope: '检测到跨 scope 操作（{scopes}），请确认',
+    issueLlmOperationRejected: '模型输出里有操作引用了未知类型或不存在的记忆，已忽略该操作。',
     issueLlmOutputInvalid: 'LLM 输出不合法，已回退到本地规则',
     issueLlmUnavailable: 'LLM 不可用，已回退到本地规则',
   },

@@ -571,7 +571,22 @@ export type MessageAction =
   | { type: 'DELETE_MEMORY'; payload: { id: number } }
   | { type: 'ARCHIVE_MEMORY'; payload: { id: number } }
   | { type: 'UNARCHIVE_MEMORY'; payload: { id: number } }
-  | { type: 'ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE'; payload: { instruction: string } }
+  | {
+      type: 'ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE';
+      payload: {
+        instruction: string;
+        /**
+         * 用户在记忆页当前筛选下实际看到的、按显示顺序排列的记忆 ID。
+         *
+         * 修复越权删除：planMemoryOrganizeLocally 把用户说的「第 N 条」当成
+         * 全部记忆存储顺序的第 N 条，而用户认知里是列表里第 N 条 —— 基准不同
+         * 会删错记忆（UI 还隐藏 project scope，偏差更大）。
+         * 前端把自己的 filtered 列表 ID 按显示顺序传上来，后端据此重排，
+         * 编号基准唯一。缺省时（无前端上下文）回退全量顺序。
+         */
+        visibleMemoryIds?: number[];
+      };
+    }
   | { type: 'APPLY_MEMORY_ORGANIZE_DRAFT'; payload: { draft: unknown; confirmed: boolean; destructiveConfirmed?: boolean } }
   | { type: 'UPDATE_MEMORY'; payload: Memory }
   | { type: 'SAVE_SKILL'; payload: SaveSkillPayload }
@@ -697,3 +712,4 @@ export interface ChatStreamChunk {
   reasoningText?: string;
   phase?: 'reasoning' | 'answer';
 }
+

@@ -119,7 +119,7 @@ export default function MemoryPage() {
               />
               <div className="flex items-center gap-2">
                 <button
-                  onClick={generateOrganizeDraft}
+                  onClick={() => generateOrganizeDraft(filtered.map((m) => m.id).filter((id): id is number => typeof id === 'number'))}
                   disabled={!organizeInput.trim() || organizeLoading}
                   className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 rounded-lg transition-all duration-150 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >

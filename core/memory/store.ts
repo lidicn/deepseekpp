@@ -292,8 +292,18 @@ export async function restoreRawMemoryRecordsForSyncRecovery(
 const STALE_THRESHOLD_DAYS = 90;
 const MIN_ACCESS_FOR_RETENTION = 3;
 
-export async function archiveStaleMemories(): Promise<number> {
+/**
+ * 归档「过期」记忆。
+ *
+ * @param onlyIds 只处理这些 id（用户在预览里确认过的那一批）。
+ *   修复「确认 A 执行 B」：原实现丢弃传入的确认集、改跑全库扫描，
+ *   两次扫描之间若有记忆被 touch（updatedAt/accessCount 变化），
+ *   实际归档对象就与用户确认的不是同一批。传入后严格按确认集执行。
+ *   缺省（undefined）= 全库扫描，保持既有调度器行为。
+ */
+export async function archiveStaleMemories(onlyIds?: readonly number[]): Promise<number> {
   await assertCurrentMemoryDatabaseVersion();
+  const restrict = onlyIds ? new Set(onlyIds) : null;
   return withSyncLocalStateLock(async () => {
     return db.transaction('rw', memories, async (tx) => {
       const threshold = Date.now() - STALE_THRESHOLD_DAYS * 86_400_000;
@@ -302,7 +312,8 @@ export async function archiveStaleMemories(): Promise<number> {
       // 用户手动归档的记忆（archived=true 后 lastAccessedAt 不再更新）会被二次硬删、
       // 无法恢复。改为：跳过已归档项；命中的一律软归档（archived=true），不再物理删除。
       const stale = current.filter((memory) => (
-        memory.lastAccessedAt < threshold
+        (restrict === null || (typeof memory.id === 'number' && restrict.has(memory.id)))
+        && memory.lastAccessedAt < threshold
         && !memory.pinned
         && !memory.archived
         && memory.accessCount < MIN_ACCESS_FOR_RETENTION

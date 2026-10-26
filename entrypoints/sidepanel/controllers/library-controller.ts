@@ -17,7 +17,7 @@ export interface LibraryController {
   saveSavedItem(item: SavedItemInput): Promise<SavedItem>;
   deleteSavedItem(id: string): Promise<void>;
   insertSavedPrompt(text: string): Promise<void>;
-  organizeMemoriesFromNaturalLanguage(instruction: string): Promise<{ ok: true; draft: MemoryOrganizeDraft } | { ok: false; error: string }>;
+  organizeMemoriesFromNaturalLanguage(instruction: string, visibleMemoryIds?: number[]): Promise<{ ok: true; draft: MemoryOrganizeDraft } | { ok: false; error: string }>;
   applyMemoryOrganizeDraft(draft: MemoryOrganizeDraft, confirmed: boolean, destructiveConfirmed?: boolean): Promise<ApplyMemoryOrganizeDraftResult>;
 }
 
@@ -86,9 +86,14 @@ export function createLibraryController(
         { decode: decodeAck },
       );
     },
-    async organizeMemoriesFromNaturalLanguage(instruction) {
+    async organizeMemoriesFromNaturalLanguage(instruction, visibleMemoryIds) {
+      // visibleMemoryIds = 用户在记忆页当前筛选下看到的、按显示顺序排列的 ID。
+      // 必须传：否则后端按全量存储顺序解释「第 N 条」，会删错记忆。
       return runtimeClient.request(
-        { type: 'ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE', payload: { instruction } },
+        {
+          type: 'ORGANIZE_MEMORIES_FROM_NATURAL_LANGUAGE',
+          payload: { instruction, ...(visibleMemoryIds && visibleMemoryIds.length ? { visibleMemoryIds } : {}) },
+        },
         { decode: (value) => value as { ok: true; draft: MemoryOrganizeDraft } | { ok: false; error: string } },
       );
     },

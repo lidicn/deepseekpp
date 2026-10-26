@@ -132,12 +132,18 @@ export function useMemoryPageController(t: Translator, confirm: Confirm, feedbac
     }
   }, [feedback, load, showOperationError]);
 
-  const generateOrganizeDraft = useCallback(async () => {
+  // visibleMemoryIds：用户在记忆页当前筛选下看到的、按显示顺序排列的记忆 ID。
+  // 必须由调用方（MemoryPage）传入 filtered 的 id 序列 —— 否则后端按全量存储
+  // 顺序解释「第 N 条」，与用户认知不同基准，会删错记忆（越权删除）。
+  const generateOrganizeDraft = useCallback(async (visibleMemoryIds?: number[]) => {
     if (!organizeInput.trim()) return;
     try {
       feedback.clear();
       setOrganizeLoading(true);
-      const result = await libraryController.organizeMemoriesFromNaturalLanguage(organizeInput.trim());
+      const result = await libraryController.organizeMemoriesFromNaturalLanguage(
+        organizeInput.trim(),
+        visibleMemoryIds,
+      );
       if (result.ok) {
         setOrganizeDraft(result.draft);
       } else {
