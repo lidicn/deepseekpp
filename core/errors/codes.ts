@@ -1,5 +1,11 @@
 ﻿// W21: 错误码词表
 // 纯数据表，不影响现有 code: 字符串
+/**
+ * @workitem W21
+ * @status  deferred
+ * @since   2026-10-19 (introduced by ab358b6)
+ * @note    纯函数已交付并有用例；接线点：core/errors/ 抛错处用 category/retryable 判定，取代散落的字符串判断（推断）
+ */
 
 export type ErrorCategory = 'timeout' | 'cancel' | 'network' | 'protocol' | 'permission';
 

@@ -1,5 +1,11 @@
 ﻿// W17: 统一 Feature Flag 中心
 // 纯函数 + IO 注入，无外部依赖
+/**
+ * @workitem W17
+ * @status  deferred
+ * @since   2026-10-19 (introduced by d951b22)
+ * @note    纯函数已交付并有用例；接线点：散落各处的 getStorage() get("deepseek_pp_*") 布尔开关改为统一查 FLAG_REGISTRY（推断）
+ */
 
 export interface FlagDefinition {
   key: string;

@@ -1,4 +1,10 @@
 ﻿// T34: 工具耗时基线纯函数
+/**
+ * @workitem T34
+ * @status  deferred
+ * @since   2026-10-19 (introduced by fd593c1)
+ * @note    纯函数已交付并有用例；接线点：core/tool/ 每次工具往返 record(ms)，展示 p50/p95 基线（推断）
+ */
 
 export interface LatencyStats {
   p50: number;

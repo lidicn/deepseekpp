@@ -21,6 +21,12 @@
  *  - **No new persistence**: community skills land through the existing
  *    local-import path; no new storage keys (pi-storage-boundary guard).
  */
+/**
+ * @workitem B3-T3
+ * @status  deferred
+ * @since   2026-08-05 (introduced by a397f82)
+ * @note    纯函数已交付并有用例；接线点：skill 导入 UI 接入 agentskills.io 格式入口（推断）
+ */
 
 import { parseSkillDoc, type ParsedSkillDoc } from './local-importer';
 

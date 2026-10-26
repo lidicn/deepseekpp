@@ -9,6 +9,12 @@
  * 也不重放工具执行；SSE 信封（data: / \\n\\n）是否由调用方包取决于记录格式，
  * 这里对帧内容透传，不擅自改写。
  */
+/**
+ * @workitem W34
+ * @status  deferred
+ * @since   2026-10-20 (introduced by 2531fb6)
+ * @note    纯函数已交付并有用例；接线点：W29 trace 复现工具把 sse.frame 序列回放成字节流供本地断言（推断）
+ */
 
 /**
  * 把帧字符串序列逐个编码为 Uint8Array 异步吐出。

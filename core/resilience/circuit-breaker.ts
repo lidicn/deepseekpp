@@ -1,5 +1,11 @@
 // W19: 熔断器
 // 纯函数，无外部依赖
+/**
+ * @workitem W19
+ * @status  deferred
+ * @since   2026-10-19 (introduced by d951b22)
+ * @note    纯函数已交付并有用例；接线点：MCP/远端工具调用层包一层 breaker，server 挂了快速失败不反复重试（推断）
+ */
 
 export type BreakerState = 'closed' | 'open' | 'halfOpen';
 

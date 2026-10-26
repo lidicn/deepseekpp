@@ -1,4 +1,10 @@
 ﻿// T32: 启动自检纯函数
+/**
+ * @workitem T32
+ * @status  deferred
+ * @since   2026-10-19 (introduced by ab358b6)
+ * @note    纯函数已交付并有用例；接线点：SW startup / sidepanel 启动跑一遍 BootHealthCheck 列表并把结果暴露给诊断面板（推断）
+ */
 
 export interface BootHealthCheck {
   name: string;

@@ -5,6 +5,12 @@
  * 诊断快照需要「这条记录来自哪个上下文、什么时候启动、实例唯一 id」，便于事后对账。
  * 本模块只生成标识，不做跨上下文自动同步（规格边界）。
  */
+/**
+ * @workitem W36
+ * @status  deferred
+ * @since   2026-10-20 (introduced by 5224286)
+ * @note    纯函数已交付并有用例；接线点：诊断快照/boot-health 记录当前 ContextName + 实例 id 以便跨上下文对账（推断）
+ */
 
 export type ContextName = 'main-world' | 'content' | 'background' | 'sidepanel';
 

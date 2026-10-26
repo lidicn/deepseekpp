@@ -1,4 +1,10 @@
 ﻿// W22: 用户可读错误文案映射
+/**
+ * @workitem W22
+ * @status  deferred
+ * @since   2026-10-19 (introduced by fd593c1)
+ * @note    纯函数已交付并有用例；接线点：UI 展示错误前 toUserMessage(err) 把内部错误翻成 title/detail/action（推断）
+ */
 
 export interface UserMessage {
   title: string;

@@ -9,6 +9,12 @@
  * 本模块只做校验，不内置任何具体状态机（ToolJob / ActiveChatLoop / circuit breaker /
  * resume cursor 的 spec 由调用方提供；W33 备选：只做校验器，不写 job.ts 的 spec）。
  */
+/**
+ * @workitem W33
+ * @status  deferred
+ * @since   2026-10-20 (introduced by 78d580f)
+ * @note    纯函数已交付并有用例；接线点：job.ts / active-chat-loop 写好转移 spec 后调用校验，报 undeclared/unobserved（推断）
+ */
 
 export interface MachineTransition {
   from: string;

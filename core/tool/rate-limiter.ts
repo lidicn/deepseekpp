@@ -1,5 +1,11 @@
 ﻿// W18: 工具调用速率限制
 // 纯函数，无外部依赖
+/**
+ * @workitem W18
+ * @status  deferred
+ * @since   2026-10-19 (introduced by d951b22)
+ * @note    纯函数已交付并有用例；接线点：core/tool/ 执行任一工具前调用 tryAcquire 做配额限流（推断）
+ */
 
 export interface RateLimitPolicy {
   windowMs: number;

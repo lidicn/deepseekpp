@@ -1,4 +1,10 @@
 ﻿// T33: 配置健康检查纯函数
+/**
+ * @workitem T33
+ * @status  deferred
+ * @since   2026-10-19 (introduced by fd593c1)
+ * @note    纯函数已交付并有用例；接线点：设置页/诊断面板渲染 ConfigCheck 列表，标出 actual≠expected 的 key（推断）
+ */
 
 export interface ConfigCheck {
   key: string;

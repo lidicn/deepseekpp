@@ -1,5 +1,11 @@
 // M1-2c: fork-detector — 分叉检测
 // 对比页面会话链尾的 tailMessageId 与 marker.parentMessageId
+/**
+ * @workitem M1-2c
+ * @status  deferred
+ * @since   2026-10-18 (introduced by 1787a0f)
+ * @note    纯函数已交付并有用例；接线点：续跑/resume 拿到 marker 后比对页面 session chain tailMessageId（推断）
+ */
 
 export interface SessionChainTail {
   sessionId: string;

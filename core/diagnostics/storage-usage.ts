@@ -1,4 +1,10 @@
 ﻿// W24: 存储用量自检
+/**
+ * @workitem W24
+ * @status  deferred
+ * @since   2026-10-19 (introduced by fd593c1)
+ * @note    纯函数已交付并有用例；接线点：诊断面板/设置页调用 estimateUsage 展示 quota 占用比（推断）
+ */
 
 export interface StorageUsage {
   bytes: number;
