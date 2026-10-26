@@ -14,7 +14,9 @@
  *     （agent-styles.ts:234）；`setAgentToolGroupCollapsed`（render-steps.ts:149）
  *     同时把 toggle 的 `aria-expanded` 一起改。
  *   · 旧式 `.dpp-tool-block`：折叠靠 CSS
- *     `[data-collapsed="true"] .dpp-tool-block-body { display: none }`。
+ *     `[data-collapsed="true"] .dpp-tool-block-body { max-height: 0; opacity: 0 }`
+ *     （真机核实：展开后是 max-height 500px / opacity 1，带 0.25s / 0.2s 过渡 ——
+ *      **不是** display:none，所以断言不能看 display）。
  *
  * 因此这里分别按各自契约展开，而不是"随便设一个属性"。
  */
