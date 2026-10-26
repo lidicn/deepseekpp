@@ -369,6 +369,16 @@ function normalizeAutomationNetworkPhase(phase: string | null): AutomationFailur
   return 'runner';
 }
 
+function safeStringifyOutput(output: unknown): string | undefined {
+  if (output === undefined) return undefined;
+  try {
+    return JSON.stringify(output);
+  } catch {
+    // 循环引用等 JSON.stringify 抛错时退化为 String()，不让单个工具结果炸掉续跑。
+    return String(output);
+  }
+}
+
 export function buildAutomationToolContinuationPrompt(
   executions: ToolExecutionRecord[],
   locale: SupportedLocale = DEFAULT_LOCALE,
@@ -379,10 +389,9 @@ export function buildAutomationToolContinuationPrompt(
     ok: execution.result.ok,
     summary: execution.result.summary,
     detail: clampText(execution.result.detail, 4000),
-    output: clampText(
-      execution.result.output === undefined ? undefined : JSON.stringify(execution.result.output),
-      8000,
-    ),
+    // 审计 #89：这里是拼给模型看的 prompt 文本，output 故意 stringify（prompt 本来就是文本）。
+    // 但 JSON.stringify 对循环引用会抛 —— 不能因为一个工具结果让整个续跑崩掉，退化成 String()。
+    output: clampText(safeStringifyOutput(execution.result.output), 8000),
     truncated: execution.result.truncated === true,
   }));
 
