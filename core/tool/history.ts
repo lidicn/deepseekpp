@@ -7,6 +7,7 @@ import { BurstSupersededError, createCoalescingMutationQueue } from '../persiste
 export { BurstSupersededError };
 import { refactorTelemetry } from '../debug/refactor-telemetry';
 import { diagnosticLogBuffer } from '../diagnostics/log-buffer';
+import { clampJsonValueToBytes } from '../text/truncate-bytes';
 
 export const TOOL_HISTORY_STORAGE_KEY = 'deepseek_pp_tool_history';
 // Lowered from 200 → 100. Each record carries detail/output snapshots, and each
@@ -119,11 +120,13 @@ function sanitizeCall(call: ToolCall): ToolCall {
   };
 }
 
-function sanitizeResult(result: ToolResult): ToolResult {
+export function sanitizeResult(result: ToolResult): ToolResult {
   const sanitized: ToolResult = {
     ...result,
     detail: truncateStringBytes(result.detail, 16_000),
-    output: result.output === undefined ? undefined : truncateStringBytes(JSON.stringify(result.output), 32_000),
+    // 审计 #15：output 是结构化对象，历史回放时读取方按 output.url 等字段取值；
+    // 旧实现整体 JSON.stringify 压成字符串，回放时结构化形状丢失。
+    output: clampJsonValueToBytes(result.output, 32_000).value,
     error: result.error
       ? {
         ...result.error,
