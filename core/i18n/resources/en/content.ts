@@ -112,6 +112,8 @@ export const content = {
     codeRunnerUnavailable: 'Code runner unavailable',
     concurrencyGuard: 'An agent is still running. A duplicate task from this message was skipped. To interrupt, click Stop in the agent panel.',
     statusBarDetail: 'Details',
+    statusBarDetailHint: 'Locate and expand tool execution details for this run',
+    statusBarDetailUnavailable: 'No tool execution details to show yet',
     statusBarStarting: 'Starting auto-continuation…',
     statusBarRunning: 'Running',
     statusBarStep: 'Step {step}',

@@ -112,6 +112,8 @@ export const content = {
     codeRunnerUnavailable: '代码运行器不可用',
     concurrencyGuard: 'Agent 正在执行中，已忽略此消息触发的重复任务。如需中断，请点击 Agent 面板的「停止」。',
     statusBarDetail: '详情',
+    statusBarDetailHint: '定位并展开本轮工具执行详情',
+    statusBarDetailUnavailable: '当前还没有可查看的工具执行记录',
     statusBarStarting: '正在启动自动续轮…',
     statusBarRunning: '执行中',
     statusBarStep: '第 {step} 步',

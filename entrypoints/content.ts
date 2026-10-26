@@ -116,6 +116,10 @@ import {
   stripInlineAgentTruncationSuffix,
 } from "../core/inline-agent/display-text";
 import {
+  hasVisibleToolCards,
+  revealToolDetails as revealToolDetailsCore,
+} from "../core/inline-agent/tool-details-reveal";
+import {
   collectAssistantMessages,
   elementHasMessageId,
   findAssistantMessageByContentSnippet,
@@ -5611,8 +5615,18 @@ function injectAgentStatusBarStyles(): void {
       background: #eef2ff;
       border-color: #a5b4fc;
     }
-    .dpp-status-bar-btn.stop {
-      color: #dc2626;
+    .dpp-status-bar-btn[aria-disabled="true"] {
+      opacity: 0.45;
+      cursor: pointer;
+      background: #fff;
+      border-color: #e2e8f0;
+      color: #94a3b8;
+    }
+    .dpp-status-bar-btn[aria-disabled="true"]:hover {
+      background: #fff;
+      border-color: #e2e8f0;
+    }
+    .dpp-status-bar-btn.stop {      color: #dc2626;
       border-color: #fecaca;
     }
     .dpp-status-bar-btn.stop:hover {
@@ -5651,6 +5665,37 @@ function findAgentStatusBarAnchor(): HTMLElement | null {
   return textarea.parentElement;
 }
 
+/**
+ * 「详情」按钮：定位并展开本轮真实工具卡片（实现见 core/inline-agent/tool-details-reveal）。
+ *
+ * 修复（2026-10-26 用户报告）：原来只 scrollIntoView(inlineAgentContainer)，不展开任何东西，
+ * 且在容器为 null 时点了完全没反应。现委托给可单测的 core 实现，两种卡片按各自契约展开。
+ */
+function revealToolDetails(): boolean {
+  return revealToolDetailsCore(document);
+}
+
+/**
+ * 同步「详情」按钮的可用外观。
+ *
+ * 用 `aria-disabled` 而**不是** `.disabled`：真正的 disabled 会吞掉点击事件，
+ * 而工具卡片是异步出现的（agent 跑完第一个工具才有）。若卡片恰好在下一次状态条
+ * 刷新之前出现，真 disabled 的按钮就又变成「点了没反应」——正是本次要修的毛病。
+ * 用 aria-disabled 时点击仍会进 handler，由 handler 重新判定并在可用时展开；
+ * 视觉上仍是灰态（CSS 见 [aria-disabled="true"]），可访问性语义也保留。
+ */
+function syncDetailButtonAvailability(): void {
+  const btn = agentStatusBarEl?.querySelector<HTMLButtonElement>(
+    ".dpp-status-bar-btn:not(.stop)",
+  );
+  if (!btn) return;
+  const available = hasVisibleToolCards(document);
+  btn.setAttribute("aria-disabled", available ? "false" : "true");
+  btn.title = available
+    ? contentT("content.agent.statusBarDetailHint")
+    : contentT("content.agent.statusBarDetailUnavailable");
+}
+
 function ensureAgentStatusBar(): HTMLElement | null {
   injectAgentStatusBarStyles();
   if (agentStatusBarEl && agentStatusBarEl.isConnected) return agentStatusBarEl;
@@ -5677,9 +5722,11 @@ function ensureAgentStatusBar(): HTMLElement | null {
   detailBtn.textContent = contentT("content.agent.statusBarDetail");
   detailBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    if (inlineAgentContainer) {
-      inlineAgentContainer.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+    // 修复：定位并**展开**真实工具卡片，而不是只滚动 agent 容器。
+    // 每次点击都重新判定可用态：卡片可能在两次状态条刷新之间才出现，
+    // 此时点一下就恢复，而不是留下一个吞点击的死按钮。
+    revealToolDetails();
+    syncDetailButtonAvailability();
   });
 
   const stopBtn = document.createElement("button");
@@ -5748,6 +5795,9 @@ function updateAgentStatusBar(
   // 停止按钮只在 running/starting 时显示
   const stopBtn = bar.querySelector<HTMLButtonElement>(".dpp-status-bar-btn.stop");
   if (stopBtn) stopBtn.style.display = (phase === "running" || phase === "starting") ? "" : "none";
+  // 状态条跨 step 复用，所以每次更新都同步一次「详情」按钮可用态：
+  // 卡片还没出现时禁用并给 title 说明，出现后自动恢复可点。
+  syncDetailButtonAvailability();
 }
 
 function scheduleRemoveAgentStatusBar(delayMs = 3000): void {
@@ -8850,7 +8900,7 @@ function injectPermissionBannerStyles() {
     .dpp-permission-grant:disabled,
     .dpp-permission-deny[disabled] {
       opacity: 0.5;
-      cursor: not-allowed;
+      cursor: pointer;
     }
 
     @keyframes dppPermFadeIn {
