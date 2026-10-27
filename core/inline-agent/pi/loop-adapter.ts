@@ -611,6 +611,13 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
         break;
       }
       case 'agent_end':
+        // #83: 终态前等待最后一轮后台图片物化 —— pacedStreamFn 只在下一次 LLM
+        // 请求前汇合 pendingImageMaterialization，但 agent_end 意味着循环结束、
+        // 不会再有下一次请求；不等就丢弃最后一个 step 的图片上传。
+        if (pendingImageMaterialization) {
+          await pendingImageMaterialization;
+          pendingImageMaterialization = null;
+        }
         finalize();
         break;
       default:

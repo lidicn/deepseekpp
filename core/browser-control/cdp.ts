@@ -7,6 +7,12 @@ type DebuggerSession = chrome.debugger.DebuggerSession;
 // stale Page.javascriptDialogOpening record cannot be replayed later.
 const BROWSER_DIALOG_MAX_AGE_MS = 30_000;
 
+// #94: CDP sendCommand 默认超时。单条 CDP 命令正常应在秒级返回：
+// - Runtime.evaluate（awaitPromise:true）执行恶意/失控 JS 可能永远挂住
+// - Accessibility.getFullAXTree 大页面 AXTree 上千节点时较慢但应 < 10s
+// 30s 给足余量；超时后抛 retryable 错误让上层决定是否重试或放弃。
+const CDP_COMMAND_TIMEOUT_MS = 30_000;
+
 export class BrowserControlError extends Error {
   readonly code: string;
   readonly retryable: boolean;
@@ -118,11 +124,22 @@ export class BrowserConnection {
         retryable: true,
       });
     }
-    const result = await this.getDebuggerApi().sendCommand(
+    const timeoutMs = CDP_COMMAND_TIMEOUT_MS;
+    const sendPromise = this.getDebuggerApi().sendCommand(
       this.getSession(),
       method,
       params,
-    );
+    ) as Promise<Record<string, unknown>>;
+    const result = await Promise.race([
+      sendPromise,
+      new Promise<Record<string, unknown>>((_, reject) =>
+        setTimeout(() => reject(new BrowserControlError(
+          'browser_control_command_timeout',
+          `CDP command ${method} exceeded ${timeoutMs}ms`,
+          { retryable: true, details: { method, timeoutMs } },
+        )), timeoutMs),
+      ),
+    ]);
     return (result ?? {}) as T;
   }
 

@@ -373,8 +373,46 @@ export function startDeepSeekProjectSidebarOrganizer(
   };
 
   void loadState();
+  // #96: MutationObserver 不再对整个 body subtree 盲扫 —— 原 observe(document.body, { childList: true, subtree: true })
+  // 在 deepseek SPA 里每条消息追加、光标闪烁都触发回调，虽然 schedule 有 debounce，
+  // 但 observer 自身的 mutations 遍历开销大。现只在 mutation 真涉及侧边栏/对话链接
+  // 变化时才 schedule；无关变动（消息气泡、输入框光标）直接跳过。
+  const HISTORY_LINK_TAG = 'a';
+  const HISTORY_HREF_HINT = '/chat/s/';
   const observer = new MutationObserver((mutations) => {
     if (isProjectSidebarSelfMutation(mutations)) return;
+    // Fast path: 检查 mutations 里有没有真正需要重新扫描 sidebar 的变化
+    let relevant = false;
+    for (const m of mutations) {
+      if (m.type === 'childList') {
+        // body 直接子元素增删（SPA 页面切换）肯定 relevant
+        if (m.target === document.body) { relevant = true; break; }
+        // 检查 added/removed nodes 里有没有对话链接
+        for (const node of Array.from(m.addedNodes)) {
+          if (node.nodeType !== Node.ELEMENT_NODE) continue;
+          if ((node as Element).tagName === HISTORY_LINK_TAG) {
+            const href = (node as HTMLAnchorElement).href || '';
+            if (href.includes(HISTORY_HREF_HINT)) { relevant = true; break; }
+          }
+          if ((node as Element).querySelector?.(`${HISTORY_LINK_TAG}[href*="${HISTORY_HREF_HINT}"]`)) {
+            relevant = true; break;
+          }
+        }
+        if (relevant) break;
+        for (const node of Array.from(m.removedNodes)) {
+          if (node.nodeType !== Node.ELEMENT_NODE) continue;
+          if ((node as Element).tagName === HISTORY_LINK_TAG) {
+            const href = (node as HTMLAnchorElement).href || '';
+            if (href.includes(HISTORY_HREF_HINT)) { relevant = true; break; }
+          }
+          if ((node as Element).querySelector?.(`${HISTORY_LINK_TAG}[href*="${HISTORY_HREF_HINT}"]`)) {
+            relevant = true; break;
+          }
+        }
+        if (relevant) break;
+      }
+    }
+    if (!relevant) return;
     schedule();
   });
   observer.observe(document.body, { childList: true, subtree: true });

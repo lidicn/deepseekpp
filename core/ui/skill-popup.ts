@@ -61,7 +61,11 @@ function watchTextarea() {
       tryAttach();
     }
   });
-  textareaObserver.observe(document.body, { childList: true, subtree: true });
+  // #95: 去掉 subtree:true —— 原 observe(document.body, { childList: true, subtree: true })
+  // 在 SPA（chat.deepseek.com）里触发极频繁：每条消息追加、状态更新都冒泡到 body。
+  // 改成只监听 body 直接子元素增删：SPA 重建 textarea 时通常是整个容器被替换
+  // （body 的直接子元素变了），深层单独删除 textarea 在实际中极罕见。
+  textareaObserver.observe(document.body, { childList: true });
 }
 
 function tryAttach() {
