@@ -112,7 +112,7 @@ const DEFAULT_APP_VERSION = '2.0.0';
 const DEEPSEEK_CLIENT_PLATFORM = 'web';
 const USER_TOKEN_STORAGE_KEY = 'userToken';
 const TOKEN_SPEED_EMIT_INTERVAL_MS = 250;
-const FILE_READY_POLL_INTERVAL_MS = 500;
+export const FILE_READY_POLL_INTERVAL_MS = 500;
 const FILE_READY_TIMEOUT_MS = 15_000;
 // DeepSeek can return audit_result=unknown together with status=SUCCESS for usable image uploads.
 const ACCEPTED_FILE_AUDIT_RESULTS = new Set(['PASS', 'PASSED', 'SUCCESS', 'OK', 'UNKNOWN']);
@@ -450,7 +450,11 @@ async function fetchUploadedFileMetadata(
   return file ?? null;
 }
 
-async function waitForUploadedFileReady(
+/**
+ * @internal 审计 #43：导出供守卫测试。轮询上传文件状态直到就绪。
+ * 两处 signal.aborted 检查确保取消后立即停止（不等 sleep 返回）。
+ */
+export async function waitForUploadedFileReady(
   uploaded: DeepSeekUploadedFile,
   clientHeaders: Record<string, string>,
   signal?: AbortSignal,
