@@ -220,15 +220,20 @@ export async function clearCurrentTool(): Promise<void> {
 
 /** M1-2: 局部更新 marker 字段（整对象替换，revision++） */
 export async function updateMarker(patch: Partial<ActiveChatLoop>): Promise<void> {
-  const marker = await readMarker();
-  if (!marker) return;
-  const next: ActiveChatLoop = {
-    ...marker,
-    ...patch,
-    revision: (marker.revision ?? 1) + 1,
-    lastUpsertAt: Date.now(),
-  };
-  await chrome.storage.session.set({ [SESSION_STORAGE_KEY]: next });
+  // 审计 #5：updateMarker 也是 read-modify-write，和 appendToolExecution 并发同样丢，
+  // 一并纳进 serializeWrite 链。markChatLoopStarted/Finished 是全量写/删除，不 R-M-W，
+  // 不纳链。
+  return serializeWrite(async () => {
+    const marker = await readMarker();
+    if (!marker) return;
+    const next: ActiveChatLoop = {
+      ...marker,
+      ...patch,
+      revision: (marker.revision ?? 1) + 1,
+      lastUpsertAt: Date.now(),
+    };
+    await chrome.storage.session.set({ [SESSION_STORAGE_KEY]: next });
+  });
 }
 
 export async function getActiveChatLoop(): Promise<ActiveChatLoop | null> {
