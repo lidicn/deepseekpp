@@ -78,9 +78,11 @@ export function createBrowserToolRuntimeHandlers(
       await dependencies.broadcastBrowserControlUpdate(context.tabId);
       return { ok: true as const };
     }),
-    defineToolPayloadRuntimeCommandHandler('DIAGNOSE_WEB_SEARCH', (payload) => (
-      diagnoseWebSearch(payload?.query ?? 'test', dependencies.fetch)
-    )),
+    defineToolPayloadRuntimeCommandHandler('DIAGNOSE_WEB_SEARCH', (decoded) => {
+      // #55: DIAGNOSE_WEB_SEARCH 已进入 SpecialDecodedPayloads，decoded 是包装类型
+      const query = decoded.ok ? (decoded.payload.query ?? 'test') : 'test';
+      return diagnoseWebSearch(query, dependencies.fetch);
+    }),
     defineToolPayloadRuntimeCommandHandler('REQUEST_HOST_PERMISSION', async (payload) => {
       if (payload.origins.length === 0) {
         return { ok: false as const, error: 'no_origins' };

@@ -64,6 +64,7 @@ interface DecodedCreateToolAuthorizationPayload {
 const MAX_TOOL_INTENT_CHARS = 16_000;
 
 interface SpecialDecodedPayloads {
+  DIAGNOSE_WEB_SEARCH: DecodedDomainPayload<{ query?: string }>;
   CREATE_TOOL_AUTHORIZATION: DecodedDomainPayload<DecodedCreateToolAuthorizationPayload>;
   CLOSE_TOOL_AUTHORIZATION: DecodedDomainPayload<{ authorizationId: string }>;
   APPEND_EXTERNAL_TOOL_PAYLOAD_CHUNK: DecodedDomainPayload<{
@@ -185,9 +186,9 @@ export const TOOL_RUNTIME_PAYLOAD_DECODERS: ToolRuntimePayloadDecoderMap = {
         return invalidDecodedPayload('invalid_diagnose_web_search_extra_field');
       }
     }
-    return {
+    return validDecodedPayload({
       query: typeof value.query === 'string' ? value.query : 'test',
-    } as ToolRuntimePayload<'DIAGNOSE_WEB_SEARCH'>;
+    });
   },
   REQUEST_HOST_PERMISSION(value) {
     const payload = recordValue(value, 'REQUEST_HOST_PERMISSION.payload');

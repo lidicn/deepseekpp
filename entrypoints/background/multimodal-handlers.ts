@@ -69,15 +69,25 @@ async function analyzeMultimodalMedia(
   try {
     const server = await getMultimodalMcpServerForAnalysis(dependencies);
     const analyses: MultimodalMediaAnalysisItem[] = [];
-    const images = request.media.filter((item) => item.kind === 'image');
+    const images = request.media.filter((item): item is typeof item & { kind: 'image'; dataUrl: string } => item.kind === 'image');
 
     if (images.length > 0) {
+      // #86: 显式守卫 —— assertMultimodalMediaBody 运行时已校验 dataUrl，
+      // 但 TS 类型收窄不足，这里防御性覆盖，避免 ! 非空断言。
+      const missingDataUrl = images.find((item) => !item.dataUrl);
+      if (missingDataUrl) {
+        return {
+          ok: false,
+          analyses: [],
+          error: `${missingDataUrl.name} image data is missing`,
+        };
+      }
       const result = await dependencies.executeToolCall(
         createMultimodalMcpToolCall(server, 'analyze_images', {
           prompt: request.prompt,
           images: images.map((item, index) => ({
             type: 'input_image',
-            image_url: item.dataUrl!,
+            image_url: item.dataUrl,
             detail: 'auto',
             label: item.name || `image-${index + 1}`,
           })),
@@ -101,13 +111,21 @@ async function analyzeMultimodalMedia(
       analyses.push(analysis);
     }
 
-    for (const video of request.media.filter((item) => item.kind === 'video')) {
+    for (const video of request.media.filter((item): item is typeof item & { kind: 'video'; base64Data: string } => item.kind === 'video')) {
+      // #86: 防御性守卫 —— 避免 base64Data! 非空断言
+      if (!video.base64Data) {
+        return {
+          ok: false,
+          analyses: [...analyses],
+          error: `${video.name} video data is missing`,
+        };
+      }
       const result = await dependencies.executeToolCall(
         createMultimodalMcpToolCall(server, 'analyze_video', {
           prompt: request.prompt,
           video: {
             inlineData: {
-              data: video.base64Data!,
+              data: video.base64Data,
               mimeType: video.mimeType,
             },
             mimeType: video.mimeType,

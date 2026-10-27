@@ -27,6 +27,43 @@ const WEB_FETCH_MAX_RESPONSE_BYTES = 1024 * 1024;
 
 export type WebSearchToolName = typeof WEB_SEARCH_TOOL_NAMES[number];
 
+// #58: 结构化错误 —— 替换原字符串匹配分类（lastError.includes('Failed to fetch') 等）。
+// 原实现脆弱：NetworkError 是 Error.name 不是 .message，永远匹配不到；
+// 改动后每个 throw 带明确 code，catch 时按 code 分类。
+class WebToolError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'WebToolError';
+    this.code = code;
+  }
+}
+
+const WEB_ERROR_CODES = Object.freeze({
+  PERMISSION_DENIED: 'permission_denied',
+  HTTP_STATUS: 'http_status',
+  BODY_UNREADABLE: 'body_unreadable',
+  EMPTY_RESPONSE: 'empty_response',
+  NO_PARSEABLE_RESULTS: 'no_parseable_results',
+  RESPONSE_TOO_LARGE: 'response_too_large',
+  UNSUPPORTED_REDIRECT: 'unsupported_redirect',
+  HTTPS_TO_HTTP: 'https_to_http',
+} as const);
+
+type WebErrorCode = typeof WEB_ERROR_CODES[keyof typeof WEB_ERROR_CODES];
+
+/** 从任意 catch 到的 error 中提取结构化 code，识别原生 fetch TypeError。 */
+function extractWebErrorCode(error: unknown): string | undefined {
+  if (error instanceof WebToolError) return error.code;
+  if (error instanceof Error) {
+    // 原生 fetch 抛 TypeError "Failed to fetch" 时通常是 host permission 拒绝
+    if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+      return WEB_ERROR_CODES.PERMISSION_DENIED;
+    }
+  }
+  return undefined;
+}
+
 export function createWebSearchToolProviderIdentity(
   locale: SupportedLocale = DEFAULT_LOCALE,
 ): ToolProviderIdentity {
@@ -160,20 +197,22 @@ async function performWebSearch(
   // Try multiple Bing domains as fallback.
   // Each domain times out in 8s; total stays under 20s.
   const domains = ['cn.bing.com', 'www.bing.com'];
-  let lastError: string | null = null;
+  let lastErrorMessage: string | null = null;
+  let lastErrorCode: string | undefined;
   const startTime = Date.now();
 
   for (let i = 0; i < domains.length; i++) {
     throwIfWebToolAborted(signal);
     // Guard: if we've been searching for >18s, give up
     if (Date.now() - startTime > 18_000) {
-      lastError = lastError || 'Search timed out (>18s)';
+      lastErrorMessage = lastErrorMessage || 'Search timed out (>18s)';
       break;
     }
     try {
       const results = await bingSearch(domains[i], query, topK, locale, signal);
       if (results.length === 0) {
-        lastError = `${domains[i]} returned no parseable search results`;
+        lastErrorMessage = `${domains[i]} returned no parseable search results`;
+        lastErrorCode = WEB_ERROR_CODES.NO_PARSEABLE_RESULTS;
         continue;
       }
       return {
@@ -188,19 +227,17 @@ async function performWebSearch(
       };
     } catch (error) {
       throwIfWebToolAborted(signal);
-      lastError = error instanceof Error ? error.message : String(error);
-      // On permission error don't retry — user needs to reload the extension
-      if (lastError.includes('opaque') || lastError.includes('status 0')) break;
+      lastErrorMessage = error instanceof Error ? error.message : String(error);
+      lastErrorCode = extractWebErrorCode(error);
+      // #58: permission_denied 不重试 —— 用户需要授权 host permission
+      if (lastErrorCode === WEB_ERROR_CODES.PERMISSION_DENIED) break;
       // On other errors try the next domain
     }
   }
 
-  const isPermissionError =
-    lastError?.includes('Failed to fetch') ||
-    lastError?.includes('NetworkError') ||
-    lastError?.includes('opaque') ||
-    lastError?.includes('status 0');
-  const hasNoParseableResults = lastError?.includes('no parseable search results') === true;
+  // #58: 结构化分类 —— 替换原字符串匹配
+  const isPermissionError = lastErrorCode === WEB_ERROR_CODES.PERMISSION_DENIED;
+  const hasNoParseableResults = lastErrorCode === WEB_ERROR_CODES.NO_PARSEABLE_RESULTS;
 
   return {
     ok: false,
@@ -212,15 +249,15 @@ async function performWebSearch(
     detail: isPermissionError
       ? translate(locale, 'tool.web.permissionDenied')
       : hasNoParseableResults
-        ? translate(locale, 'tool.web.noParseableResults', { error: lastError ?? 'unknown error' })
-        : translate(locale, 'tool.web.searchFailedDetail', { error: lastError ?? 'unknown error' }),
+        ? translate(locale, 'tool.web.noParseableResults', { error: lastErrorMessage ?? 'unknown error' })
+        : translate(locale, 'tool.web.searchFailedDetail', { error: lastErrorMessage ?? 'unknown error' }),
     error: {
       code: isPermissionError
         ? 'search_permission_denied'
         : hasNoParseableResults
           ? 'search_no_results'
           : 'search_failed',
-      message: lastError ?? 'unknown error',
+      message: lastErrorMessage ?? 'unknown error',
       retryable: !isPermissionError,
     },
   };
@@ -255,9 +292,9 @@ async function bingSearch(
 
     if (!response.ok) {
       if (response.status === 0) {
-        throw new Error(`Host permission denied (opaque response) for ${domain}`);
+        throw new WebToolError(WEB_ERROR_CODES.PERMISSION_DENIED, `Host permission denied (opaque response) for ${domain}`);
       }
-      throw new Error(`${domain} returned status ${response.status}`);
+      throw new WebToolError(WEB_ERROR_CODES.HTTP_STATUS, `${domain} returned status ${response.status}`);
     }
 
     let html: string;
@@ -265,10 +302,10 @@ async function bingSearch(
       html = await response.text();
     } catch {
       throwIfWebToolAborted(signal);
-      throw new Error(`${domain} response body unreadable`);
+      throw new WebToolError(WEB_ERROR_CODES.BODY_UNREADABLE, `${domain} response body unreadable`);
     }
     if (html.length < 200) {
-      throw new Error(`${domain} returned an empty or blocked response (${html.length} bytes)`);
+      throw new WebToolError(WEB_ERROR_CODES.EMPTY_RESPONSE, `${domain} returned an empty or blocked response (${html.length} bytes)`);
     }
     return parseBingResults(html, topK);
   } finally {
@@ -385,7 +422,7 @@ async function performWebFetch(
 
       if (!response.ok) {
         await cancelUnusedWebResponseBody(response);
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw new WebToolError(WEB_ERROR_CODES.HTTP_STATUS, `HTTP ${response.status}: ${response.statusText}`);
       }
 
       // 审计 #13（2026-10-24 报告 P1）：fetch 默认 `redirect: 'follow'`。上面只对
@@ -404,11 +441,11 @@ async function performWebFetch(
       }
       if (!finalParsed || (finalParsed.protocol !== 'http:' && finalParsed.protocol !== 'https:')) {
         await cancelUnusedWebResponseBody(response);
-        throw new Error(`Redirected to unsupported URL: ${finalUrl}`);
+        throw new WebToolError(WEB_ERROR_CODES.UNSUPPORTED_REDIRECT, `Redirected to unsupported URL: ${finalUrl}`);
       }
       if (parsedUrl.protocol === 'https:' && finalParsed.protocol === 'http:') {
         await cancelUnusedWebResponseBody(response);
-        throw new Error(`Refused redirect from https to http: ${finalUrl}`);
+        throw new WebToolError(WEB_ERROR_CODES.HTTPS_TO_HTTP, `Refused redirect from https to http: ${finalUrl}`);
       }
 
       const contentType = response.headers.get('content-type') || '';
@@ -463,11 +500,9 @@ async function performWebFetch(
   } catch (error) {
     throwIfWebToolAborted(signal);
     const message = error instanceof Error ? error.message : String(error);
-    const isPermissionError =
-      message.includes('Failed to fetch') ||
-      message.includes('NetworkError') ||
-      message.includes('opaque') ||
-      message.includes('status 0');
+    // #58: 结构化分类 —— 替换原字符串匹配（message.includes('Failed to fetch') 等）
+    const code = extractWebErrorCode(error);
+    const isPermissionError = code === WEB_ERROR_CODES.PERMISSION_DENIED;
     return {
       ok: false,
       name: call.name,
@@ -507,7 +542,7 @@ async function readTextWithByteLimit(response: Response, maxBytes: number): Prom
   const declared = Number(response.headers.get('content-length') ?? NaN);
   if (Number.isFinite(declared) && declared > maxBytes) {
     await cancelUnusedWebResponseBody(response);
-    throw new Error(`Response is larger than ${maxBytes} bytes (declared ${declared}).`);
+    throw new WebToolError(WEB_ERROR_CODES.RESPONSE_TOO_LARGE, `Response is larger than ${maxBytes} bytes (declared ${declared}).`);
   }
   if (!response.body) return response.text();
 
@@ -523,7 +558,7 @@ async function readTextWithByteLimit(response: Response, maxBytes: number): Prom
       if (received > maxBytes) {
         // 超限：立刻停读并取消余下流，避免把剩余字节继续拉进内存
         await reader.cancel().catch(() => {});
-        throw new Error(`Response exceeded ${maxBytes} bytes; truncated read.`);
+        throw new WebToolError(WEB_ERROR_CODES.RESPONSE_TOO_LARGE, `Response exceeded ${maxBytes} bytes; truncated read.`);
       }
       text += decoder.decode(chunk.value, { stream: true });
     }
