@@ -143,7 +143,9 @@ export function patchIDBRequest(request: IDBRequest) {
 
   Object.defineProperty(request, "result", {
     get() {
-      const result = origResultDesc.get!.call(this);
+      // #34: descriptor 可能是 value descriptor （没有 get），此时直接返回 undefined。
+      if (!origResultDesc.get) return undefined;
+      const result = origResultDesc.get.call(this);
       if (result && !cleaned) {
         cleaned = true;
         stripToolCallsFromIDBResult(result, getHistoryCleanupOptions());

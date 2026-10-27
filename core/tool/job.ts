@@ -108,10 +108,20 @@ export function transitionJob(job: ToolJob, to: JobState): ToolJob {
 
 /**
  * 从中断状态恢复 job（回到 running）。
+ * #57: 加上限 —— 超过 MAX_RESUME_ATTEMPTS 不再续跑，直接置 failed。
  */
+const MAX_RESUME_ATTEMPTS = 5;
+
 export function resumeJob(job: ToolJob): ToolJob {
   if (job.state !== 'interrupted' && job.state !== 'resumed') {
     throw new Error(`Cannot resume job in state: ${job.state}`);
+  }
+  if (job.attempt >= MAX_RESUME_ATTEMPTS) {
+    return {
+      ...job,
+      state: 'failed',
+      finishedAt: Date.now(),
+    };
   }
   return {
     ...job,

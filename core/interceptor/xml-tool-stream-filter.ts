@@ -95,9 +95,16 @@ export class XmlToolStreamFilter {
 
       // Text event — apply state machine
       if (this.state === "SUPPRESSING") {
+        // #37: SUPPRESSING 但 currentTool 意外为 null（状态错乱）→ 回 NORMAL 避免 crash。
+        if (!this.currentTool) {
+          this.state = "NORMAL";
+          this.pendingText = "";
+          // 不 emit 这帧（它本应是 tool body 的一部分，丢了就丢了）。
+          continue;
+        }
         const previousPendingLength = this.pendingText.length;
         const searchText = this.pendingText + text;
-        const closeTag = this.findFirstToolClose(searchText, this.currentTool!);
+        const closeTag = this.findFirstToolClose(searchText, this.currentTool);
         if (closeTag) {
           const tailStart = closeTag.endIndex;
           const tailOffsetInCurrentText = tailStart - previousPendingLength;
@@ -126,7 +133,7 @@ export class XmlToolStreamFilter {
         }
         this.pendingText = this.getCloseSearchTail(
           searchText,
-          this.currentTool!,
+          this.currentTool,
         );
         if (isFragmentCreation || isBatchPatch(effectiveParsed)) {
           const modified = cloneParsedWithTextPrefix(effectiveParsed, 0);

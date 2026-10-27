@@ -292,7 +292,9 @@ export async function interceptFetchResponse(
   }
 
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
+  // #4: stream:true — 多字节 UTF-8 字符跨 chunk 截断时，保留不完整序列到下一块。
+  // TS 类型定义 TextDecoderOptions 不含 stream，但浏览器运行时实际接受。
+  const decoder = new TextDecoder(undefined, { stream: true } as TextDecoderOptions);
   let streamState: PassiveDeepSeekStreamState | null = null;
   const getStreamState = () => {
     streamState ??= createPassiveDeepSeekStreamState(requestContext);
@@ -414,6 +416,13 @@ export function setupXHRResponseInterceptor(
       "responseText",
     );
 
+  const origResponseDesc =
+    Object.getOwnPropertyDescriptor(XMLHttpRequest.prototype, "response") ||
+    Object.getOwnPropertyDescriptor(
+      Object.getPrototypeOf(XMLHttpRequest.prototype),
+      "response",
+    );
+
   // Create a fake controller that accumulates filtered text
   const fakeController = {
     enqueue(data: Uint8Array) {
@@ -483,7 +492,9 @@ export function setupXHRResponseInterceptor(
         finishSuccessfulResponse();
         return filteredResponse;
       }
-      return undefined;
+      // #35: 非 text responseType 透传原生 response，不要返回 undefined 违反契约。
+      // 原生 responseType=blob/arraybuffer/document 各有自己的返回类型。
+      return origResponseDesc?.get?.call(xhr);
     },
     configurable: true,
   });

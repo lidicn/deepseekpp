@@ -88,13 +88,23 @@ export class ToolProviderRegistry {
   }
 
   async listTools(context: ToolProviderDescriptorContext): Promise<ToolDescriptor[]> {
-    const groups = await Promise.all(
+    // #54: Promise.all → allSettled —— 一个 provider 失败不该拖垮全量工具列表。
+    // 失败的 provider 记日志（不阻断），其余正常返回。
+    const settled = await Promise.allSettled(
       this.providers.map((provider) => provider.listTools(context)),
     );
-    const resolvedGroups = groups.map((descriptors, index) => {
-      this.assertProviderOwnsDescriptors(this.providers[index], descriptors);
-      return descriptors;
-    });
+    const resolvedGroups: ToolDescriptor[][] = [];
+    for (let i = 0; i < settled.length; i++) {
+      const result = settled[i];
+      if (result.status === 'fulfilled') {
+        this.assertProviderOwnsDescriptors(this.providers[i], result.value);
+        resolvedGroups.push(result.value);
+      } else {
+        // best-effort: 单个 provider 失败 → 跳过它，不阻断其他 provider。
+        console.warn(`[ToolProviderRegistry] provider ${registrationKey(this.providers[i].registration)} listTools failed:`, result.reason);
+        resolvedGroups.push([]);
+      }
+    }
     for (let index = 0; index < resolvedGroups.length; index += 1) {
       const provider = this.providers[index];
       if (!provider.disambiguateInvocationNames) continue;
