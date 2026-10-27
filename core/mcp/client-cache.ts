@@ -11,11 +11,20 @@ interface CacheEntry {
   configHash: string;
   initialized: boolean;
   lastUsed: number;
+  /** 审计 #73：绝对存活起点。TTL 每次命中都会续期（滑动过期），没有它热连接永不过期。 */
+  createdAt: number;
 }
 
 const cache = new Map<string, CacheEntry>();
 const MAX_CACHE_ENTRIES = 32;
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 分钟
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 分钟（滑动：每次命中续期）
+/**
+ * 审计 #73：绝对存活上限。`lastUsed` 每次命中都续期 ⇒ 单靠滑动 TTL，
+ * 一个每 4 分钟被用一次的热连接**永不淘汰**；而底层连接（native Port / SSE 流）
+ * 可能早已半死（对端重启、会话失效），表现为"偶发超时"而不是立刻报错。
+ * 取 30 分钟 = 6 × TTL：足够覆盖正常会话，又能保证每半小时强制重连一次。
+ */
+const MAX_CONNECTION_LIFETIME_MS = 30 * 60 * 1000;
 
 /**
  * 连接相关配置的哈希。
@@ -90,6 +99,11 @@ export function getCachedMcpTransport(server: McpServerConfig): McpProtocolTrans
     evict(cacheKey(server.id));
     return undefined;
   }
+  // 审计 #73：绝对寿命到点即淘汰（不受滑动续期影响）
+  if (Date.now() - entry.createdAt > MAX_CONNECTION_LIFETIME_MS) {
+    evict(cacheKey(server.id));
+    return undefined;
+  }
   // TTL 过期失效
   if (Date.now() - entry.lastUsed > CACHE_TTL_MS) {
     evict(cacheKey(server.id));
@@ -118,6 +132,7 @@ export function setCachedMcpTransport(server: McpServerConfig, transport: McpPro
     configHash: hashServerConfig(server),
     initialized: true,
     lastUsed: Date.now(),
+    createdAt: Date.now(),
   });
 }
 
