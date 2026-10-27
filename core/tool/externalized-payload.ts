@@ -85,6 +85,10 @@ export function appendExternalizedToolPayloadChunk(
     return;
   }
 
+  // 审计 #48：首个 chunk 也要检查预算（原只在追加时查，首 chunk 超限直接建条目）。
+  if (chunk.length > EXTERNALIZED_PAYLOAD_MAX_CHARS) {
+    throw new Error(`Externalized tool payload ${ref} first chunk ${chunk.length} exceeds ${EXTERNALIZED_PAYLOAD_MAX_CHARS} chars.`);
+  }
   payloadEntries.set(key, {
     invocationName,
     chunks: [chunk],
@@ -102,8 +106,10 @@ export function takeExternalizedToolPayloadText(
   const key = createPayloadEntryKey(ref, namespace);
   const entry = payloadEntries.get(key);
   if (!entry) return null;
-  payloadEntries.delete(key);
+  // 审计 #47：先校验 invocationName 再 delete。原名不匹配时条目被吞，正确调用方
+  // 再也取不到。不匹配就保留条目（让正确调用方取），返回 null。
   if (entry.invocationName !== invocationName) return null;
+  payloadEntries.delete(key);
   return entry.chunks.join('');
 }
 

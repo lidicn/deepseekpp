@@ -171,6 +171,8 @@ export function hookFetch(): () => void {
             : [];
           const updated = [...existing, trimmed].slice(-3);
           void chrome.storage.local.set({ dpp_recent_user_messages: updated });
+        }).catch(() => {
+          // 审计 #33：内容脚本里不能抛未处理 rejection，吞掉即可。
         });
       }
     } catch {
