@@ -342,6 +342,13 @@ export function hookXHR(): () => void {
                 : {}),
             }),
           );
+          // 审计 #6：await onRequestBody 期间页面可能已调 xhr.abort()。此时若再
+          // origSend 会在已 abort 的 XHR 上发出全新请求（幽灵消息/工具调用）。
+          // readyState 0=UNSENT 表示已 abort 重置，直接不发。
+          if (xhr.readyState === 0) {
+            recordRequestFromBody(requestBody, route ?? "unknown", modified !== null);
+            return;
+          }
           return origSend.call(xhr, requestBody);
         } catch (error) {
           if (cancelResponseInterceptor) cancelResponseInterceptor();
