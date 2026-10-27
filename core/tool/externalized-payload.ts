@@ -5,6 +5,19 @@ const EXTERNALIZED_TOOL_PAYLOAD_MARKER = '__dppExternalToolPayload';
 const EXTERNALIZED_TOOL_PAYLOAD_VERSION = 1 as const;
 const EXTERNALIZED_TOOL_PAYLOAD_TTL_MS = 30 * 60 * 1000;
 
+/**
+ * #84 条目数上限。
+ * 定量依据：
+ *   - per-entry 上限 8 MiB
+ *   - automation 内 tool call 串行执行，一个 call 对应一个 entry（take 后删除）
+ *   - TTL 30 min，prune 在每次 append / take 时触发
+ *   - 最坏：30 min 内连续 append 而从不 take（模型异常中断）
+ *     → 200 entries × 8 MiB = 1.6 GiB（chrome.storage.local 单页理论 5 GiB）
+ *   - 正常：一 call 一 take，Map 大小始终 ≤ 并发 call 数（≤ 10）
+ * 200 是够用又不至于让异常泄漏无限增长的值。
+ */
+const EXTERNALIZED_PAYLOAD_MAX_ENTRIES = 200;
+
 export interface ExternalizedToolPayload {
   [key: string]: unknown;
   [EXTERNALIZED_TOOL_PAYLOAD_MARKER]: true;
@@ -83,6 +96,11 @@ export function appendExternalizedToolPayloadChunk(
     }
     existing.chunks.push(chunk);
     return;
+  }
+
+  // #84 条目数硬上限 — 超上限立即拒绝（不能静默）。
+  if (payloadEntries.size >= EXTERNALIZED_PAYLOAD_MAX_ENTRIES) {
+    throw new Error(`Externalized payload pool exhausted (${EXTERNALIZED_PAYLOAD_MAX_ENTRIES} entries); cannot create new entry for ${ref}.`);
   }
 
   // 审计 #48：首个 chunk 也要检查预算（原只在追加时查，首 chunk 超限直接建条目）。

@@ -213,6 +213,10 @@ async function fetchDeepSeekJson(input: {
     phase: 'export',
     maxResponseBytes: DEEPSEEK_BODY_BUDGETS.conversationExport,
     fetchImpl: input.fetchImpl,
+    // #40: 把 caller signal 同时放进 policy.callerSignal（init.signal 也已由 request-codec 设置）。
+    // fetchWithNetworkPolicy L83 读 policy.callerSignal ?? init.signal — 两边都填更保险，
+    // 且 callerSignal 语义更明确（policy 层知道这是调用方自己的 controller）。
+    callerSignal: input.signal,
   });
   const text = await readNetworkResponseText(response, operation);
   const json = parseJson(text, endpoint, response.status);
