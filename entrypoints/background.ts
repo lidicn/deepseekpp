@@ -1190,6 +1190,10 @@ async function openSidePanelAndSendText(text: string) {
     'pending_chat_text_notification_failed',
     reportBackgroundStartupError,
   );
+  // 审计 #88：消息已发出后清 store。原流程 write→sendMessage 后不清，若侧栏已开
+  // 并通过 sendMessage 直接消费了 text（不读 store），store 里的文本会残留到下次
+  // 打开污染输入框。
+  await pendingChatTextStore.clear().catch(() => undefined);
 }
 
 async function ensureBuiltInMcpPresets() {
