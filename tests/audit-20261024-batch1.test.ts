@@ -36,8 +36,9 @@ describe('审计 #30：状态条 tool 名必须转义', () => {
   it('状态条三个插值分支（tool / complete message / error message）都已转义', () => {
     const source = readSource('entrypoints/content.ts');
     expect(source).toMatch(/dpp-status-bar-tool">\$\{escapeHtml\(tool\)\}/);
-    expect(source).toMatch(/任务完成 \$\{escapeHtml\(String\(options\?\.message/);
-    expect(source).toMatch(/执行出错 \$\{escapeHtml\(String\(options\?\.message/);
+    // S2 抽文案后 shape 变为 contentT("content.agent.statusBarComplete/Error", { message: escapeHtml(...) })
+    expect(source).toMatch(/content\.agent\.statusBarComplete.*escapeHtml\(String\(options\?\.message/);
+    expect(source).toMatch(/content\.agent\.statusBarError.*escapeHtml\(String\(options\?\.message/);
   });
 });
 

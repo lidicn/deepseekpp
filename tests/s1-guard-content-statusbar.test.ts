@@ -15,14 +15,15 @@ describe('S1 P1-56: 状态条 message 拼 innerHTML 前必须 escapeHtml', () =>
   const source = readFileSync(join(process.cwd(), 'entrypoints/content.ts'), 'utf8');
 
   it('complete 分支对 options.message 做 escapeHtml', () => {
+    // S2 抽文案后 shape: contentT("content.agent.statusBarComplete", { message: escapeHtml(...) })
     expect(source).toContain(
-      'html = `<strong>deepseek++</strong> 任务完成 ${escapeHtml(String(options?.message ?? ""))}`;',
+      'contentT("content.agent.statusBarComplete", { message: escapeHtml(String(options?.message ?? "")) })',
     );
   });
 
   it('error 分支对 options.message 做 escapeHtml', () => {
     expect(source).toContain(
-      'html = `<strong>deepseek++</strong> 执行出错 ${escapeHtml(String(options?.message ?? ""))}`;',
+      'contentT("content.agent.statusBarError", { message: escapeHtml(String(options?.message ?? "")) })',
     );
   });
 });
