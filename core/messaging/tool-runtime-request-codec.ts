@@ -178,11 +178,15 @@ export const TOOL_RUNTIME_PAYLOAD_DECODERS: ToolRuntimePayloadDecoderMap = {
     return typedPayload<'SET_BROWSER_CONTROL_TARGET'>(payload);
   },
   DIAGNOSE_WEB_SEARCH(value) {
-    if (!isPlainRuntimeRecord(value)) return { query: 'test' };
-    const payload = value;
+    // #55: 校验 payload 键 —— 拒绝额外字段，query 可选但必须是 string。
+    if (!isPlainRuntimeRecord(value)) return invalidDecodedPayload('invalid_diagnose_web_search');
+    for (const key of Object.keys(value)) {
+      if (key !== 'query') {
+        return invalidDecodedPayload('invalid_diagnose_web_search_extra_field');
+      }
+    }
     return {
-      ...payload,
-      query: typeof payload.query === 'string' ? payload.query : 'test',
+      query: typeof value.query === 'string' ? value.query : 'test',
     } as ToolRuntimePayload<'DIAGNOSE_WEB_SEARCH'>;
   },
   REQUEST_HOST_PERMISSION(value) {

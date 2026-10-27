@@ -196,10 +196,9 @@ export function createRuntimeMessageContext(
     documentId: validDocumentId(sender.documentId),
     documentLifecycle: sender.documentLifecycle,
     documentSessionId: createDocumentSessionId('deepseek_content', sender, senderUrl, frameId ?? 0),
-    // sender.url identifies the content document and may retain the initial
-    // URL across SPA navigation. The browser-owned tab URL is the current
-    // DeepSeek route after the origin check above, so it owns chat binding.
-    chatSessionId: readDeepSeekChatSessionId(tabUrl ?? senderUrl) ?? undefined,
+    // #53: 只用 tabUrl 绑定 chatSessionId — senderUrl 是 content script 注入 URL，
+    // 跨 SPA 导航可能过期，不能作为 chat 绑定的回退。
+    chatSessionId: tabUrl ? readDeepSeekChatSessionId(tabUrl) ?? undefined : undefined,
   };
 }
 

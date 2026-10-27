@@ -38,8 +38,17 @@ export function isToolDescriptorRecord(value: unknown): value is Record<string, 
   );
 }
 
+const TOOL_CALL_RECORD_KEYS = new Set([
+  'name', 'payload', 'raw', 'id', 'descriptorId', 'invocationName', 'provider',
+  'source', 'createdAt', 'parseError',
+]);
+
 export function isToolCallRecord(value: unknown): value is Record<string, unknown> {
   if (!isPlainRecord(value)) return false;
+  // #60: 拒绝额外字段 —— 防止上游静默新增未预期字段污染下游解码。
+  for (const key of Object.keys(value)) {
+    if (!TOOL_CALL_RECORD_KEYS.has(key)) return false;
+  }
   if (!isNonEmptyString(value.name) || !isJsonObject(value.payload) || typeof value.raw !== 'string') return false;
   if (value.id !== undefined && !isNonEmptyString(value.id)) return false;
   if (value.descriptorId !== undefined && !isNonEmptyString(value.descriptorId)) return false;
