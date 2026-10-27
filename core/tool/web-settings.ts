@@ -26,10 +26,19 @@ export async function getWebToolSettings(): Promise<WebToolSettings> {
   return { ...DEFAULT_SETTINGS };
 }
 
+// 审计 #52：setWebToolEnabled 是 get→改→set 的 read-modify-write，无互斥。
+// 并发切换两个工具时后写覆盖先写（lost update）。用模块内 promise 链串行化同 key 的写。
+let writeChain: Promise<void> = Promise.resolve();
+
 export async function setWebToolEnabled(name: WebSearchToolName, enabled: boolean): Promise<void> {
-  const current = await getWebToolSettings();
-  current[name] = enabled;
-  await chrome.storage.local.set({ [STORAGE_KEY]: current });
+  const task = writeChain.then(async () => {
+    const current = await getWebToolSettings();
+    current[name] = enabled;
+    await chrome.storage.local.set({ [STORAGE_KEY]: current });
+  });
+  // 链上挂住后续写，即使这次失败也不阻塞下一次（吞掉 rejection 让链继续）
+  writeChain = task.catch(() => undefined);
+  return task;
 }
 
 export async function isWebToolEnabled(name: WebSearchToolName): Promise<boolean> {
