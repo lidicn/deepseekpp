@@ -8,8 +8,6 @@ import type {
   UsageTurnRecord,
 } from './types';
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 export function normalizeUsageRangeDays(value: unknown): UsageRangeDays {
   return value === 7 ? 7 : 30;
 }
@@ -135,10 +133,14 @@ export function getUsageModelLabel(modelType: string | null | undefined): string
 }
 
 function getRecentDayKeys(rangeDays: UsageRangeDays, now: number): string[] {
-  const today = dayKeyToTimestamp(toLocalDayKey(now));
-  return Array.from({ length: rangeDays }, (_, index) => (
-    toLocalDayKey(today - (rangeDays - index - 1) * DAY_MS)
-  ));
+  const base = new Date(normalizeTimestamp(now, Date.now()));
+  const year = base.getFullYear();
+  const month = base.getMonth();
+  const date = base.getDate();
+  return Array.from({ length: rangeDays }, (_, index) => {
+    const day = new Date(year, month, date - (rangeDays - index - 1));
+    return toLocalDayKey(day.getTime());
+  });
 }
 
 function createHeatmap(days: readonly UsageDailySummary[]): UsageHeatmapCell[] {

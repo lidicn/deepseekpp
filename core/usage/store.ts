@@ -17,7 +17,6 @@ import type { TokenMetricSource } from '../deepseek/stream-metrics';
 export const USAGE_STORAGE_KEY = 'deepseek_pp_usage_turns_v1';
 const MAX_RECORDS = 5_000;
 const RETENTION_DAYS = 180;
-const DAY_MS = 24 * 60 * 60 * 1000;
 const usageOperations = createCoalescingMutationQueue<UsageTurnRecord, UsageTurnRecord>(
   persistUsageBurst,
 );
@@ -110,7 +109,12 @@ function shouldPreferIncomingMetric(
 }
 
 function pruneUsageRecords(records: readonly UsageTurnRecord[]): UsageTurnRecord[] {
-  const cutoff = Date.now() - RETENTION_DAYS * DAY_MS;
+  const now = new Date();
+  const cutoff = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() - RETENTION_DAYS,
+  ).getTime();
   return records
     .filter((record) => record.recordedAt >= cutoff)
     .sort((a, b) => b.recordedAt - a.recordedAt)
