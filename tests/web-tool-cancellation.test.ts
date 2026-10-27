@@ -48,7 +48,7 @@ describe('web tool cancellation', () => {
 
   it.each([
     ['an HTTP error', false, 503, 'text/plain'],
-    ['an unsupported content type', true, 200, 'application/octet-stream'],
+    ['an unsupported content type', false, 200, 'application/octet-stream'],
   ])('preserves the primary result when body cancellation fails for %s', async (
     _case,
     ok,
