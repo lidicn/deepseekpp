@@ -55,7 +55,11 @@ function createStoredZip(entries: readonly StoredZipEntry[], modifiedAt: Date): 
   let localOffset = 0;
 
   for (const entry of entries) {
-    const filename = textEncoder.encode(entry.filename);
+    // #100: ZIP Slip — validate filename to block path traversal.
+    // ZIP format allows any filename including '../../' or absolute '/etc/...'
+    // and compliant extractors write where it says — classic Zip Slip vuln.
+    const safeFilename = validateZipEntryFilename(entry.filename);
+    const filename = textEncoder.encode(safeFilename);
     if (filename.length === 0 || filename.length > UINT16_MAX) {
       throw new Error('ZIP entry filename is empty or too long.');
     }
@@ -163,4 +167,42 @@ function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
     offset += part.length;
   }
   return output;
+}
+
+/**
+ * #100 Zip Slip defense: validate ZIP entry filename.
+ *
+ * ZIP is a container — the filename field can contain path separators, `..`,
+ * or absolute prefixes. Compliant extractors write the bytes exactly where
+ * the filename says, so a bad actor can build a ZIP whose entry writes to
+ * an arbitrary absolute path or escapes the intended extraction directory.
+ *
+ * We reject any filename that:
+ *   - starts with `/` or `\` (absolute path)
+ *   - contains a `..` path segment (traversal)
+ *   - contains `\` (Windows-style absolute / backslash traversal)
+ *
+ * Accepted filenames are returned unchanged.
+ */
+function validateZipEntryFilename(filename: string): string {
+  if (!filename) {
+    throw new Error('ZIP entry filename must not be empty.');
+  }
+  if (filename.startsWith('/') || filename.startsWith('\\')) {
+    throw new Error(`ZIP entry filename must not be absolute: ${filename}`);
+  }
+  if (filename.includes('\\')) {
+    throw new Error(`ZIP entry filename must not contain backslashes: ${filename}`);
+  }
+  const segments = filename.split('/').filter((seg) => seg.length > 0);
+  for (const seg of segments) {
+    if (seg === '..') {
+      throw new Error(`ZIP entry filename must not contain path traversal (..): ${filename}`);
+    }
+  }
+  // Also reject leading '../' even if filter wouldn't catch it at start
+  if (/^\.\.?\//.test(filename)) {
+    throw new Error(`ZIP entry filename must not start with traversal: ${filename}`);
+  }
+  return filename;
 }
