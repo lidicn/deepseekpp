@@ -31,6 +31,9 @@ export class BrowserConnection {
   private attachedTabId: number | null = null;
   private detachListenerRegistered = false;
   private eventListenerRegistered = false;
+  // 审计 #87：attach/detach/sendCommand 串行锁。并发 attach(A)/attach(B) 交错时
+  // this.attachedTabId 会被后者改写，sendCommand 用错 tab。
+  private attachChain: Promise<unknown> = Promise.resolve();
 
   constructor(chromeApi: typeof chrome) {
     this.chromeApi = chromeApi;
@@ -66,6 +69,13 @@ export class BrowserConnection {
   }
 
   async attach(tabId: number): Promise<void> {
+    // 审计 #87：整个 attach 过程串行化，避免并发 attach 交错改写 attachedTabId。
+    const task = this.attachChain.then(() => this.attachInner(tabId));
+    this.attachChain = task.catch(() => undefined);
+    return task;
+  }
+
+  private async attachInner(tabId: number): Promise<void> {
     if (this.attachedTabId === tabId) return;
     if (this.attachedTabId !== null) await this.detach();
 
