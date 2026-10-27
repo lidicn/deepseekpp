@@ -55,6 +55,8 @@ export async function getMcpServerById(
 }
 
 export async function createMcpServer(input: McpServerCreateInput): Promise<McpServerConfig> {
+  // 审计 #74：先校验再碰锁与存储 —— 非法 URL 立刻拒绝，不产生半成品。
+  assertTransportUrlOrThrow(input.transport ?? {});
   return mcpStorageOperations.run(async () => {
     const state = await readStateAlreadyOwned();
     const now = Date.now();
@@ -308,8 +310,39 @@ async function writeStateAlreadyOwned(state: McpServerStorageState): Promise<voi
   });
 }
 
+/**
+ * 审计 #74：`transport.url` 必须在**保存期**就校验，而不是等到使用期。
+ *
+ * 之前只有 `getMcpEndpointUrl`（transports/transport-endpoint.ts）在真正发请求时校验协议，
+ * 于是 `javascript:` / `file:` / 纯空串这类 URL 可以**先落库**，直到第一次调用才失败；
+ * 而探测、展示、导出等路径根本不会经过那层校验。
+ */
+const URL_BASED_TRANSPORT_KINDS = new Set<string>(['http', 'sse', 'streamable_http']);
+
+function assertTransportUrlOrThrow(transport: { kind?: string; url?: string }): void {
+  const kind = transport.kind ?? 'streamable_http';
+  if (!URL_BASED_TRANSPORT_KINDS.has(kind)) return;
+  const rawUrl = (transport.url ?? '').trim();
+  if (!rawUrl) {
+    throw new Error(`MCP server transport "${kind}" requires a URL.`);
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`Invalid MCP server URL: ${rawUrl}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Unsupported MCP server URL protocol: ${parsed.protocol}`);
+  }
+}
 function normalizeServerForMutation(raw: unknown): McpServerConfig {
   const value = raw && typeof raw === 'object' ? raw as Partial<McpServerConfig> : {};
+  // 审计 #74：保存期先校验 transport.url，非法值不允许落库。
+  assertTransportUrlOrThrow({
+    kind: value.transport?.kind,
+    url: value.transport?.url === undefined ? undefined : String(value.transport.url),
+  });
   const now = Date.now();
   const enabled = value.enabled !== false;
   const status = normalizeServerStatus(value.status, enabled);
