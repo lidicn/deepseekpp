@@ -1,4 +1,4 @@
-import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n/background';
+﻿import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n/background';
 import { appendToolCallHistory, BurstSupersededError } from './history';
 import { ToolPostEffectPersistenceError } from './execution-error';
 import type {
@@ -27,6 +27,7 @@ import {
 } from './authorization';
 import { enforceLocalSkillCwd } from './local-skill-cwd';
 import { truncateToolResultDetail } from './result-governance';
+import { checkExecutionGate } from './execution-gates';
 
 export interface RuntimeToolCallOptions {
   timeoutMs?: number;
@@ -308,6 +309,11 @@ async function executeRuntimeToolCall(
       } else {
         resolvedCall = resolution.call;
         executionDescriptor = resolution.descriptor;
+        // W18/W19：先过 provider 维度的熔断 + 限流闸门
+        const gate = checkExecutionGate(executionDescriptor, locale);
+        if (!gate.allowed) {
+          result = gate.blockedResult!;
+        } else {
         // 第二件：创建 AbortController，超时后真正 abort provider
         const timeoutAbort = new AbortController();
         const combinedSignal = options.signal
@@ -327,9 +333,16 @@ async function executeRuntimeToolCall(
           locale,
           timeoutAbort,
         );
+        result.ok ? gate.breaker.recordSuccess() : gate.breaker.recordFailure();
         providerCompleted = true;
+        }
       }
     } else {
+      // W18/W19：先过 provider 维度的熔断 + 限流闸门
+      const gate = checkExecutionGate(executionDescriptor, locale);
+      if (!gate.allowed) {
+        result = gate.blockedResult!;
+      } else {
       // 第二件：创建 AbortController，超时后真正 abort provider
       const timeoutAbort = new AbortController();
       const combinedSignal = options.signal
@@ -349,7 +362,9 @@ async function executeRuntimeToolCall(
         locale,
         timeoutAbort,
       );
+      result.ok ? gate.breaker.recordSuccess() : gate.breaker.recordFailure();
       providerCompleted = true;
+      }
     }
     assertRuntimeExecutionActive(options);
   } catch (error) {
