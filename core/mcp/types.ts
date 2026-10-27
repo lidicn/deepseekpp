@@ -213,6 +213,12 @@ export interface McpProtocolTransport {
     options?: McpTransportRequestOptions,
   ): Promise<void>;
   commitInitialization?(result: McpInitializeResult): void;
+  /**
+   * 审计 #65：关闭底层连接（native Port / 长连接）。
+   * 缓存淘汰、配置变更、TTL 过期时必须调用，否则连接会挂到 GC 才释放。
+   * 可选：不持有连接的传输（如每次请求自带 reader 的 SSE）可以不实现。
+   */
+  close?(): void;
 }
 
 export interface McpTransportRequestOptions {

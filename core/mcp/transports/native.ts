@@ -120,6 +120,37 @@ export function createMcpNativeMessagingTransport(server: McpServerConfig): McpP
     async notify(notification, options) {
       await sendNativeMessage(server, notification, options?.timeoutMs, options?.signal);
     },
+    /**
+     * 审计 #65：关闭该 server 的 native Port。
+     * 缓存淘汰 / 配置变更 / TTL 过期时由 client-cache 调用；否则 Port 会一直挂在
+     * 模块级 nativePortStates 里，直到宿主主动断开或 GC。
+     */
+    close() {
+      const host = server.transport.nativeHost;
+      if (!host) return;
+      const state = nativePortStates.get(host);
+      if (!state) return;
+      state.alive = false;
+      nativePortStates.delete(host);
+      const err = new McpTransportError(
+        'mcp_native_host_disconnected',
+        'Native host connection was closed by transport cache eviction.',
+        { retryable: true },
+      );
+      for (const pending of state.pendingRequests.values()) {
+        clearTimeout(pending.timer);
+        if (pending.signal && pending.onAbort) {
+          pending.signal.removeEventListener('abort', pending.onAbort);
+        }
+        pending.reject(err);
+      }
+      state.pendingRequests.clear();
+      try {
+        state.port.disconnect();
+      } catch {
+        // best-effort：宿主可能已经断开
+      }
+    },
   };
 }
 

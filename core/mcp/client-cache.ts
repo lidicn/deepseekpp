@@ -63,18 +63,36 @@ function cacheKey(serverId: string): string {
   return serverId;
 }
 
+/**
+ * 审计 #65：淘汰缓存条目时必须**关闭底层连接**。
+ *
+ * 之前所有失效路径都只做 `cache.delete()`：native messaging 的 Port 会一直挂在
+ * 模块级 `nativePortStates` 里（直到宿主断开或 GC），SSE/HTTP 的长连接同理。
+ * 高频切换 server 或配置反复变更时会稳定泄漏连接。
+ */
+function evict(key: string): void {
+  const entry = cache.get(key);
+  if (!entry) return;
+  try {
+    entry.transport.close?.();
+  } catch {
+    // best-effort：close 失败不能影响缓存淘汰本身
+  }
+  cache.delete(key);
+}
+
 /** 获取缓存的 transport（如果配置未变更且未过期） */
 export function getCachedMcpTransport(server: McpServerConfig): McpProtocolTransport | undefined {
   const entry = cache.get(cacheKey(server.id));
   if (!entry) return undefined;
   // 配置变更失效
   if (entry.configHash !== hashServerConfig(server)) {
-    cache.delete(cacheKey(server.id));
+    evict(cacheKey(server.id));
     return undefined;
   }
   // TTL 过期失效
   if (Date.now() - entry.lastUsed > CACHE_TTL_MS) {
-    cache.delete(cacheKey(server.id));
+    evict(cacheKey(server.id));
     return undefined;
   }
   entry.lastUsed = Date.now();
@@ -93,7 +111,7 @@ export function setCachedMcpTransport(server: McpServerConfig, transport: McpPro
         oldestKey = key;
       }
     }
-    if (oldestKey) cache.delete(oldestKey);
+    if (oldestKey) evict(oldestKey);
   }
   cache.set(cacheKey(server.id), {
     transport,
@@ -105,10 +123,10 @@ export function setCachedMcpTransport(server: McpServerConfig, transport: McpPro
 
 /** 使指定服务器的缓存失效（配置更新/健康状态变为 error 时调用） */
 export function invalidateMcpTransportCache(serverId: string): void {
-  cache.delete(cacheKey(serverId));
+  evict(cacheKey(serverId));
 }
 
 /** 清空全部缓存（测试/调试用） */
 export function clearMcpTransportCache(): void {
-  cache.clear();
+  for (const key of [...cache.keys()]) evict(key);
 }
