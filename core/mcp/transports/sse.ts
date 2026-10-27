@@ -48,6 +48,11 @@ async function sendSseMessage<TParams extends Record<string, unknown> | undefine
   signal?: AbortSignal,
 ): Promise<McpJsonRpcResponse<TResult>> {
   await ensureMcpServerOriginPermission(server);
+  // 审计 #63（2026-10-24 报告 P1）：GET 连接、endpoint 解析、POST、读响应这四个阶段
+  // 原本各自用 `Date.now() + timeoutMs` 起算，串起来最坏总耗时可达 4× timeoutMs ——
+  // 调用方按 requestMs 设的预算形同虚设。改为**一个总预算 deadline**，
+  // 每个阶段只拿剩余时间（`remainingMsUntil`），阶段边界不再重置计时。
+  const deadline = Date.now() + timeoutMs;
   const sseResponse = await fetchWithTimeout(getMcpEndpointUrl(server), {
     method: 'GET',
     credentials: 'omit',
@@ -56,7 +61,7 @@ async function sendSseMessage<TParams extends Record<string, unknown> | undefine
       ...buildMcpRequestHeaders(server),
     },
     signal,
-  }, timeoutMs);
+  }, remainingMsUntil(deadline));
 
   if (!sseResponse.ok || !sseResponse.body) {
     throw new McpTransportError('mcp_sse_connect_failed', `MCP SSE connect failed with HTTP ${sseResponse.status}.`);
@@ -64,12 +69,12 @@ async function sendSseMessage<TParams extends Record<string, unknown> | undefine
 
   const reader = sseResponse.body.getReader();
   const decoder = new TextDecoder();
-  const postUrl = await readSseEndpoint(server, reader, decoder, timeoutMs, maxResponseBytes, signal);
+  const postUrl = await readSseEndpoint(server, reader, decoder, deadline, maxResponseBytes, signal);
   // 审计 #18（2026-10-24 报告 P1）：POST 抛错时控制流直接从 :68 跳出，
   // **reader 从未 cancel()** —— GET 连接会挂在服务端半开状态，浏览器侧 reader 泄漏。
   // 原有的 try/finally 只覆盖后面的「读响应」阶段，不含这次 POST。
   try {
-    await postSseMessage(server, postUrl, message, timeoutMs, signal);
+    await postSseMessage(server, postUrl, message, remainingMsUntil(deadline), signal);
   } catch (error) {
     await reader.cancel().catch(() => undefined);
     throw error;
@@ -87,7 +92,7 @@ async function sendSseMessage<TParams extends Record<string, unknown> | undefine
       message as McpJsonRpcRequest<TParams>,
       maxResponseBytes,
       signal,
-      timeoutMs,
+      deadline,
     );
   } finally {
     reader.cancel().catch(() => undefined);
@@ -98,11 +103,10 @@ async function readSseEndpoint(
   server: McpServerConfig,
   reader: ReadableStreamDefaultReader<Uint8Array>,
   decoder: TextDecoder,
-  timeoutMs: number,
+  deadline: number,
   maxResponseBytes: number,
   signal?: AbortSignal,
 ): Promise<URL> {
-  const deadline = Date.now() + timeoutMs;
   let buffer = '';
   let totalBytes = 0;
 
@@ -196,12 +200,11 @@ async function readSseResponseFromReader<TResult>(
   expectedRequest: McpJsonRpcRequest<any>,
   maxResponseBytes: number,
   signal?: AbortSignal,
-  timeoutMs: number = 30_000,
+  deadline: number = Date.now() + 30_000,
 ): Promise<McpJsonRpcResponse<TResult>> {
   // Response bodies have no inherent deadline: a server that accepts the POST
   // but never emits the matching `message` event would hang the request
-  // forever (M17). Enforce the same deadline budget as the connect phase.
-  const deadline = Date.now() + timeoutMs;
+  // forever (M17). 复用调用方传入的**同一个** deadline（审计 #63）。
   let buffer = '';
   let totalBytes = 0;
 
@@ -224,6 +227,10 @@ async function readSseResponseFromReader<TResult>(
   throw new McpTransportError('mcp_sse_response_missing', 'MCP SSE stream ended without a matching response.');
 }
 
+/** 审计 #63：SSE 各阶段共用同一个总预算，返回距 deadline 的剩余毫秒（不小于 0）。 */
+function remainingMsUntil(deadline: number): number {
+  return Math.max(0, deadline - Date.now());
+}
 function throwIfSignalAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
   if (signal.reason instanceof Error) throw signal.reason;
