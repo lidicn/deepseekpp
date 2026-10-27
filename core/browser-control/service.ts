@@ -119,10 +119,12 @@ export class BrowserControlService {
       );
     }
     const current = await getBrowserControlSettings();
+    // 审计 #82：先落盘再 detach。原顺序先 detach 再 save，save 抛错时 debugger 已摘
+    // 但持久化 targetTabId 仍指旧 tab ⇒ 状态不一致。
+    await saveBrowserControlSettings({ targetTabId: tabId });
     if (current.targetTabId !== tabId && this.connection?.attached) {
       await this.connection.detach();
     }
-    await saveBrowserControlSettings({ targetTabId: tabId });
     return target;
   }
 
