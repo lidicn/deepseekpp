@@ -7,17 +7,22 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+// 侧边栏只用这六个命名空间（见 core/i18n/sidepanel-resources.ts 的说明）；
+// 走这个模块而**不是** core/i18n/index.ts，避免把 background/content 的字典
+// 通过共享 runtime chunk 带进侧边栏初始壳（实测约 72 KB raw / 22 KB gzip）。
+import { createSidepanelTranslator } from '../../core/i18n/sidepanel-resources';
 import {
-  createTranslator,
   DEFAULT_LOCALE,
   DEFAULT_LOCALE_PREFERENCE,
   resolveLocalePreference,
-  type LocaleArrayKey,
-  type LocaleMessageKey,
-  type LocalePreference,
-  type MessageParams,
-  type SupportedLocale,
-} from '../../core/i18n';
+} from '../../core/i18n/runtime';
+import type {
+  LocalePreference,
+  MessageParams,
+  SupportedLocale,
+} from '../../core/i18n/types';
+// 类型导入会被完全擦除（不进产物），所以从聚合模块取 key 类型不会把字典带进初始壳。
+import type { LocaleArrayKey, LocaleMessageKey } from '../../core/i18n';
 import {
   getLocalePreference,
   saveLocalePreference,
@@ -34,7 +39,7 @@ interface I18nContextValue {
   setPreference: (preference: LocalePreference) => Promise<void>;
 }
 
-const defaultTranslator = createTranslator(DEFAULT_LOCALE);
+const defaultTranslator = createSidepanelTranslator(DEFAULT_LOCALE);
 
 const I18nContext = createContext<I18nContextValue>({
   locale: DEFAULT_LOCALE,
@@ -55,7 +60,7 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     [preference],
   );
   const translator = useMemo(
-    () => createTranslator(resolved.locale),
+    () => createSidepanelTranslator(resolved.locale),
     [resolved.locale],
   );
 
