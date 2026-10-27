@@ -126,6 +126,20 @@ export class BrowserConnection {
     return (result ?? {}) as T;
   }
 
+  /**
+   * 审计 #26：释放单个 CDP objectId。best-effort —— tab 可能在 resolve 和 release 之间关闭。
+   * DOM.resolveNode（按 uid 查）不带 objectGroup，所以两条路径统一逐个 release。
+   * Runtime.evaluate 虽然带了 deepseek-pp-browser-control，但 releaseObjectGroup 零调用、
+   * 与 DOM.resolveNode 路径不统一，本 commit 一并删除（见 service.ts 三个漏 release 的方法）。
+   */
+  async releaseObject(objectId: string): Promise<void> {
+    try {
+      await this.sendCommand('Runtime.releaseObject', { objectId });
+    } catch {
+      // best-effort: tab 关闭或 debugger 断开时会抛错,忽略即可。
+    }
+  }
+
   private getSession(): DebuggerSession {
     if (this.attachedTabId === null) {
       throw new BrowserControlError('browser_control_not_attached', 'No browser tab is attached.', {

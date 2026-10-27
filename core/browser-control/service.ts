@@ -372,42 +372,46 @@ export class BrowserControlService {
     const tabId = await this.ensureTargetTabId(settings);
     await this.ensureAttached(tabId);
     const element = await this.resolveElement(payload);
-    const point = await this.getElementPoint(element.objectId);
-    if (!point.visible) {
-      throw new BrowserControlError('browser_element_not_visible', `${element.label} is not visible.`);
-    }
+    try {
+      const point = await this.getElementPoint(element.objectId);
+      if (!point.visible) {
+        throw new BrowserControlError('browser_element_not_visible', `${element.label} is not visible.`);
+      }
 
-    await this.connection!.sendCommand('Input.dispatchMouseEvent', {
-      type: 'mouseMoved',
-      x: point.x,
-      y: point.y,
-      button: 'none',
-    });
-    if (action === 'click') {
-      const button = readString(payload.button, 'left');
-      const clickCount = clampInteger(payload.clickCount, 1, 1, 3);
       await this.connection!.sendCommand('Input.dispatchMouseEvent', {
-        type: 'mousePressed',
+        type: 'mouseMoved',
         x: point.x,
         y: point.y,
-        button,
-        clickCount,
+        button: 'none',
       });
-      await this.connection!.sendCommand('Input.dispatchMouseEvent', {
-        type: 'mouseReleased',
-        x: point.x,
-        y: point.y,
-        button,
-        clickCount,
-      });
-    }
+      if (action === 'click') {
+        const button = readString(payload.button, 'left');
+        const clickCount = clampInteger(payload.clickCount, 1, 1, 3);
+        await this.connection!.sendCommand('Input.dispatchMouseEvent', {
+          type: 'mousePressed',
+          x: point.x,
+          y: point.y,
+          button,
+          clickCount,
+        });
+        await this.connection!.sendCommand('Input.dispatchMouseEvent', {
+          type: 'mouseReleased',
+          x: point.x,
+          y: point.y,
+          button,
+          clickCount,
+        });
+      }
 
-    return this.withOptionalSnapshot({
-      ok: true,
-      summary: action === 'click' ? `Clicked ${element.label}` : `Hovered ${element.label}`,
-      detail: `${action === 'click' ? 'Clicked' : 'Hovered'} ${element.label} at (${Math.round(point.x)}, ${Math.round(point.y)}).`,
-      output: { tabId, action, target: element.label, point },
-    }, settings);
+      return this.withOptionalSnapshot({
+        ok: true,
+        summary: action === 'click' ? `Clicked ${element.label}` : `Hovered ${element.label}`,
+        detail: `${action === 'click' ? 'Clicked' : 'Hovered'} ${element.label} at (${Math.round(point.x)}, ${Math.round(point.y)}).`,
+        output: { tabId, action, target: element.label, point },
+      }, settings);
+    } finally {
+      await this.connection!.releaseObject(element.objectId);
+    }
   }
 
   private async fill(
@@ -418,13 +422,17 @@ export class BrowserControlService {
     await this.ensureAttached(tabId);
     const value = requireString(payload, 'value');
     const element = await this.resolveElement(payload);
-    await this.fillElement(element, value);
-    return this.withOptionalSnapshot({
-      ok: true,
-      summary: `Filled ${element.label}`,
-      detail: `Filled ${element.label} using DOM value assignment and input/change events.`,
-      output: { tabId, target: element.label, valueLength: value.length },
-    }, settings);
+    try {
+      await this.fillElement(element, value);
+      return this.withOptionalSnapshot({
+        ok: true,
+        summary: `Filled ${element.label}`,
+        detail: `Filled ${element.label} using DOM value assignment and input/change events.`,
+        output: { tabId, target: element.label, valueLength: value.length },
+      }, settings);
+    } finally {
+      await this.connection!.releaseObject(element.objectId);
+    }
   }
 
   private async fillForm(
@@ -446,8 +454,12 @@ export class BrowserControlService {
       const record = field as Record<string, unknown>;
       const value = requireString(record, 'value');
       const element = await this.resolveElement(record);
-      await this.fillElement(element, value);
-      filled.push({ target: element.label, valueLength: value.length });
+      try {
+        await this.fillElement(element, value);
+        filled.push({ target: element.label, valueLength: value.length });
+      } finally {
+        await this.connection!.releaseObject(element.objectId);
+      }
     }
 
     return this.withOptionalSnapshot({
@@ -464,27 +476,32 @@ export class BrowserControlService {
   ): Promise<BrowserActionResult> {
     const tabId = await this.ensureTargetTabId(settings);
     await this.ensureAttached(tabId);
-    if (payload.uid || payload.selector) {
-      const element = await this.resolveElement(payload);
-      await this.focusElement(element);
-    }
-    const key = requireString(payload, 'key');
-    const keyParams = keyEventParams(key);
-    await this.connection!.sendCommand('Input.dispatchKeyEvent', {
-      type: 'rawKeyDown',
-      ...keyParams,
-    });
-    await this.connection!.sendCommand('Input.dispatchKeyEvent', {
-      type: 'keyUp',
-      ...keyParams,
-    });
+    let element: ElementHandle | null = null;
+    try {
+      if (payload.uid || payload.selector) {
+        element = await this.resolveElement(payload);
+        await this.focusElement(element);
+      }
+      const key = requireString(payload, 'key');
+      const keyParams = keyEventParams(key);
+      await this.connection!.sendCommand('Input.dispatchKeyEvent', {
+        type: 'rawKeyDown',
+        ...keyParams,
+      });
+      await this.connection!.sendCommand('Input.dispatchKeyEvent', {
+        type: 'keyUp',
+        ...keyParams,
+      });
 
-    return this.withOptionalSnapshot({
-      ok: true,
-      summary: `Pressed ${key}`,
-      detail: `Pressed key ${key}.`,
-      output: { tabId, key },
-    }, settings);
+      return this.withOptionalSnapshot({
+        ok: true,
+        summary: `Pressed ${key}`,
+        detail: `Pressed key ${key}.`,
+        output: { tabId, key },
+      }, settings);
+    } finally {
+      if (element) await this.connection!.releaseObject(element.objectId);
+    }
   }
 
   private async typeText(
@@ -493,18 +510,23 @@ export class BrowserControlService {
   ): Promise<BrowserActionResult> {
     const tabId = await this.ensureTargetTabId(settings);
     await this.ensureAttached(tabId);
-    if (payload.uid || payload.selector) {
-      const element = await this.resolveElement(payload);
-      await this.focusElement(element);
+    let element: ElementHandle | null = null;
+    try {
+      if (payload.uid || payload.selector) {
+        element = await this.resolveElement(payload);
+        await this.focusElement(element);
+      }
+      const text = requireString(payload, 'text');
+      await this.connection!.sendCommand('Input.insertText', { text });
+      return this.withOptionalSnapshot({
+        ok: true,
+        summary: `Typed ${text.length} characters`,
+        detail: `Inserted ${text.length} characters into the focused element.`,
+        output: { tabId, textLength: text.length },
+      }, settings);
+    } finally {
+      if (element) await this.connection!.releaseObject(element.objectId);
     }
-    const text = requireString(payload, 'text');
-    await this.connection!.sendCommand('Input.insertText', { text });
-    return this.withOptionalSnapshot({
-      ok: true,
-      summary: `Typed ${text.length} characters`,
-      detail: `Inserted ${text.length} characters into the focused element.`,
-      output: { tabId, textLength: text.length },
-    }, settings);
   }
 
   private async attachFile(
@@ -518,16 +540,20 @@ export class BrowserControlService {
       throw new BrowserControlError('browser_invalid_files', 'files must be a non-empty string array of absolute file paths.');
     }
     const element = await this.resolveElement(payload);
-    await this.connection!.sendCommand('DOM.setFileInputFiles', {
-      objectId: element.objectId,
-      files,
-    });
-    return this.withOptionalSnapshot({
-      ok: true,
-      summary: `Attached ${files.length} file(s)`,
-      detail: `Attached ${files.length} file(s) to ${element.label}.`,
-      output: { tabId, target: element.label, fileCount: files.length },
-    }, settings);
+    try {
+      await this.connection!.sendCommand('DOM.setFileInputFiles', {
+        objectId: element.objectId,
+        files,
+      });
+      return this.withOptionalSnapshot({
+        ok: true,
+        summary: `Attached ${files.length} file(s)`,
+        detail: `Attached ${files.length} file(s) to ${element.label}.`,
+        output: { tabId, target: element.label, fileCount: files.length },
+      }, settings);
+    } finally {
+      await this.connection!.releaseObject(element.objectId);
+    }
   }
 
   private async waitFor(
