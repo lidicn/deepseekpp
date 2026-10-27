@@ -464,7 +464,10 @@ async function waitForUploadedFileReady(
   const deadline = Date.now() + FILE_READY_TIMEOUT_MS;
   let latest = uploaded;
   while (Date.now() < deadline) {
+    // 审计 #43：循环开头复查 signal，取消后立即停（不只等 sleep 返回）。
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     await sleep(FILE_READY_POLL_INTERVAL_MS, signal);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const next = await fetchUploadedFileMetadata(uploaded.id, clientHeaders, signal);
     if (!next) continue;
     latest = next;

@@ -11,13 +11,14 @@ import type { ToolDescriptor } from '../core/tool/types';
 
 function desc(kind: string, id: string): ToolDescriptor {
   return {
+    id: 't',
     provider: { kind: kind as never, id: id as never, displayName: id, transport: 'local' as never },
     name: 't',
     invocationName: 't',
     title: 't',
     description: 't',
     inputSchema: { type: 'object', properties: {} },
-    execution: { timeoutMs: 1000 },
+    execution: { timeoutMs: 1000, mode: 'local', enabled: true, risk: 'low' } as never,
   };
 }
 
