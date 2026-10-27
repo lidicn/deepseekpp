@@ -330,8 +330,10 @@ describe('automation runner execution context', () => {
     expect(detailBytes).toBeLessThanOrEqual(4_000);
     expect(outputBytes).toBeLessThanOrEqual(8_000);
     expect(record.result.detail).toContain('[truncated]');
-    // R1 #51: result-governance 只裁 detail 字符串叶子，output 保持对象形状
+    // R1 #51: result-governance 只裁 detail 字符串叶子，output 保持对象形状；
+    // 但 clampJsonValueToBytes 裁叶子时会追加 [truncated] 标记，JSON.stringify 后可见。
     expect(typeof record.result.output).toBe('object');
+    expect(JSON.stringify(record.result.output)).toContain('[truncated]');
   });
 
   it('leaves a below-budget tool detail/output untouched in the persisted record', async () => {
@@ -358,6 +360,7 @@ describe('automation runner execution context', () => {
     expect(record.result.output).toEqual({ value: 7 });
     expect(record.result.detail).not.toContain('[truncated]');
     expect(typeof record.result.output).not.toBe('string');
+    expect(JSON.stringify(record.result.output)).not.toContain('[truncated]');
   });
 
   it('continues through catalog controls so on-demand MCP capabilities can discover before invoking', async () => {
