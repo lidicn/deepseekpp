@@ -118,13 +118,14 @@ export class BrowserConnection {
   async sendCommand<T extends Record<string, unknown> = Record<string, unknown>>(
     method: string,
     params?: Record<string, unknown>,
+    options?: { timeoutMs?: number },
   ): Promise<T> {
     if (this.attachedTabId === null) {
       throw new BrowserControlError('browser_control_not_attached', 'No browser tab is attached.', {
         retryable: true,
       });
     }
-    const timeoutMs = CDP_COMMAND_TIMEOUT_MS;
+    const timeoutMs = options?.timeoutMs ?? CDP_COMMAND_TIMEOUT_MS;
     const sendPromise = this.getDebuggerApi().sendCommand(
       this.getSession(),
       method,

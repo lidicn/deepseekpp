@@ -25,11 +25,11 @@ function runResponseInterceptorDecode(
   // for each chunk: decoder.decode(value, { stream: true })
   // final: decoder.decode()
   const decoder = withStream
-    ? new TextDecoder(undefined, { stream: true })
+    ? new TextDecoder(undefined, { stream: true } as TextDecoderOptions)
     : new TextDecoder(undefined);
   const pieces: string[] = [];
   for (const chunk of chunks) {
-    pieces.push(decoder.decode(chunk, withStream ? { stream: true } : undefined));
+    pieces.push(decoder.decode(chunk, (withStream ? { stream: true } : undefined) as unknown as TextDecodeOptions | undefined));
   }
   const finalPiece = decoder.decode();
   if (finalPiece) pieces.push(finalPiece);
