@@ -175,7 +175,12 @@ export class BrowserConnection {
 
     if (!this.eventListenerRegistered) {
       debuggerApi.onEvent.addListener((source, method, params) => {
-        if (!source.tabId) return;
+        // #91: 只处理当前 attach 的 tab 事件 —— chrome.debugger.onEvent 对所有
+        // attach 过的 tab 广播（哪怕是其他 BrowserConnection 实例或其他扩展），
+        // 不加过滤会把子目标/其他 tab 的 dialogOpening 错误写进 this.dialogs。
+        // flatten:true 后子 target 事件的 source.tabId 都是主 tabId，所以这一条
+        // 守卫同时也把跨 target 的 dialog 事件路由到正确实例。
+        if (!source.tabId || source.tabId !== this.attachedTabId) return;
         if (method === 'Page.javascriptDialogClosed') {
           // Authoritative removal: the browser reports the dialog is gone, so
           // the entry must not be replayed by a later handleDialog call.

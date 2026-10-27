@@ -900,11 +900,33 @@ export default defineBackground(() => {
   ensureAutomationWakeAlarm().catch((error) => reportBackgroundStartupError('automation_alarm_create_failed', error));
   // M1-2c H2: 延迟 arm 窗口（1000ms），窗口期内收到用户新消息则取消 resume
   const RESUME_ARM_DELAY_MS = 1000;
+  const RECONCILE_MAX_ATTEMPTS = 3;
+  const RECONCILE_RETRY_BACKOFF_MS = [1000, 2000]; // 第 1/2 次重试前等
   let resumeCancelled = false;
+  const runReconcileWithRetry = async (): Promise<void> => {
+    // #92: reconcileInterruptedOnWake 失败后有限重试（幂等：wakeReconciled 已标记则直接过）
+    for (let attempt = 1; attempt <= RECONCILE_MAX_ATTEMPTS; attempt++) {
+      if (resumeCancelled) return;
+      try {
+        await chatRuntimeService.reconcileInterruptedOnWake();
+        return;
+      } catch (error) {
+        if (attempt === RECONCILE_MAX_ATTEMPTS) {
+          reportBackgroundStartupError('chat_loop_reconcile_failed', error);
+          return;
+        }
+        reportBackgroundStartupError(
+          'chat_loop_reconcile_retry',
+          { attempt, maxAttempts: RECONCILE_MAX_ATTEMPTS, cause: error },
+        );
+        const backoff = RECONCILE_RETRY_BACKOFF_MS[attempt - 1] ?? 1000;
+        await new Promise<void>((resolve) => setTimeout(resolve, backoff));
+      }
+    }
+  };
   const armTimer = setTimeout(() => {
     if (resumeCancelled) return;
-    chatRuntimeService.reconcileInterruptedOnWake()
-      .catch((error) => reportBackgroundStartupError('chat_loop_reconcile_failed', error));
+    void runReconcileWithRetry();
   }, RESUME_ARM_DELAY_MS);
   // 暴露给 submitPrompt 入口取消
   (globalThis as unknown as { __dppResumeCancelled?: () => void }).__dppResumeCancelled = () => {

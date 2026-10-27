@@ -38,6 +38,10 @@ class WebdavBackend implements StorageBackend {
   }
 
   async put(key: string, content: string): Promise<void> {
+    // #77: put 前确保远程目录存在 —— 上次 ensureStore 可能是很久之前，
+    // 管理员删了远程目录、或跨设备首次 put 都会 409。webdavMkcol 幂等
+    // （405 已存在也放行），每次 put 前调一次代价可忽略。
+    await webdavMkcol(this.config);
     await webdavPut(this.config, key, content);
   }
 }
