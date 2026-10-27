@@ -17,6 +17,15 @@ import type { ToolCall, ToolExecutionRecord } from '../types';
 import type { JobState, ToolCallPosition } from '../tool/job';
 
 const SESSION_STORAGE_KEY = 'deepseek_pp_active_chat_loop';
+
+// 审计 #5：readMarker→改→storage.set 三处都不在同一互斥段，resumeToolLoop 与
+// reconcileInterruptedChatLoop 可并发 ⇒ lost update。用模块内 promise 链串行化所有写。
+let writeChain: Promise<void> = Promise.resolve();
+function serializeWrite(task: () => Promise<void>): Promise<void> {
+  const run = writeChain.then(task);
+  writeChain = run.catch(() => undefined);
+  return run;
+}
 // P0-3: stale 阈值从 15s → 60s（和 keepalive 周期对齐：keepalive 30s 心跳，
 // SW 在 keepalive 存活期间不应被回收；若真回收了，60s 足够覆盖绝大多数场景）
 const STALE_THRESHOLD_MS = 60_000;
@@ -181,26 +190,32 @@ export async function markChatLoopFinished(): Promise<void> {
 
 /** P0-3: 追加一条工具执行记录到 storage marker */
 export async function appendToolExecution(record: ToolExecutionRecord): Promise<void> {
-  const marker = await readMarker();
-  if (!marker) return;
-  marker.executions.push(record);
-  await chrome.storage.session.set({ [SESSION_STORAGE_KEY]: marker });
+  return serializeWrite(async () => {
+    const marker = await readMarker();
+    if (!marker) return;
+    marker.executions.push(record);
+    await chrome.storage.session.set({ [SESSION_STORAGE_KEY]: marker });
+  });
 }
 
 /** P0-3: 设置当前正在执行的工具（工具执行前调，完成后调 clearCurrentTool） */
 export async function setCurrentTool(name: string): Promise<void> {
-  const marker = await readMarker();
-  if (!marker) return;
-  marker.currentTool = { name, startedAt: Date.now() };
-  await chrome.storage.session.set({ [SESSION_STORAGE_KEY]: marker });
+  return serializeWrite(async () => {
+    const marker = await readMarker();
+    if (!marker) return;
+    marker.currentTool = { name, startedAt: Date.now() };
+    await chrome.storage.session.set({ [SESSION_STORAGE_KEY]: marker });
+  });
 }
 
 /** P0-3: 清除当前工具标记（工具完成或失败后调） */
 export async function clearCurrentTool(): Promise<void> {
-  const marker = await readMarker();
-  if (!marker) return;
-  marker.currentTool = null;
-  await chrome.storage.session.set({ [SESSION_STORAGE_KEY]: marker });
+  return serializeWrite(async () => {
+    const marker = await readMarker();
+    if (!marker) return;
+    marker.currentTool = null;
+    await chrome.storage.session.set({ [SESSION_STORAGE_KEY]: marker });
+  });
 }
 
 /** M1-2: 局部更新 marker 字段（整对象替换，revision++） */
