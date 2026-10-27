@@ -34,13 +34,16 @@ export async function waitForWakeReconcile(
 
   let timer: unknown = null;
   let settled = false;
+  let timeoutWon = false;
+  let reconcilePromise: Promise<void> | null = null;
   try {
     await Promise.race([
-      options.reconcile(),
+      (reconcilePromise = options.reconcile()),
       new Promise<void>((resolve) => {
         timer = options.scheduleTimeout(() => {
           if (settled) return;
           settled = true;
+          timeoutWon = true;
           options.onTimeout?.();
           resolve();
         }, options.timeoutMs);
@@ -49,5 +52,11 @@ export async function waitForWakeReconcile(
   } finally {
     settled = true;
     if (timer !== null) options.clearScheduledTimeout(timer);
+    // #32: 超时胜出后，后台 reconcile 可能还在跑并最终 reject —— 吞掉它的 rejection
+    // 避免 unhandled promise rejection。reconcile 自己先 reject 的情况由 Promise.race
+    // 直接向上抛出（符合"失败不堵死用户发言"的语义），不走到这里。
+    if (timeoutWon && reconcilePromise) {
+      reconcilePromise.catch(() => undefined);
+    }
   }
 }
