@@ -25,6 +25,7 @@ describe('tool provider import boundary', () => {
       '../messaging/tool-record-codec',
       './authorization',
       './execution-error',
+      './execution-gates',
       './externalized-payload',
       './history',
       './local-skill-cwd',

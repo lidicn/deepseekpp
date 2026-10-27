@@ -330,7 +330,8 @@ describe('automation runner execution context', () => {
     expect(detailBytes).toBeLessThanOrEqual(4_000);
     expect(outputBytes).toBeLessThanOrEqual(8_000);
     expect(record.result.detail).toContain('[truncated]');
-    expect(String(record.result.output)).toContain('[truncated]');
+    // R1 #51: result-governance 只裁 detail 字符串叶子，output 保持对象形状
+    expect(typeof record.result.output).toBe('object');
   });
 
   it('leaves a below-budget tool detail/output untouched in the persisted record', async () => {
@@ -353,9 +354,10 @@ describe('automation runner execution context', () => {
     if (!result.ok) throw new Error('unreachable');
     const record = (result.toolExecutions ?? [])[0]!;
     expect(record.result.detail).toBe('short detail');
-    expect(record.result.output).toBe(JSON.stringify({ value: 7 }));
+    // R1 #51: 不再 stringify output，保持 JSON 对象形状
+    expect(record.result.output).toEqual({ value: 7 });
     expect(record.result.detail).not.toContain('[truncated]');
-    expect(String(record.result.output)).not.toContain('[truncated]');
+    expect(typeof record.result.output).not.toBe('string');
   });
 
   it('continues through catalog controls so on-demand MCP capabilities can discover before invoking', async () => {
