@@ -168,22 +168,28 @@ async function readMarker(): Promise<ActiveChatLoop | null> {
 }
 
 export async function markChatLoopStarted(provider: ChatLoopProvider): Promise<void> {
-  const marker: ActiveChatLoop = {
-    active: true,
-    startedAt: Date.now(),
-    provider,
-    executions: [],
-    currentTool: null,
-  };
-  await chrome.storage.session.set({ [SESSION_STORAGE_KEY]: marker });
-
-  // P0-1: SW 保活 — 引用计数 +1。
+  // 审计 #5：虽然是整对象覆盖写（非 R-M-W），但和 serializeWrite 链里的 R-M-W
+  // 函数并发时会覆盖刚 append 的 executions。也纳进链。
+  await serializeWrite(async () => {
+    const marker: ActiveChatLoop = {
+      active: true,
+      startedAt: Date.now(),
+      provider,
+      executions: [],
+      currentTool: null,
+    };
+    await chrome.storage.session.set({ [SESSION_STORAGE_KEY]: marker });
+  });
+  // P0-1: SW 保活 — 引用计数 +1。保持在 storage 写完之后调，避免提前。
   acquireKeepalive();
 }
 
 export async function markChatLoopFinished(): Promise<void> {
-  await chrome.storage.session.remove(SESSION_STORAGE_KEY);
-
+  // 审计 #5：remove 和 R-M-W 并发时，R-M-W 可能在 remove 之后 set，
+  // 把 marker 又创建回来（孤儿脏数据）。也纳进链。
+  await serializeWrite(async () => {
+    await chrome.storage.session.remove(SESSION_STORAGE_KEY);
+  });
   // P0-1: SW 保活 — 引用计数 -1，归零才真正清理。
   releaseKeepalive();
 }
@@ -221,8 +227,8 @@ export async function clearCurrentTool(): Promise<void> {
 /** M1-2: 局部更新 marker 字段（整对象替换，revision++） */
 export async function updateMarker(patch: Partial<ActiveChatLoop>): Promise<void> {
   // 审计 #5：updateMarker 也是 read-modify-write，和 appendToolExecution 并发同样丢，
-  // 一并纳进 serializeWrite 链。markChatLoopStarted/Finished 是全量写/删除，不 R-M-W，
-  // 不纳链。
+  // 一并纳进 serializeWrite 链。markChatLoopStarted/Finished 虽是全量写/删除，
+  // 但和 R-M-W 函数并发会导致覆盖或孤儿脏数据，也纳进链。
   return serializeWrite(async () => {
     const marker = await readMarker();
     if (!marker) return;
