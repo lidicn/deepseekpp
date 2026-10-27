@@ -249,7 +249,8 @@ describe('runtime sender and envelope boundary', () => {
 
     expect(receiver).toContain('createExtensionRuntimeMessageContext(sender');
     expect(receiver).toContain('if (error instanceof RuntimeBoundaryError) return undefined;');
-    expect(receiver).toContain(`  } catch (error) {\n    // runtime.sendMessage reaches every extension context. A content receiver\n    // must not answer a content-to-background RPC before the background does.`);
+    // CRLF repo; use regex so \r\n/\n both match
+    expect(receiver).toMatch(/\} catch \(error\) \{\r?\n\s*\/\/ runtime\.sendMessage reaches every extension context\. A content receiver\r?\n\s*\/\/ must not answer a content-to-background RPC before the background does\./);
     expect(receiver).not.toContain('createRuntimeBoundaryErrorResponse');
   });
 
