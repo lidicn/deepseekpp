@@ -226,10 +226,10 @@ export function planMemoryOrganizeLocally(
   if (!text) {
     return {
       operations: [],
-      summary: t('sidepanel.memoryOrganize.summaryEmpty'),
+      summary: t('background.memoryOrganize.summaryEmpty'),
       ready: false,
       baseTime: Date.now(),
-      issues: [{ code: 'instruction_empty', severity: 'error', message: t('sidepanel.memoryOrganize.issueInstructionEmpty') }],
+      issues: [{ code: 'instruction_empty', severity: 'error', message: t('background.memoryOrganize.issueInstructionEmpty') }],
     };
   }
 
@@ -280,7 +280,7 @@ export function planMemoryOrganizeLocally(
   }
 
   if (operations.length === 0) {
-    issues.push({ code: 'unknown_instruction', severity: 'warning', message: t('sidepanel.memoryOrganize.issueUnknown') });
+    issues.push({ code: 'unknown_instruction', severity: 'warning', message: t('background.memoryOrganize.issueUnknown') });
   }
 
   // Scope 保护：检查跨 scope 的破坏性操作
@@ -295,7 +295,7 @@ export function planMemoryOrganizeLocally(
       issues.push({
         code: 'cross_scope_operation',
         severity: 'warning',
-        message: t('sidepanel.memoryOrganize.issueCrossScope', { scopes: Array.from(scopes).join(' / ') }),
+        message: t('background.memoryOrganize.issueCrossScope', { scopes: Array.from(scopes).join(' / ') }),
       });
       break;
     }
@@ -304,8 +304,8 @@ export function planMemoryOrganizeLocally(
   return {
     operations,
     summary: operations.length === 0
-      ? t('sidepanel.memoryOrganize.summaryNoOperation')
-      : t('sidepanel.memoryOrganize.summaryCount', { count: operations.length }),
+      ? t('background.memoryOrganize.summaryNoOperation')
+      : t('background.memoryOrganize.summaryCount', { count: operations.length }),
     ready: !issues.some((i) => i.severity === 'error'),
     baseTime: Date.now(),
     issues,
@@ -396,7 +396,7 @@ function parseLlmOutputAsDraft(llmOutput: string, allowedIds: ReadonlySet<number
         rejectedIssues.push({
           code: 'llm_operation_rejected',
           severity: 'warning',
-          message: t('sidepanel.memoryOrganize.issueLlmOperationRejected'),
+          message: t('background.memoryOrganize.issueLlmOperationRejected'),
         });
       }
     }
@@ -438,7 +438,7 @@ export function organizeMemoriesFromLlm(
       {
         code: 'llm_output_invalid',
         severity: 'warning',
-        message: t('sidepanel.memoryOrganize.issueLlmOutputInvalid'),
+        message: t('background.memoryOrganize.issueLlmOutputInvalid'),
       },
       ...localDraft.issues,
     ],

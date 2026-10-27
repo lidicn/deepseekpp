@@ -45,5 +45,13 @@ export const background = {
   memoryOrganize: {
     notLoggedIn: 'Sign in to DeepSeek first, then use natural language organize.',
     llmUnavailable: 'LLM unavailable, fell back to local rules',
+    summaryEmpty: 'Describe the organize instruction',
+    summaryNoOperation: 'No specific operation recognized',
+    summaryCount: '{count} operations',
+    issueInstructionEmpty: 'Instruction is empty.',
+    issueUnknown: 'No specific operation recognized. Describe how to organize your memories.',
+    issueCrossScope: 'Detected cross-scope operations ({scopes}), please confirm',
+    issueLlmOperationRejected: 'The model produced operations referencing unknown types or missing memories; those operations were ignored.',
+    issueLlmOutputInvalid: 'Invalid LLM output, fell back to local rules',
   },
 } as const;
