@@ -819,14 +819,13 @@ async function materializeAndUploadToolResultImages(
 
     for (const item of scanned) {
       try {
-        console.log('[M-URL] 检测到工具结果图片URL，开始上传:', item.url.substring(0, 80));
+        // #79: 移除遗留 console.log 调试日志 — console.warn 保留（操作级告警）
         // 直接传 URL 给 background SW 下载并上传
         const fileId = await uploadImage({
           url: item.url,
           name: `tool-result-image-${Date.now()}.png`,
         });
         if (fileId) {
-          console.log('[M-URL] 图片上传成功，file_id:', fileId);
           pendingImageFileIds.push(fileId);
         } else {
           console.warn('[M-URL] 图片上传失败，返回空 file_id');

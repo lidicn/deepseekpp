@@ -87,24 +87,35 @@ async function findFileId(
   name: string,
   t: SyncErrorTranslator,
 ): Promise<string | null> {
-  const params = new URLSearchParams({
+  // #75: 遍历分页 — Drive API pageSize 上限 1000，超过的文件在 page 2+
+  const paramsBase = new URLSearchParams({
     spaces: 'appDataFolder',
-    fields: 'files(id,name,createdTime,modifiedTime)',
+    fields: 'files(id,name,createdTime,modifiedTime),nextPageToken',
     q: `name = '${escapeDriveQueryLiteral(name)}' and trashed = false`,
     pageSize: '1000',
   });
-  const res = await authedFetch(
-    cacheKey(config),
-    requireRefreshToken(config, t),
-    TOKEN_URL,
-    refreshParams(config),
-    `${API_BASE}/files?${params.toString()}`,
-    { method: 'GET' },
-    t,
-  );
-  if (!res.ok) throw new Error(t('background.sync.gdriveQueryFailed', { name, status: res.status }));
-  const data = await res.json() as { files?: DriveFileMeta[] };
-  const matches = (data.files ?? [])
+  let nextPageToken: string | undefined;
+  const allMatches: DriveFileMeta[] = [];
+
+  do {
+    const params = new URLSearchParams(paramsBase);
+    if (nextPageToken) params.set('pageToken', nextPageToken);
+    const res = await authedFetch(
+      cacheKey(config),
+      requireRefreshToken(config, t),
+      TOKEN_URL,
+      refreshParams(config),
+      `${API_BASE}/files?${params.toString()}`,
+      { method: 'GET' },
+      t,
+    );
+    if (!res.ok) throw new Error(t('background.sync.gdriveQueryFailed', { name, status: res.status }));
+    const data = await res.json() as { files?: DriveFileMeta[]; nextPageToken?: string };
+    allMatches.push(...(data.files ?? []));
+    nextPageToken = data.nextPageToken;
+  } while (nextPageToken);
+
+  const matches = allMatches
     .filter((file) => file.name === name)
     .sort(compareDriveFilesNewestFirst);
   return matches[0]?.id ?? null;

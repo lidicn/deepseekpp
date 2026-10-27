@@ -126,7 +126,9 @@ export function createOneDriveBackend(
         `${API_BASE}:/${encodeURIComponent(key)}:/content`,
         {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json; charset=utf-8' },
+          // #76: 之前错误声成为 application/json — content 是 raw string 而非 JSON，
+          // OneDrive 接受 text/plain 并以其作为文件内容的原始表示
+          headers: { 'Content-Type': 'text/plain; charset=utf-8' },
           body: content,
         },
         t,
