@@ -204,8 +204,29 @@ const BUDGET = Object.freeze({
   },
 });
 
+// 收集所有超标项再一次性报错（而不是首个就抛）。
+// 原因：此前 assertBudget 直接 throw，而 'initial shell' 是第一个被断言的
+// ⇒ 它一红，后面的 'first chat screen'、rich renderer、各 route chunk **从未被评估**，
+// 于是有超标项被长期遮住（2026-10-27 修完 initial shell 后才发现 ChatPage / MemoryPage /
+// AboutSubPage 三个 route chunk 也超标）。
+const violations = [];
+
 for (const browser of requestedBrowsers) {
   verifyBrowserBuild(browser);
+}
+
+if (violations.length > 0) {
+  const lines = violations.map(({ browser, label, actual, budget }) => {
+    const rawOver = actual.raw - budget.raw;
+    const gzipOver = actual.gzip - budget.gzip;
+    const pct = budget.raw > 0 ? ((rawOver / budget.raw) * 100).toFixed(2) : '0.00';
+    return `${browser} ${label} exceeds budget: raw ${actual.raw}/${budget.raw} `
+      + `(+${rawOver}, +${pct}%), gzip ${actual.gzip}/${budget.gzip} (+${gzipOver}).`;
+  });
+  throw new Error(
+    `${violations.length} budget violation(s) — 所有预算均已评估（不再被首个失败遮住）:\n`
+    + lines.map((line) => `  - ${line}`).join('\n'),
+  );
 }
 
 function verifyBrowserBuild(browser) {
@@ -312,9 +333,6 @@ function measureFiles(buildDir, files) {
 
 function assertBudget(browser, label, actual, budget) {
   if (actual.raw > budget.raw || actual.gzip > budget.gzip) {
-    throw new Error(
-      `${browser} ${label} exceeds budget: raw ${actual.raw}/${budget.raw}, `
-      + `gzip ${actual.gzip}/${budget.gzip}.`,
-    );
+    violations.push({ browser, label, actual, budget });
   }
 }
