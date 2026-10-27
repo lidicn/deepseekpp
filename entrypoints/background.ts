@@ -1190,10 +1190,19 @@ async function openSidePanelAndSendText(text: string) {
     'pending_chat_text_notification_failed',
     reportBackgroundStartupError,
   );
-  // 审计 #88：消息已发出后清 store。原流程 write→sendMessage 后不清，若侧栏已开
-  // 并通过 sendMessage 直接消费了 text（不读 store），store 里的文本会残留到下次
-  // 打开污染输入框。
-  await pendingChatTextStore.clear().catch(() => undefined);
+  // 审计 #88 复核（PM，2026-10-27）：判为**假阳性**，且上一版"发消息后清 store"
+  // 是回归，已撤销。理由（三条都已查证）：
+  //   ① `OPEN_CHAT_WITH_TEXT` 全仓**没有监听端** —— core/types.ts 的消息 union 里没有它，
+  //      侧栏 11 处 onMessage.addListener 逐个核对，没有一个消费这条消息。
+  //      ⇒ storage 是**唯一**交付通道，审计假设的"侧栏已通过消息消费、所以 store 是残留"
+  //      这个前提不成立。
+  //   ② 消费端 `pending-text-controller.ts:31` 在消费后**自己** `void store.clear()`
+  //      ⇒ 正常路径不会残留。
+  //   ③ 在这里 clear 会吃掉文本：`chrome.sidePanel.open()` 是异步的，侧栏**未打开**时
+  //      （右键「发送到对话」的主路径）面板加载完再 `read()` 已被清空 ⇒ 用户选中文本静默丢失。
+  //      `deliverRuntimeMessageBestEffort` 还是 fire-and-forget（`void delivery.catch(...)`），
+  //      所以 background 这一刻**无从得知**有没有人消费。
+  // ⇒ store 的语义就是「等侧栏下次读到的信箱」；清理权在消费端，发送端不得抢先清。
 }
 
 async function ensureBuiltInMcpPresets() {
