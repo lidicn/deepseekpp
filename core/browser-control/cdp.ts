@@ -166,6 +166,9 @@ export class BrowserConnection {
       debuggerApi.onDetach.addListener((source) => {
         if (source.tabId !== this.attachedTabId) return;
         this.attachedTabId = null;
+        // #81: detach 时一并清 dialogs 表 — 该 tab 已脱离 debugger，
+        // 不可能再有后续 javascriptDialogClosed 事件，保留条目是内存泄漏。
+        this.dialogs.delete(source.tabId);
       });
       this.detachListenerRegistered = true;
     }

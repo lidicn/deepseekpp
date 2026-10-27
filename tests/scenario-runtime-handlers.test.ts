@@ -53,11 +53,11 @@ describe('SCENARIOS_UPDATED handler legitimate ops still reach correct deps', ()
     const handlers = createScenarioRuntimeHandlers(deps);
     const rawHandler = handlers[0];
 
-    const get = await rawHandler.handle!({ type: 'SCENARIOS_UPDATED', payload: { operation: 'get' } } as any, { tabId: 1 } as any);
+    const get = (await rawHandler.handle!({ type: 'SCENARIOS_UPDATED', payload: { operation: 'get' } } as any, { tabId: 1 } as any)) as { ok: boolean };
     expect(get.ok).toBe(true);
     expect(deps.getAllScenarios).toHaveBeenCalled();
 
-    const refresh = await rawHandler.handle!({ type: 'SCENARIOS_UPDATED', payload: { operation: 'refresh' } } as any, { tabId: 1 } as any);
+    const refresh = (await rawHandler.handle!({ type: 'SCENARIOS_UPDATED', payload: { operation: 'refresh' } } as any, { tabId: 1 } as any)) as { ok: boolean };
     expect(refresh.ok).toBe(true);
     expect(deps.refreshScenarioMenus).toHaveBeenCalled();
   });

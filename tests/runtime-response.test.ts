@@ -42,15 +42,15 @@ describe('unwrapRuntimeResponse (audit #56 guard)', () => {
 
 describe('decodeRuntimeResponse helper', () => {
   it('rejects undefined response', () => {
-    expect(() => decodeRuntimeResponse(undefined, JSON.parse, 'missing')).toThrow('missing');
+    expect(() => decodeRuntimeResponse(undefined, JSON.parse as (value: unknown) => any, 'missing')).toThrow('missing');
   });
 
   it('propagates decode errors', () => {
-    expect(() => decodeRuntimeResponse('not-json', JSON.parse, 'boom')).toThrow();
+    expect(() => decodeRuntimeResponse('not-json', JSON.parse as (value: unknown) => any, 'boom')).toThrow();
   });
 
   it('returns decoded value on success', () => {
-    expect(decodeRuntimeResponse('{"a":1}', JSON.parse, 'missing')).toEqual({ a: 1 });
+    expect(decodeRuntimeResponse('{"a":1}', JSON.parse as (value: unknown) => any, 'missing')).toEqual({ a: 1 });
   });
 });
 

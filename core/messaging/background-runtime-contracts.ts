@@ -134,6 +134,6 @@ export interface BackgroundRuntimeCommandContracts {
   };
   SCENARIOS_UPDATED: {
     request: { type: 'SCENARIOS_UPDATED'; payload?: ScenarioRuntimeRequest };
-    response: Ack | { ok: true; scenarios: ScenarioConfig[] };
+    response: Ack | DomainFailure | { ok: true; scenarios: ScenarioConfig[] };
   };
 }

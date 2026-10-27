@@ -36,10 +36,10 @@ describe('audit #85 guard: handler default-deny when decode lets unknown op thro
     const handlers = createScenarioRuntimeHandlers(deps);
     const rawHandler = handlers[0];
 
-    const result = await rawHandler.handle!(
+    const result = (await rawHandler.handle!(
       { type: 'SCENARIOS_UPDATED', payload: { operation: 'unknown_xyz', id: 'victim-scenario' } } as any,
       { tabId: 1 } as any,
-    );
+    )) as { ok: boolean };
 
     expect(result.ok).toBe(false);
     expect(deps.deleteScenario).not.toHaveBeenCalled();
