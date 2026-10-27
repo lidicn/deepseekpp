@@ -118,4 +118,43 @@ describe('runtime externalized tool payloads', () => {
     });
     expect(await artifact.getArtifacts()).toEqual([]);
   });
+
+  describe('audit #84 guard: EXTERNALIZED_PAYLOAD_MAX_ENTRIES pool exhaustion', () => {
+    // PM warning: payloadEntries is module-level Map, tests pollute each other.
+    // Use vi.resetModules() + dynamic import() to get a fresh module instance
+    // per test case — do NOT add cleanup exports to production code.
+
+    it('throws a visible error when the 201st entry is created (200 limit)', async () => {
+      vi.resetModules();
+      const fresh = await import('../core/tool/externalized-payload');
+      const { appendExternalizedToolPayloadChunk } = fresh;
+
+      // Fill exactly 200 entries
+      for (let i = 0; i < 200; i++) {
+        appendExternalizedToolPayloadChunk(`ref-${i}`, 'artifact_create', `{"idx":${i}}`);
+      }
+
+      // 201st must throw with a visible message — not silently dropped
+      expect(() => appendExternalizedToolPayloadChunk('ref-200', 'artifact_create', '{"idx":200}'))
+        .toThrow(/pool exhausted.*200 entries/);
+    });
+
+    it('allows normal create/append/take cycling well below the limit', async () => {
+      vi.resetModules();
+      const fresh = await import('../core/tool/externalized-payload');
+      const { appendExternalizedToolPayloadChunk, takeExternalizedToolPayloadText } = fresh;
+
+      // 150 creates + takes + re-creates — should never hit 200
+      for (let i = 0; i < 150; i++) {
+        appendExternalizedToolPayloadChunk(`cycle-${i}`, 'artifact_create', `{"v":${i}}`);
+        takeExternalizedToolPayloadText(`cycle-${i}`, 'artifact_create');
+      }
+
+      // 150 more creates — Map never exceeds 1 at a time, no exhaustion
+      for (let i = 150; i < 300; i++) {
+        appendExternalizedToolPayloadChunk(`cycle-${i}`, 'artifact_create', `{"v":${i}}`);
+        takeExternalizedToolPayloadText(`cycle-${i}`, 'artifact_create');
+      }
+    });
+  });
 });
