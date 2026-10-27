@@ -116,9 +116,13 @@ export function createIsolatedBridgeController(
     return tracked;
   };
 
+  // 审计 #97：主世界未连接期间 pendingMessages 无上限堆积。加 200 条上限，
+  // 溢出丢最旧（新消息比陈旧消息更有价值，陈旧消息通常是已过期的状态同步）。
+  const PENDING_MESSAGES_MAX = 200;
   const post = (message: Record<string, unknown>) => {
     if (lifecycleState === 'stopped') return;
     if (!port || !ready) {
+      if (pendingMessages.length >= PENDING_MESSAGES_MAX) pendingMessages.shift();
       pendingMessages.push(message);
       return;
     }

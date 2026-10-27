@@ -29,6 +29,9 @@ export class PendingAuthorizationCorrelations {
   terminate(correlationId: string): void {
     if (this.pending.has(correlationId)) {
       this.recordTerminated(correlationId);
+      // 审计 #49：terminate 后从 pending 移除，pending Set 不再只增不减。
+      // activate 仍能通过 terminated tombstone 识别 late activate。
+      this.pending.delete(correlationId);
     }
   }
 
