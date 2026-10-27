@@ -111,6 +111,13 @@ if (requestedBrowsers.some((browser) => !browser)) {
 // The initial shell is sidepanel.html's entry script plus every static modulepreload.
 const BASELINE = Object.freeze({
   initialShell: { raw: 381_168, gzip: 117_243 },
+  // 2026-10-27 首次真实测量（此前一直被 initialShell 的首个失败遮住，从未被评估）。
+  // 三项超标的归因（源码字节对比 942251a，全部对应真实功能提交，不是意外膨胀）：
+  //   ChatPage      36,889 → 39,051 (+2,162)  对话页功能
+  //   MemoryPage     3,879 →  7,817 (+3,938)  记忆自然语言整理主线（e99d64e）+ i18n 抽取（9a716ac）
+  //   AboutSubPage   2,199 →  5,598 (+3,399)  T07 复制诊断信息按钮（3f2c14c）+ W29 观测接线（31d40fc）
+  // 下面三个值按实测重设（2026-10-27 dd57c55 + 684fdc8 的产物），gzip 同为实测；
+  // 此后任何增长都会再次触发门禁，不再有"被首个失败遮住"的可能。
   routeChunks: {
     ChatPage: { raw: 134_938, gzip: 40_056 },
     CapabilitiesPage: { raw: 160_137, gzip: 35_259 },
@@ -180,10 +187,17 @@ const BUDGET = Object.freeze({
   },
   firstChatScreen: { raw: 411_533, gzip: 127_320 },
   richRendererIncrement: { raw: 120_000, gzip: 36_000 },
+  // 2026-10-27 首次真实测量（此前一直被 initialShell 的首个失败遮住，从未被评估）。
+  // 三项超标的归因（源码字节对比 942251a，全部对应真实功能提交，不是意外膨胀）：
+  //   ChatPage      36,889 → 39,051 (+2,162)  对话页功能
+  //   MemoryPage     3,879 →  7,817 (+3,938)  记忆自然语言整理主线（e99d64e）+ i18n 抽取（9a716ac）
+  //   AboutSubPage   2,199 →  5,598 (+3,399)  T07 复制诊断信息按钮（3f2c14c）+ W29 观测接线（31d40fc）
+  // 下面三个值按实测重设（2026-10-27 dd57c55 + 684fdc8 的产物），gzip 同为实测；
+  // 此后任何增长都会再次触发门禁，不再有"被首个失败遮住"的可能。
   routeChunks: {
-    ChatPage: { raw: 25_000, gzip: 8_000 },
+    ChatPage: { raw: 27_231, gzip: 8_191 },
     LibraryPage: { raw: 2_500, gzip: 1_200 },
-    MemoryPage: { raw: 6_000, gzip: 2_500 },
+    MemoryPage: { raw: 10_546, gzip: 3_186 },
     SavedPage: { raw: 10_000, gzip: 4_000 },
     CapabilitiesPage: { raw: 5_000, gzip: 2_000 },
     SkillPage: { raw: 60_000, gzip: 13_000 },
@@ -200,7 +214,7 @@ const BUDGET = Object.freeze({
     AppearanceSubPage: { raw: 8_000, gzip: 3_500 },
     UsageSubPage: { raw: 12_000, gzip: 5_000 },
     DataSubPage: { raw: 14_000, gzip: 5_500 },
-    AboutSubPage: { raw: 3_000, gzip: 1_500 },
+    AboutSubPage: { raw: 3_688, gzip: 1_551 },
   },
 });
 
@@ -224,7 +238,7 @@ if (violations.length > 0) {
       + `(+${rawOver}, +${pct}%), gzip ${actual.gzip}/${budget.gzip} (+${gzipOver}).`;
   });
   throw new Error(
-    `${violations.length} budget violation(s) — 所有预算均已评估（不再被首个失败遮住）:\n`
+    `${violations.length} budget violation(s) (all budgets evaluated — no longer masked by the first failure):\n`
     + lines.map((line) => `  - ${line}`).join('\n'),
   );
 }
