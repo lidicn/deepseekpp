@@ -175,8 +175,12 @@ export function normalizeJsonRpcResponse<TResult>(
   if (raw.jsonrpc !== '2.0') {
     throw invalidMcpResponse('MCP response jsonrpc must be exactly "2.0".');
   }
-  if (!isMcpResponseId(raw.id)) {
-    throw invalidMcpResponse('MCP response id must be a string, finite number, or null.');
+  // 审计 #69（2026-10-24 报告 P1）：响应 id 不能是 null。
+  // JSON-RPC 2.0 里 `id: null` 只出现在「无法解析请求 id 的错误响应」，
+  // 它**无法与任何在飞请求关联**；放行它等于允许一条无主响应被当成本次调用结果
+  // （尤其在不传 expectedRequest 的调用路径上，:181 的匹配检查会被整段跳过）。
+  if (!isMcpResponseId(raw.id) || raw.id === null) {
+    throw invalidMcpResponse('MCP response id must be a string or a finite number; null cannot be correlated to a request.');
   }
   if (expectedRequest && raw.id !== expectedRequest.id) {
     throw invalidMcpResponse('MCP response id did not match the active request.');
