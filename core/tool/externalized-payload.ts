@@ -106,10 +106,15 @@ export function takeExternalizedToolPayloadText(
   const key = createPayloadEntryKey(ref, namespace);
   const entry = payloadEntries.get(key);
   if (!entry) return null;
-  // 审计 #47：先校验 invocationName 再 delete。原名不匹配时条目被吞，正确调用方
-  // 再也取不到。不匹配就保留条目（让正确调用方取），返回 null。
-  if (entry.invocationName !== invocationName) return null;
+  // 审计 #47 复核（PM，2026-10-27）：判为**假阳性**，恢复 one-shot 语义。
+  // 依据：`tests/prompt-output-contract.test.ts` 有一条 2026-07-13 `0551eef
+  // (test: freeze prompt output contracts)` 引入的**冻结契约**测试：
+  //   「freezes one-shot deletion after an externalized payload name mismatch」
+  //   名字不匹配取过一次之后，即使再用**正确**名字取也必须返回 null。
+  // 这是有意的安全语义（一次性消费，防错名探针后再按正确名捞走），
+  // 不是"条目被吞"。审计只看到"先删后校验"的顺序，没看到这条契约。
   payloadEntries.delete(key);
+  if (entry.invocationName !== invocationName) return null;
   return entry.chunks.join('');
 }
 
