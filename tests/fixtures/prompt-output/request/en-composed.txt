@@ -39,13 +39,13 @@ Parameters JSON Schema: {"type":"object","properties":{"type":{"type":"string","
 Title: Capture page
 Description: Capture a browser page for compatibility evidence.
 Accepted tag names: mcp_browser_tools_capture_page, capture_page
-Parameters JSON Schema: {"type":"object","properties":{"url":{"type":"string","description":"Page URL"},"fullPage":{"type":"boolean","description":"Capture the full page"}},"required":["url"]}
+Parameters JSON Schema: {"type":"object","properties":{"url":{"type":"string","description":"Page URL"},"fullPage":{"type":"boolean","description":"Capture the full page"}},"required":["url"],"additionalProperties":false}
 
 ### Tool shell_exec
 Title: Execute command
 Description: Execute a local shell command and return stdout, stderr, and the exit code.
 Accepted tag names: mcp_shell_local_shell_exec, shell_exec
-Parameters JSON Schema: {"type":"object","properties":{"command":{"type":"string","description":"Shell command"},"cwd":{"type":"string","description":"Working directory file path"}},"required":["command"]}
+Parameters JSON Schema: {"type":"object","properties":{"command":{"type":"string","description":"Shell command"},"cwd":{"type":"string","description":"Working directory file path"}},"required":["command"],"additionalProperties":false}
 
 You MUST strictly follow the tool names and parameter schemas above when invoking tools.
 
