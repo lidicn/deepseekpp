@@ -64,8 +64,11 @@ function getPortState(nativeHost: string): NativePortState {
   nativePortStates.set(nativeHost, state);
 
   port.onMessage.addListener((response: any) => {
-    const id = response?.id ?? response?.result?.id;
-    const rpcId = response?.jsonrpc === '2.0' ? response.id : id;
+    // 审计 #64：关联 id 只能取**顶层** `id`。
+    // 原实现 `response?.id ?? response?.result?.id` 在顶层缺 id 时会把**载荷里的 result.id**
+    // 当成关联 id —— 而工具结果天然可能带自己的 id（memory/文件/记录 id），
+    // 于是一条无主响应会被投递给"恰好同 id"的在飞请求，调用方静默拿到别人的结果。
+    const rpcId = response?.id;
     if (rpcId != null && state.pendingRequests.has(rpcId)) {
       const pending = state.pendingRequests.get(rpcId)!;
       state.pendingRequests.delete(rpcId);
