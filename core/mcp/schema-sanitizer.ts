@@ -14,10 +14,11 @@
  * Kept (semantic core): $ref $defs type description nullable enum const
  *   properties required items minimum maximum minLength
  *   maxLength pattern format anyOf oneOf allOf
- *   additionalProperties (object form only; boolean form dropped — see below)
+ *   additionalProperties (object form, and boolean `false` — see below)
  * Dropped: $schema $id $comment title examples example default deprecated
  *   readOnly writeOnly contentEncoding contentMediaType, every unknown key,
- *   and additionalProperties in boolean form (false/true).
+ *   and additionalProperties in boolean form **true** (JSON Schema 默认值，保留只是噪音)。
+ *   `additionalProperties: false` 会被保留 —— 它是"不许加额外字段"的生成指导（审计 #68）。
  */
 
 const SCHEMA_KEYWORDS = [
@@ -104,11 +105,14 @@ function sanitizeKeyword(keyword: SchemaKeyword, value: unknown): unknown {
     case 'required':
       return sanitizeRequired(value);
     case 'additionalProperties':
-      // Boolean form (false/true) has no generation-guidance value:
-      // false is enforced by the execution layer's field whitelist;
-      // true is already the JSON Schema default. Object form (e.g.
-      // {type:'string'}) carries map-value-type semantics (shell env)
-      // and MUST be preserved.
+      // 审计 #68：boolean 形式不能一律丢弃。
+      //   · `false` 是"不允许额外字段"的**生成指导**：丢掉它等于对模型说"随便加字段"，
+      //     而模型给出的 arguments 是**原样转发**给 MCP 服务器的
+      //     （core/mcp/client.ts:165 `arguments: options.call.payload`，全仓没有按 schema
+      //     过滤参数的实现）⇒ 丢掉 `false` 就是实打实地放宽。
+      //   · `true` 是 JSON Schema 的默认值，保留只是噪音 ⇒ 仍然丢弃。
+      //   · 对象形式（如 {type:'string'}）携带"值类型"语义（shell env），保留并递归清洗。
+      if (value === false) return false;
       if (typeof value === 'boolean') return undefined;
       return isPlainObject(value) ? sanitizeSchemaNode(value) : undefined;
     case 'items':
