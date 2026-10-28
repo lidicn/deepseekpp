@@ -229,3 +229,92 @@ describe('active-transcript 辅助 API 冒烟', () => {
     expect(t.pendingChunks).toEqual([]);
   });
 });
+
+// ---- P0-2：去重任用例（QA 实测去掉去重仍 9/9 绿 —— mergeChunks 自身的重复没测过）----
+describe('#P0-2 mergeChunks 去重守卫', () => {
+  it('storage 已有 seq=3 + 新 incoming 也有 seq=3 → 最终只有一个（跨 writer dedupe）', async () => {
+    await addUserMessage({ role: 'user', text: '去重测试' });
+    appendChunk({ text: '第一段' });
+    appendChunk({ text: '第二段' });
+    await flushNow();
+    // storage 有 seq [1, 2]，seqCounter=2
+
+    // 模拟：background 在另一个 tab 写入了 seq=3（via storage 直写）
+    const storeKey = 'deepseek_pp_active_transcript';
+    const existing = fakeSession.getData()[storeKey] as Record<string, unknown>;
+    const withBgChunk = {
+      ...existing,
+      pendingChunks: [
+        ...(existing.pendingChunks as Array<Record<string, unknown>>),
+        { seq: 3, text: '后台写入', at: Date.now() },
+      ],
+      lastSeq: 3,
+      updatedAt: Date.now(),
+    };
+    Object.assign(fakeSession.getData(), { [storeKey]: withBgChunk });
+
+    // ChatPage 这边 appendChunk — seqCounter=2 → 生成 seq=3（与后台写入的 seq=3 冲突）
+    appendChunk({ text: '前台写入' });
+    await flushNow();
+
+    // 最终 storage 里 pendingChunks 应该只有一个 seq=3
+    const finalStore = fakeSession.getData()[storeKey] as { pendingChunks: Array<{ seq: number; text: string }> } | undefined;
+    const pendingSeqs = finalStore?.pendingChunks.map((c) => c.seq) ?? [];
+    const seq3Count = pendingSeqs.filter((s) => s === 3).length;
+    expect(seq3Count).toBe(1);
+
+    // 变异自证：去掉 mergeChunks 里 seen.add(c.seq)（改成纯 filter 不更新 seen）
+    // → 新批次内部重复挡不住；跨批次也挡不住
+  });
+});
+
+// ---- P2：陈旧记录兜底 ----
+describe('#P2 readTranscript 陈旧记录兜底', () => {
+  const STALE_MS = 30 * 60 * 1000;
+
+  function injectStaleStorage(status: 'idle' | 'done' | 'failed' | 'stopped' | 'streaming', ageMs: number) {
+    const storeKey = 'deepseek_pp_active_transcript';
+    Object.assign(fakeSession.getData(), {
+      [storeKey]: {
+        chatSessionId: 'old-session',
+        status,
+        messages: [{ role: 'user', text: 'old prompt' }],
+        pendingChunks: [{ seq: 1, text: 'old response', at: Date.now() - ageMs }],
+        lastSeq: 1,
+        truncatedAt: null,
+        updatedAt: Date.now() - ageMs,
+      },
+    });
+  }
+
+  it('非 streaming 记录超 30min → readTranscript 返回 fresh + storage 被清', async () => {
+    injectStaleStorage('done', STALE_MS + 60_000); // 31 分钟前
+    fakeSession.remove.mockClear();
+
+    const t = await readTranscript();
+    expect(t.status).toBe('idle');
+    expect(t.messages).toEqual([]);
+    expect(t.pendingChunks).toEqual([]);
+    // storage 被 remove 清掉
+    expect(fakeSession.remove).toHaveBeenCalledWith('deepseek_pp_active_transcript');
+  });
+
+  it('streaming 记录即使超 30min 也不清（后台可能还有请求在跑）', async () => {
+    injectStaleStorage('streaming', STALE_MS + 60_000);
+    fakeSession.remove.mockClear();
+
+    const t = await readTranscript();
+    expect(t.status).toBe('streaming');
+    expect(t.messages).toHaveLength(1);
+    expect(fakeSession.remove).not.toHaveBeenCalled();
+  });
+
+  it('非 streaming 记录刚好 30min 内 → 保留（不视为陈旧）', async () => {
+    injectStaleStorage('done', STALE_MS - 10_000); // 29:50 前
+    fakeSession.remove.mockClear();
+
+    const t = await readTranscript();
+    expect(t.status).toBe('done');
+    expect(fakeSession.remove).not.toHaveBeenCalled();
+  });
+});

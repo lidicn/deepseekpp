@@ -10,6 +10,13 @@
  * 事件驱动 loop-adapter 的 handleEvent；uploadImage 返回永不 resolve 的 Promise
  * 精确控制时序，在 agent_end await 它之前断言 finalize 未被调用。
  *
+ * 时序注意：`materializeAndUploadToolResultImages` 内部是
+ *   `await import('../../multimodal/media')`
+ * 动态 import + JSON 扫描 + uploadImage，这条链要等 uploadImage 真正被调用
+ * 才算跑完。旧版用固定 setTimeout(50) 猜时间，实测在重负载下会偶发跑飞。
+ * 现在改成**状态驱动轮询**：直到 uploadImage.mock.calls.length > 0 才推进
+ * （2 s 上限，超时抛明确错误）。
+ *
  * 变异自证（MUST revert 前跑红）：
  *   loop-adapter.ts `case 'agent_end'` 块里去掉
  *     `if (pendingImageMaterialization) { await pendingImageMaterialization; ... }`
@@ -49,6 +56,24 @@ function createPayload() {
     toolDescriptors: [],
     locale: 'en' as const,
   };
+}
+
+/**
+ * 状态驱动等待：轮询直到 predicate() 返回真，或超时。
+ * 固定 setTimeout 猜测时间是竞态根源 — 改成等"真的 uploadImage 被调用"再推进。
+ */
+async function waitUntil(
+  predicate: () => boolean,
+  timeoutMs = 2000,
+  intervalMs = 10,
+  label = 'waitUntil',
+): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    if (predicate()) return;
+  }
+  throw new Error(`${label} 超时（${timeoutMs}ms）—— 条件未满足`);
 }
 
 describe('审计 #83：agent_end 终态 await 最后一轮图片物化', () => {
@@ -117,11 +142,15 @@ describe('审计 #83：agent_end 终态 await 最后一轮图片物化', () => {
       },
     );
 
-    // 等 microtask + 一轮 macrotask —— materializeAndUploadToolResultImages
-    // 内部有 `await import('../../multimodal/media')` 动态 import，需要足够的
-    // 调度轮次才能让 uploadImage 真正被调用
-    await new Promise((r) => setTimeout(r, 50));
-    await Promise.resolve();
+    // 状态驱动：等 uploadImage 真的被调用（materializeAndUploadToolResultImages
+    // 内部有 await import('../../multimodal/media') 动态 import，需要足够调度轮次）
+    await waitUntil(
+      () => uploadImage.mock.calls.length > 0,
+      2000,
+      10,
+      'uploadImage 被调用（动态 import + JSON 扫描 + 扫描到 URL → 发起上传）',
+    );
+    // 再等一轮 microtask 让所有 Promise 链推进
     await Promise.resolve();
 
     // 断言 A：resolve 前不应有 AGENT_LOOP_COMPLETE（agent_end 必须 await pendingImageMaterialization）
