@@ -8,6 +8,8 @@
  *     请求发出前经 emitTraceEvent 上报 bytes + powMs。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createTurnTracker } from '../core/trace/turn-tracker';
 import { emitTraceEvent, setTraceEventSink, type ExternalTraceEvent } from '../core/trace/collector';
 
@@ -115,5 +117,25 @@ describe('P0-2 · request.sent', () => {
     setTraceEventSink((e) => received.push(e));
     emitTraceEvent({ t: 'request.sent', bytes: 100, powMs: 5 });
     expect(received).toEqual([{ t: 'request.sent', bytes: 100, powMs: 5 }]);
+  });
+});
+
+describe('P0-2 第 2.3 项 · tool.exec.durationMs 源码级守卫', () => {
+  it('content.ts 的 executeTool 用 performance.now 计时并把 durationMs 传给 toolExec', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'entrypoints/content.ts'),
+      'utf8',
+    );
+    // 计时起点
+    expect(source).toMatch(/execStartedAt\s*=\s*performance\.now\(\)/);
+    // 终点差值
+    expect(source).toMatch(/durationMs\s*=\s*Math\.round\(performance\.now\(\)\s*-\s*execStartedAt\)/);
+    // 带耗时入库（不再传 undefined）
+    expect(source).toMatch(/activeTraceTracker\?\.toolExec\([^)]*durationMs/);
+    // flushTraceStep 不得再 emit 无耗时的 tool.exec（否则双计）
+    const flushFn = source.match(
+      /function flushTraceStep\([\s\S]*?\n\}/,
+    )?.[0] ?? '';
+    expect(flushFn).not.toMatch(/\.toolExec\(/);
   });
 });
