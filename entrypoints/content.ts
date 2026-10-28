@@ -5269,7 +5269,30 @@ async function startInlineAgentIfNeeded(
         `visibleItems=${pageState.visibleItems} dsMessage=${pageState.dsMessage} `
         + `fastWaitMs=${INLINE_AGENT_LIVE_TARGET_WAIT_MS} extendedWaitMs=${INLINE_AGENT_EXTENDED_TARGET_WAIT_MS}`,
       );
-      located = await runAnchorWait(INLINE_AGENT_EXTENDED_TARGET_WAIT_MS);
+      // Step 3（第十一批）：c8ecc5e 把失败改成了最长 135s 的静默等待，
+      // 用户读成「卡死」。延长窗期间每秒刷新可见秒数；结束后给明确收尾。
+      const extendedWaitStartedAt = Date.now();
+      const renderTicker = window.setInterval(() => {
+        const seconds = Math.max(1, Math.round((Date.now() - extendedWaitStartedAt) / 1000));
+        showContentToast(contentT("content.agent.stillRendering", { seconds }), "info");
+        updateAgentStatusBar("starting", {
+          message: contentT("content.agent.stillRendering", { seconds }),
+        });
+      }, 1_000);
+      // 立刻先显示 0s 档，避免第一秒完全空白
+      showContentToast(contentT("content.agent.stillRendering", { seconds: 0 }), "info");
+      try {
+        located = await runAnchorWait(INLINE_AGENT_EXTENDED_TARGET_WAIT_MS);
+      } finally {
+        window.clearInterval(renderTicker);
+      }
+      if (located) {
+        const waitedSeconds = Math.max(1, Math.round((Date.now() - extendedWaitStartedAt) / 1000));
+        showContentToast(
+          contentT("content.agent.stillRenderingResolved", { seconds: waitedSeconds }),
+          "info",
+        );
+      }
     } else {
       recordAgentStartDecision(
         'anchor_missed_but_page_rendered',
@@ -5767,7 +5790,11 @@ function updateAgentStatusBar(
   let html = "";
   switch (phase) {
     case "starting":
-      html = `<strong>deepseek++</strong> ${contentT("content.agent.statusBarStarting")}`;
+      // Step 3：延长窗等待时 message 携带「页面仍在渲染（已等 N 秒）」
+      // （第十一批；escapeHtml 防 i18n 参数注入——虽然当前参数是数字）。
+      html = options?.message
+        ? `<strong>deepseek++</strong> ${escapeHtml(options.message)}`
+        : `<strong>deepseek++</strong> ${contentT("content.agent.statusBarStarting")}`;
       break;
     case "running": {
       const parts = [`<strong>deepseek++</strong> ${contentT("content.agent.statusBarRunning")}`, contentT("content.agent.statusBarStep", { step: step + 1 })];

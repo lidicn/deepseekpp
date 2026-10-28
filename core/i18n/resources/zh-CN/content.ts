@@ -95,6 +95,8 @@ export const content = {
     budgetReached: 'DeepSeek++ 已执行 {count} 轮自动工具续跑并暂停，避免把未完成任务伪装成最终答案。请发送“继续”让当前对话接着处理剩余工作。',
     emptyOutcome: 'DeepSeek++ 这一轮执行了工具但没有给出最终结论，且未收到模型说明。为免把未完成的工作伪装成答案，此处显式标注：本轮无有效产出。请发送“继续”重试，或到「设置 → 诊断」查看最近一次执行的轨迹报告。',
     stillLoading: 'DeepSeek 页面还在加载这条回复，DeepSeek++ 会继续等待并自动接上。若长时间无反应，请刷新页面。',
+    stillRendering: '页面仍在渲染（已等 {seconds} 秒）。DeepSeek++ 继续等待…',
+    stillRenderingResolved: '页面已在 {seconds} 秒后渲染完成，DeepSeek++ 已自动接上。',
     error: '执行出错',
     process: '过程',
     tools: '工具调用',

@@ -95,6 +95,8 @@ export const content = {
     budgetReached: 'DeepSeek++ paused after {count} automated tool-continuation rounds to avoid presenting incomplete work as a final answer. Send "continue" in this conversation to resume the remaining work.',
     emptyOutcome: 'DeepSeek++ ran tools this round but produced no final answer and received no explanation from the model. To avoid presenting unfinished work as a result, this is flagged explicitly: this round yielded no usable output. Send "continue" to retry, or open Settings → Diagnostics to see the trace report of the latest run.',
     stillLoading: 'The DeepSeek page is still rendering this reply. DeepSeek++ will keep waiting and attach automatically. Refresh the page if it stays stuck.',
+    stillRendering: 'Page is still rendering (waited {seconds}s). DeepSeek++ keeps waiting…',
+    stillRenderingResolved: 'Page finished rendering after {seconds}s. DeepSeek++ attached automatically.',
     error: 'Execution error',
     process: 'Process',
     tools: 'Tool calls',
