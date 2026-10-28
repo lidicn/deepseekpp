@@ -195,9 +195,12 @@ const BUDGET = Object.freeze({
   // 下面三个值按实测重设（2026-10-27 dd57c55 + 684fdc8 的产物），gzip 同为实测；
   // 此后任何增长都会再次触发门禁，不再有"被首个失败遮住"的可能。
   routeChunks: {
-    // 2026-10-28 重设：ChatPage 恢复端（#99 方案 E 的 mount-restore）+3,103 raw / +984 gzip，
-    // 属真实功能增长（transcript 恢复 + pendingChunks 合并），不是意外膨胀。
-    ChatPage: { raw: 30_334, gzip: 9_175 },
+    // 2026-10-28 重设（第二次，按**重建后**实测）：
+    //   base 27_231 → 30_808 raw（+3_577）/ 8_191 → 9_337 gzip（+1_146），
+    //   来自 #99 方案 E 的 mount-restore（transcript 恢复 + pendingChunks 合并 + transcript-merge 纯函数）。
+    //   第一次重设写成 30_334 是在**旧构建产物**上量的（+3_103），QA 独立重建后测得 30_808，
+    //   PM 重建复测与 QA 一致 ⇒ 基线按实测为准。教训：体积基线必须基于本次 build 的 dist。
+    ChatPage: { raw: 30_808, gzip: 9_337 },
     LibraryPage: { raw: 2_500, gzip: 1_200 },
     MemoryPage: { raw: 10_546, gzip: 3_186 },
     SavedPage: { raw: 10_000, gzip: 4_000 },
