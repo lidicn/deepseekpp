@@ -195,7 +195,9 @@ const BUDGET = Object.freeze({
   // 下面三个值按实测重设（2026-10-27 dd57c55 + 684fdc8 的产物），gzip 同为实测；
   // 此后任何增长都会再次触发门禁，不再有"被首个失败遮住"的可能。
   routeChunks: {
-    ChatPage: { raw: 27_231, gzip: 8_191 },
+    // 2026-10-28 重设：ChatPage 恢复端（#99 方案 E 的 mount-restore）+3,103 raw / +984 gzip，
+    // 属真实功能增长（transcript 恢复 + pendingChunks 合并），不是意外膨胀。
+    ChatPage: { raw: 30_334, gzip: 9_175 },
     LibraryPage: { raw: 2_500, gzip: 1_200 },
     MemoryPage: { raw: 10_546, gzip: 3_186 },
     SavedPage: { raw: 10_000, gzip: 4_000 },
@@ -223,6 +225,13 @@ const BUDGET = Object.freeze({
 // ⇒ 它一红，后面的 'first chat screen'、rich renderer、各 route chunk **从未被评估**，
 // 于是有超标项被长期遮住（2026-10-27 修完 initial shell 后才发现 ChatPage / MemoryPage /
 // AboutSubPage 三个 route chunk 也超标）。
+/**
+ * 审计实测：gzip 输出随 zlib 版本/压缩实现有 ±几字节抖动（raw 完全一致时也会发生）。
+ * route chunk 的预算按实测值精确设，若不给容差，一次无关依赖波动就会误报。
+ * 只给 gzip 小容差；raw 仍严格（字节数确定）。
+ */
+const ROUTE_GZIP_TOLERANCE_BYTES = 8;
+
 const violations = [];
 
 for (const browser of requestedBrowsers) {
@@ -276,7 +285,7 @@ function verifyBrowserBuild(browser) {
     const chunkPath = findNamedChunk(buildDir, chunkName);
     const metric = measureFiles(buildDir, [chunkPath]);
     routeMetrics[chunkName] = metric;
-    assertBudget(browser, `${chunkName} chunk`, metric, budget);
+    assertBudget(browser, `${chunkName} chunk`, metric, budget, ROUTE_GZIP_TOLERANCE_BYTES);
   }
 
   console.log(JSON.stringify({
@@ -345,8 +354,8 @@ function measureFiles(buildDir, files) {
   return { raw, gzip, files: [...files].map((file) => basename(file)).sort() };
 }
 
-function assertBudget(browser, label, actual, budget) {
-  if (actual.raw > budget.raw || actual.gzip > budget.gzip) {
+function assertBudget(browser, label, actual, budget, gzipTolerance = 0) {
+  if (actual.raw > budget.raw || actual.gzip > budget.gzip + gzipTolerance) {
     violations.push({ browser, label, actual, budget });
   }
 }
