@@ -44,6 +44,7 @@ if (staleEntries.length > 0) {
 
 // 跑 vitest，收集输出
 let output = '';
+let vitestExitStatus = 0;
 try {
   execSync('npx vitest run --reporter=verbose', {
     cwd: root,
@@ -56,6 +57,7 @@ try {
   });
 } catch (e) {
   output = (e.stdout || '') + (e.stderr || '');
+  vitestExitStatus = typeof e.status === 'number' ? e.status : 1;
   if (e.killed || e.signal) {
     console.error(`[baseline] ⚠ vitest 被终止（${e.signal ?? 'timeout'}），结果不完整`);
   }
@@ -79,6 +81,15 @@ try {
 const failed = parseFailedCases(output);
 
 console.log(`[baseline] 本次 failed: ${failed.size} 条`);
+
+// 审计 2026-10-28（QA 发现）：vitest 非零退出且**没有任何 failed 用例**，说明是进程级错误
+// （unhandled rejection / worker crash）。这类错误不会出现在 failed 列表里，
+// 于是「本次 failed: 0 条」+ exit 0 —— 历史上 13 条 unhandled rejection 就这样静默通过了 CI。
+// 判据：0 条 failed 却非零退出，不存在「基线内失败」可解释的余地 ⇒ 红。
+if (vitestExitStatus !== 0 && failed.size === 0) {
+  console.error(`[baseline] vitest exited ${vitestExitStatus} with 0 failed cases — process-level errors (unhandled rejection / worker crash) are not represented in the failed list.`);
+  process.exit(1);
+}
 
 // 找新增
 const newFailed = [];
