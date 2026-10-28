@@ -98,8 +98,15 @@ export async function callLocalFileReadAuto(
       return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, '无法从工具结果解析窗口内容');
     }
     contents.push(content);
-    // 按 Unicode 码点计数扣减预算，与宿主 charsRead 同义（代理对不会被重复计为两个字符）。
-    remainingBudget -= Array.from(content).length;
+    // 审计 #67：宿主返回 `charsRead`（`nextStart = start + charsRead`），优先用它；
+    // 缺失时才回退到按 Unicode 码点推算（代理对不会被重复计为两个字符）。
+    const windowCharsRead = typeof data?.charsRead === 'number'
+      && Number.isFinite(data.charsRead)
+      && data.charsRead >= 0
+      ? data.charsRead
+      : Array.from(content).length;
+    const expectedNextStart = start + windowCharsRead;
+    remainingBudget -= windowCharsRead;
     if (typeof data?.totalChars === 'number') totalChars = data.totalChars;
     const truncated = data?.truncated === true;
     lastTruncated = truncated;
@@ -111,6 +118,24 @@ export async function callLocalFileReadAuto(
     const nextStart = typeof data?.nextStart === 'number' ? data.nextStart : NaN;
     if (!Number.isFinite(nextStart) || nextStart <= prevNextStart) {
       return buildAutoReadResult(server, options, startedAt, contents, totalChars, false, `nextStart 未前进 (${prevNextStart} -> ${nextStart})`);
+    }
+    // 审计 #67：窗口必须**严格连续**。
+    // 宿主约定 `nextStart = start + charsRead`；若不相等：
+    //   · 实际更大 ⇒ gap：两窗之间有一段字被跳过（静默漏字）
+    //   · 实际更小 ⇒ overlap：两窗重叠，拼接后出现重复文本
+    // 两种情况都会让"自动续读"拼出一份与原文不符的内容，且调用方看不出异常 ⇒ fail-closed。
+    if (nextStart !== expectedNextStart) {
+      const drift = nextStart - expectedNextStart;
+      return buildAutoReadResult(
+        server,
+        options,
+        startedAt,
+        contents,
+        totalChars,
+        false,
+        `auto 续读窗口不连续（${drift > 0 ? 'gap' : 'overlap'} 偏差 ${drift}）：期望 ${expectedNextStart}，实际 ${nextStart}`,
+        true,
+      );
     }
     prevNextStart = nextStart;
     start = nextStart;
