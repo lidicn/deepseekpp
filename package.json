@@ -55,7 +55,8 @@
                     "smoke:mcp":  "node scripts/mcp-smoke.mjs",
                     "verify:automation":  "node scripts/automation-contract-smoke.mjs",
                     "verify:mcp:mock":  "node scripts/mcp-live-mock.mjs",
-                    "postinstall":  "wxt prepare"
+                    "postinstall":  "wxt prepare",
+                    "verify:ext-id":  "node scripts/lib/extension-id.selftest.mjs"
                 },
     "dependencies":  {
                          "@earendil-works/pi-agent-core":  "0.83.0",

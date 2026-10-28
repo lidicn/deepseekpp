@@ -14,6 +14,7 @@
  * 退出码：0 = 无 FAIL（含全 SKIP/离线）；1 = 存在 FAIL。
  * CDP 离线不是 FAIL：静态项照常评估，LIVE 项记 SKIP 并给出启动 Chrome 指引。
  */
+import { resolveExtensionId } from './lib/extension-id.mjs';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -31,7 +32,16 @@ const JSON_OUT = (() => {
 // 实际使用的 CDP 端点（由 pickCdpEndpoint 探测后填入，供汇总 JSON 留档）。
 let usedCdpBase = null;
 // dpp 未打包扩展 id（与 tools/reload-extension.py DEFAULT_EXT_ID 一致），可用 env 覆盖。
-const EXT_ID = process.env.DPP_EXT_ID ?? 'jjjhcjjegfplcfncohmfhbdhcalmijnc';
+// C4′：不再硬编码。优先级：显式参数/环境变量 DPP_EXT_ID > CDP 自动发现 > 未解析。
+// `--static` 模式不连浏览器，解析不到时用哨兵值（LIVE 项会如实报"未发现"，不会误判 PASS）。
+const STATIC_ONLY = process.argv.includes('--static');
+let EXT_ID = process.env.DPP_EXT_ID?.trim() || null;
+if (!EXT_ID && !STATIC_ONLY) {
+  const { id, source } = await resolveExtensionId({});
+  EXT_ID = id;
+  console.log(`[ext-id] 自动发现 ${id}（来源: ${source}）`);
+}
+if (!EXT_ID) EXT_ID = '__ext_id_unresolved__';
 
 const results = [];
 

@@ -12,6 +12,7 @@ Usage:
 """
 import asyncio
 import json
+import os
 import sys
 import urllib.request
 
@@ -24,6 +25,45 @@ DEFAULT_EXT_ID = "jjjhcjjegfplcfncohmfhbdhcalmijnc"
 def list_targets() -> list[dict]:
     with urllib.request.urlopen(f"{CDP_HTTP}/json", timeout=3) as r:
         return json.loads(r.read())
+
+
+
+def discover_ext_id(cdp_port: int = 9222) -> str | None:
+    """C4′：从 CDP /json/list 自动发现扩展 ID。
+
+    为什么必须发现而不是硬编码：manifest 没有 key ⇒ 未打包扩展的 ID 由**加载目录**派生，
+    换个目录 ID 就变（同一份源码在 Chrome/Edge/豆包 下是三个不同 ID）。
+    也**不**用"路径 SHA-256 → a–p"去推导：实测推不出当前生效的 ID，猜错会静默操作错扩展。
+    """
+    import json
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{cdp_port}/json/list", timeout=3) as response:
+            targets = json.load(response)
+    except Exception:
+        return None
+
+    def id_from_url(url: object) -> str | None:
+        if not isinstance(url, str) or not url.startswith("chrome-extension://"):
+            return None
+        candidate = url[len("chrome-extension://"):].split("/")[0]
+        if len(candidate) == 32 and all("a" <= ch <= "p" for ch in candidate):
+            return candidate
+        return None
+
+    # service_worker 一定属于运行中的扩展，比页面更可靠
+    for target in targets:
+        if isinstance(target, dict) and target.get("type") == "service_worker":
+            found = id_from_url(target.get("url"))
+            if found:
+                return found
+    for target in targets:
+        if isinstance(target, dict):
+            found = id_from_url(target.get("url"))
+            if found:
+                return found
+    return None
 
 
 def find_service_worker_ws(ext_id: str) -> str | None:
@@ -71,7 +111,18 @@ async def reload(ext_id: str) -> None:
 
 
 def main() -> None:
-    ext_id = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_EXT_ID
+    ext_id = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("DPP_EXT_ID")
+    if not ext_id:
+        ext_id = discover_ext_id()
+        if ext_id:
+            print(f"[reload] 自动发现扩展 id: {ext_id}")
+    if not ext_id:
+        print(
+            "[reload] 无法确定扩展 ID：请带 --remote-debugging-port=9222 启动浏览器，"
+            "或设 DPP_EXT_ID，或把它作为第一个参数传入。",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     asyncio.run(reload(ext_id))
 
 

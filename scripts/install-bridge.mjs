@@ -19,6 +19,7 @@
  *   node scripts/install-bridge.mjs --id <extensionId> --id <extensionId>
  */
 
+import { resolveExtensionId } from './lib/extension-id.mjs';
 import { copyFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
@@ -58,10 +59,25 @@ function parseArgs(argv) {
   return target;
 }
 
-function main() {
+async function main() {
   const { dir, ids } = parseArgs(process.argv.slice(2));
   const targetDir = resolve(dir);
-  const extensionIds = ids.length > 0 ? ids : DEFAULT_EXTENSION_IDS;
+  // C4′：没显式 --id 时，把 CDP 自动发现到的 ID 放在最前；其余已知实例照旧安装（向后兼容）。
+  let discovered = null;
+  if (ids.length === 0) {
+    try {
+      const resolved = await resolveExtensionId({});
+      discovered = resolved.id;
+      console.log(`[ext-id] 自动发现 ${discovered}（来源: ${resolved.source}）`);
+    } catch {
+      console.log("[ext-id] 未能自动发现扩展 ID（浏览器未开 9222 或未加载扩展）；将只使用内置已知 ID 列表。");
+    }
+  }
+  const extensionIds = ids.length > 0
+    ? ids
+    : (discovered
+      ? [discovered, ...DEFAULT_EXTENSION_IDS.filter((id) => id !== discovered)]
+      : DEFAULT_EXTENSION_IDS);
 
   if (!existsSync(SOURCE_DIR)) {
     throw new Error(`规范源码目录不存在: ${SOURCE_DIR}`);
@@ -112,7 +128,7 @@ function main() {
 }
 
 try {
-  main();
+  await main();
 } catch (error) {
   console.error(`\n安装失败: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);
