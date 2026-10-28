@@ -60,16 +60,23 @@ vi.mock('../core/chat/official-api-config', () => ({
 }));
 
 // 间谍：包装真实实现，记录调用次数与假时间增量，不改变语义。
+// P1-5 起调用点走 waitBetweenDeepSeekRequestsKeyed，两处都要包。
 vi.mock('../core/inline-agent/step-control', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../core/inline-agent/step-control')>();
+  const record = async (p: Promise<void>) => {
+    const start = Date.now();
+    await p;
+    pacing.waitedMs.push(Date.now() - start);
+  };
   return {
     ...actual,
     waitBetweenDeepSeekRequests: (signal: AbortSignal) => {
       pacing.calls += 1;
-      const start = Date.now();
-      return actual.waitBetweenDeepSeekRequests(signal).then(() => {
-        pacing.waitedMs.push(Date.now() - start);
-      });
+      return record(actual.waitBetweenDeepSeekRequests(signal));
+    },
+    waitBetweenDeepSeekRequestsKeyed: (signal: AbortSignal, stepKey?: string) => {
+      pacing.calls += 1;
+      return record(actual.waitBetweenDeepSeekRequestsKeyed(signal, stepKey));
     },
   };
 });

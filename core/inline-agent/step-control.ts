@@ -65,6 +65,42 @@ export function waitBetweenDeepSeekRequests(signal: AbortSignal): Promise<void> 
   });
 }
 
+/**
+ * P1-5（审计 §8.2）：同一步内的节流去重令牌。
+ *
+ * 审计实证：唤醒续跑路径曾同时经过 `resume-tool-loop` 步内与
+ * `chat-runtime-service.submitContinuation` 两道 `waitBetweenDeepSeekRequests`，
+ * 每步 5–13s。O1 删掉了重复调用点；本令牌是结构防复发——
+ * **同一 stepKey 第二次调用立即返回**，新增调用点不会再叠加真实等待。
+ *
+ * 失败重试退避（`deepseek-stream-fn.ts`）**不传 stepKey**，保持独立等待语义。
+ * abort 语义不变：已发起的等待仍可被 abort 立即放行。
+ */
+const pacedStepKeys = new Set<string>();
+
+/** 清空全部已节流步标记（每个 agent run / resume run 开始时调用）。 */
+export function resetPacedStepKeys(): void {
+  pacedStepKeys.clear();
+}
+
+/**
+ * 带步级去重的节流。stepKey 建议用 `${loopId}:${stepIndex}` 或
+ * `${jobId}:${depth}:${step}`——必须在同一 run 内唯一、跨 run 可区分。
+ * 省略 stepKey 时行为与裸 `waitBetweenDeepSeekRequests` 完全一致（不记令牌）。
+ */
+export function waitBetweenDeepSeekRequestsKeyed(
+  signal: AbortSignal,
+  stepKey?: string,
+): Promise<void> {
+  if (stepKey !== undefined) {
+    if (pacedStepKeys.has(stepKey)) {
+      return Promise.resolve();
+    }
+    pacedStepKeys.add(stepKey);
+  }
+  return waitBetweenDeepSeekRequests(signal);
+}
+
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }

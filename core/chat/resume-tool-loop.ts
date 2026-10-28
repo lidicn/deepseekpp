@@ -8,7 +8,7 @@ import type { ActiveChatLoop } from './active-loop';
 import type { ToolJob } from '../tool/job';
 import { MAX_CHAT_TOOL_STEPS, serializeToolExecutions } from './loop-contract';
 import type { ToolCall, ToolExecutionRecord } from '../types';
-import { waitBetweenDeepSeekRequests } from '../inline-agent/step-control';
+import { waitBetweenDeepSeekRequestsKeyed, resetPacedStepKeys } from '../inline-agent/step-control';
 import { emitTraceEvent } from '../trace/collector';
 
 export interface ResumeToolLoopDeps {
@@ -51,6 +51,9 @@ export async function runResumeToolLoop(
   signal: AbortSignal,
 ): Promise<ResumeToolLoopResult> {
   const { job, snapshot, resumeIndex, depth, synthesized } = plan;
+
+  // P1-5：每个 resume run 清空步级节流令牌，避免跨 run 串键。
+  resetPacedStepKeys();
 
   // H3: 续跑可用步数 = MAX_CHAT_TOOL_STEPS - (depth+1)
   const remainingSteps = MAX_CHAT_TOOL_STEPS - (depth + 1);
@@ -122,9 +125,9 @@ export async function runResumeToolLoop(
       turn: depth + step + 1,
     });
 
-    // 第四件：submitContinuation 前必须 await waitBetweenDeepSeekRequests
-    // （2500-6500ms 随机，风控防线不可省）
-    await waitBetweenDeepSeekRequests(signal);
+    // 第四件：submitContinuation 前必须 await 节流（2500-6500ms 随机，风控防线不可省）。
+    // P1-5 keyed：同一步内第二次调用立即返回，防未来装配再叠一道。
+    await waitBetweenDeepSeekRequestsKeyed(signal, `${job.id}:${depth}:${step}`);
 
     // P0-2 第 2.1 项：续跑路径单独观测。此模块跑在 background SW，
     // content 侧的 trace sink 不在本上下文 —— emitTraceEvent 无 sink 时

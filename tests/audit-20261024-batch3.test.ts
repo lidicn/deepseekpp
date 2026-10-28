@@ -16,6 +16,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('../core/inline-agent/step-control', () => ({
   waitBetweenDeepSeekRequests: vi.fn(async () => {}),
+  waitBetweenDeepSeekRequestsKeyed: vi.fn(async () => {}),
+  resetPacedStepKeys: vi.fn(),
 }));
 
 import { runResumeToolLoop } from '../core/chat/resume-tool-loop';

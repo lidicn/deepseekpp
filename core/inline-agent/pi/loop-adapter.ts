@@ -60,7 +60,7 @@ import type {
   InlineAgentToolDetectedMsg,
 } from '../types';
 import { INLINE_AGENT_MAX_STEPS } from '../types';
-import { waitBetweenDeepSeekRequests } from '../step-control';
+import { waitBetweenDeepSeekRequestsKeyed, resetPacedStepKeys } from '../step-control';
 
 export type PostFn = (type: string, data: unknown) => void;
 export type ExecuteToolFn = (call: ToolCall, signal?: AbortSignal) => Promise<ToolExecutionRecord>;
@@ -83,6 +83,9 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
   const { loopId, chatSessionId, toolDescriptors, promptOptions } = payload;
   const { powWasmUrl } = payload;
   const locale = payload.locale ?? DEFAULT_LOCALE;
+
+  // P1-5：每个 agent run 清空步级节流令牌。
+  resetPacedStepKeys();
 
   // ------------------------------------------------------------------ state
   const session: DeepSeekSessionState = {
@@ -313,7 +316,8 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
   }
 
   // One 2.5–6.5s throttle delay before every DS request except the first
-  // (released request pacing).
+  // (released request pacing). stepKey = 同一次 run 内的请求序号——
+  // P1-5：若未来有人在同一请求前再插一道 keyed 调用，第二次立即返回。
   const pacedStreamFn: StreamFn = async (model, context, options) => {
     // R2 修复：等待上一步的后台图片物化完成，确保 pendingImageFileIds 已填充
     if (pendingImageMaterialization) {
@@ -321,7 +325,7 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
       pendingImageMaterialization = null;
     }
     if (requestCount > 0) {
-      await waitBetweenDeepSeekRequests(signal);
+      await waitBetweenDeepSeekRequestsKeyed(signal, `${loopId}:req:${requestCount}`);
     }
     requestCount += 1;
     return streamFn(model, context, options);
