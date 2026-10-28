@@ -78,9 +78,10 @@ export async function resolveExtensionId(options = {}) {
 
   throw new Error(
     'Cannot determine the dpp extension id.\n'
-    + '  · 让浏览器带 --remote-debugging-port=9222 启动（脚本会从 CDP 自动发现），或\n'
-    + '  · 设环境变量 DPP_EXT_ID=<id>，或\n'
-    + '  · 显式传参（各脚本的 --id / 第一个参数）。\n'
-    + '  manifest 没有 key ⇒ 未打包扩展的 id 由加载路径派生，换目录就会变，所以不猜。',
+    + '  - Start the browser with --remote-debugging-port=9222 (the script discovers it via CDP), or\n'
+    + '  - Set the DPP_EXT_ID environment variable, or\n'
+    + '  - Pass it explicitly (--id, or the first positional argument).\n'
+    + '  The manifest has no "key", so an unpacked extension id derives from its load path\n'
+    + '  and changes when the directory changes: we refuse to guess.',
   );
 }
