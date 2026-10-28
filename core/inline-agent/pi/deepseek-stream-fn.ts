@@ -38,6 +38,7 @@ import {
   type ModelTurn,
   type SubmitPromptInput,
 } from '../../deepseek/adapter';
+import { emitTraceEvent } from '../../trace/collector';
 import { extractToolCalls } from '../../interceptor/tool-parser';
 import { createStreamingToolCallParser } from '../../interceptor/streaming-tool-call-parser';
 import { createStreamingToolTextAccumulator } from '../../interceptor/streaming-tool-text';
@@ -122,7 +123,17 @@ export function createDeepSeekTurnSubmitter(
   return async (request, callbacks, signal) => {
     const clientHeaders = createClientHeaders();
     // P1-1: PoW solve has its own bounded retry; abort propagates immediately.
+    const powStartedAt = Date.now();
     const powHeaders = await solvePowWithRetry(clientHeaders, powWasmUrl, signal);
+    const powMs = Date.now() - powStartedAt;
+    // P0-2 第 2.1 项：请求真正发出前 emit request.sent。
+    // bytes = 序列化后 prompt 的 UTF-8 字节数；powMs 隔离 PoW 成本。
+    // 首个 sse.frame 之前发出 ⇒ Δ(request.sent → 首帧) = prefill + 排队。
+    emitTraceEvent({
+      t: 'request.sent',
+      bytes: new TextEncoder().encode(request.prompt).length,
+      powMs,
+    });
     const input: SubmitPromptInput = {
       chatSessionId: request.chatSessionId,
       parentMessageId: request.parentMessageId,

@@ -46,6 +46,7 @@ import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
 import { submitOfficialDeepSeekStreaming } from '../../deepseek/official-api';
 import type { OfficialDeepSeekMessage } from '../../deepseek/official-api';
+import { emitTraceEvent } from '../../trace/collector';
 import { createStreamingToolCallParser } from '../../interceptor/streaming-tool-call-parser';
 import { createStreamingToolTextAccumulator } from '../../interceptor/streaming-tool-text';
 import type { ToolCall as CoreToolCall } from '../../types';
@@ -201,10 +202,18 @@ export function createDeepSeekApiStreamFn(
           }
         };
 
+        // P0-2 第 2.1 项：official-api 无 PoW，powMs 省略。
+        // bytes = 序列化 messages 的 UTF-8 字节数（请求体体量代理指标）。
+        const wireMessages = mapMessages(context.messages);
+        emitTraceEvent({
+          t: 'request.sent',
+          bytes: new TextEncoder().encode(JSON.stringify(wireMessages)).length,
+        });
+
         const turn = await submitOfficialDeepSeekStreaming({
           apiKey,
           config,
-          messages: mapMessages(context.messages),
+          messages: wireMessages,
         }, {
           onTextChunk(text) {
             emitText(textAccumulator.append(text));

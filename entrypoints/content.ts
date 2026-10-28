@@ -6116,6 +6116,9 @@ async function startInlineAgentLoop(
         },
       };
     }
+    // P0-2 第 2.3 项：工具往返计时。此前 tool.exec.durationMs 恒 undefined
+    // （工具结果不携带耗时），报告里永远看不到 shell_exec 真实毫秒数。
+    const execStartedAt = performance.now();
     const enrichedCall: ToolCall = ensureToolCallId({
       ...call,
       source: {
@@ -6156,6 +6159,10 @@ async function startInlineAgentLoop(
         console.error("[DPP-AUTO] 自动重新授权失败", reauthError);
       }
     }
+
+    const durationMs = Math.round(performance.now() - execStartedAt);
+    // 直接带耗时入库；flushTraceStep 不再重复 emit tool.exec。
+    activeTraceTracker?.toolExec(result.name ?? call.name, durationMs, Boolean(result.ok));
 
     return {
       name: result.name ?? call.name,
@@ -7780,6 +7787,10 @@ function beginTraceTracking(
   setTraceEventSink((event) => {
     if (event.t === "continuation.decision") {
       activeTraceTracker?.continuationDecision(event.reason, event.triggered);
+    } else if (event.t === "request.sent") {
+      // P0-2 第 2.1 项：loop 侧（deepseek-stream-fn / official-api）在请求
+      // 真正发出前 emit；此处补齐 turnId/timestamp 后入库。
+      activeTraceTracker?.requestSent(event.bytes, event.powMs);
     }
   });
   activeTraceTracker.startTurn(`${loopId}:0`);
@@ -7801,16 +7812,11 @@ function advanceTraceTurn(loopId: string, stepIndex: number): void {
 }
 
 /**
- * 一步完成：记录本步的工具执行结果。turn 的收尾留给 loop 级事件。
- *
- * 耗时统一传 undefined：工具结果（ToolCardResult）只有 {ok, summary, detail}，
- * 不携带 durationMs。报告里会省略耗时而不是显示假的 0.0s。
+ * 一步完成：冲平 SSE。工具执行的 tool.exec 已在 executeTool 内带真实
+ * durationMs 入库（P0-2 第 2.3 项），此处不再重复 emit。
  */
-function flushTraceStep(toolExecutions: readonly { name: string; result?: { ok?: boolean } }[]): void {
+function flushTraceStep(_toolExecutions: readonly { name: string; result?: { ok?: boolean } }[]): void {
   if (!activeTraceTracker) return;
-  for (const exec of toolExecutions) {
-    activeTraceTracker.toolExec(exec.name, undefined, Boolean(exec.result?.ok));
-  }
   activeTraceTracker.flushSse();
 }
 

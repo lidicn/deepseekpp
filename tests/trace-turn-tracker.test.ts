@@ -39,26 +39,32 @@ describe('W29 turn tracker · 事件映射', () => {
     expect(tracker.snapshot()).toHaveLength(0);
   });
 
-  it('SSE 帧按 kind 累计，flush 时只发一条聚合事件', () => {
+  it('SSE 帧：第一帧立即 flush（P0-2），后续按阈值聚合', () => {
+    // P0-2 第 2.2 项：首帧立即发出，否则 sse.frame 时间戳落在第 20 帧，
+    // 拿它算 TTFT 会系统性高估。
     const tracker = createTurnTracker({ now: () => 1 });
     tracker.startTurn('t');
-    for (let i = 0; i < 5; i += 1) tracker.sseFrame('text');
+    tracker.sseFrame('text'); // 第 1 帧 → 立即 flush（count=1）
+    for (let i = 0; i < 4; i += 1) tracker.sseFrame('text');
     for (let i = 0; i < 2; i += 1) tracker.sseFrame('think');
     tracker.flushSse();
 
     const sseEvents = tracker.snapshot().filter((e) => e.t === 'sse.frame');
-    expect(sseEvents).toHaveLength(1);
-    expect(sseEvents[0]).toMatchObject({ count: 7, kind: 'text' });
+    expect(sseEvents).toHaveLength(2);
+    expect(sseEvents[0]).toMatchObject({ count: 1, kind: 'text' });
+    expect(sseEvents[1]).toMatchObject({ count: 6, kind: 'text' });
   });
 
-  it('达到阈值自动冲刷，不会把事件数组刷屏', () => {
+  it('达到阈值自动冲刷，不会把事件数组刷屏（含首帧立即 flush）', () => {
     const tracker = createTurnTracker({ now: () => 1, limit: 200 });
     tracker.startTurn('t');
     for (let i = 0; i < 45; i += 1) tracker.sseFrame('text');
     const sseEvents = tracker.snapshot().filter((e) => e.t === 'sse.frame');
-    // 45 帧 → 2 次阈值冲刷（20/40），余 5 帧仍留在计数里
-    expect(sseEvents).toHaveLength(2);
-    expect(tracker.counts.text).toBe(5);
+    // 首帧立即 1 条 + 其后每满 20 帧 1 条（第 21、41 帧）= 3 条；余 4 帧仍在计数里
+    // 45 - 1 - 20 - 20 = 4
+    expect(sseEvents).toHaveLength(3);
+    expect(sseEvents[0]).toMatchObject({ count: 1 });
+    expect(tracker.counts.text).toBe(4);
   });
 
   it('工具解析/执行/续轮判定产生对应事件', () => {
@@ -101,6 +107,46 @@ describe('W29 turn tracker · 事件映射', () => {
     tracker.endTurn('end_turn', false);
     tracker.endTurn('end_turn', true);
     expect(tracker.snapshot().filter((e) => e.t === 'turn.end')).toHaveLength(1);
+  });
+
+  it('requestSent 产生 request.sent 事件（P0-2 第 2.1 项）', () => {
+    const tracker = createTurnTracker({ now: () => 42 });
+    tracker.startTurn('t');
+    tracker.requestSent(4096, 180);
+
+    const sent = tracker.snapshot().filter((e) => e.t === 'request.sent');
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      t: 'request.sent',
+      turnId: 't#1',
+      timestamp: 42,
+      bytes: 4096,
+      powMs: 180,
+    });
+  });
+
+  it('requestSent 可省略 powMs（official-api 无 PoW）', () => {
+    const tracker = createTurnTracker({ now: () => 1 });
+    tracker.startTurn('t');
+    tracker.requestSent(2048);
+
+    const sent = tracker.snapshot().find((e) => e.t === 'request.sent');
+    expect(sent).toMatchObject({ bytes: 2048 });
+    expect(sent && 'powMs' in sent).toBe(false);
+  });
+
+  it('跨轮重置首帧标记：每轮第一帧都立即 flush', () => {
+    const tracker = createTurnTracker({ now: () => 1 });
+    tracker.startTurn('a');
+    tracker.sseFrame('text');
+    tracker.endTurn('step_advanced', false);
+    tracker.startTurn('b');
+    tracker.sseFrame('think');
+
+    const sseEvents = tracker.snapshot().filter((e) => e.t === 'sse.frame');
+    expect(sseEvents).toHaveLength(2);
+    expect(sseEvents[0]).toMatchObject({ count: 1, kind: 'text' });
+    expect(sseEvents[1]).toMatchObject({ count: 1, kind: 'think' });
   });
 
   it('事件超过上限时丢弃最旧的，并如实记录丢弃数', () => {

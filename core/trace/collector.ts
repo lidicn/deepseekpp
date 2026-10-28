@@ -20,16 +20,26 @@ import type { ContinuationReason, TraceEvent } from './report';
 export const TRACE_EVENT_LIMIT = 200;
 
 /**
- * 外部（如 loop-adapter）能上报的事件子集。
+ * 外部（如 loop-adapter / deepseek-stream-fn）能上报的事件子集。
  *
  * loop-adapter 不知道当前 turnId（轮次由内容脚本按 step 划分），所以它只上报「判定结果」，
  * 由内容脚本的 tracker 补齐 turnId/timestamp。其余事件由内容脚本直接从消息流产生。
+ *
+ * P0-2（第十一批）：新增 request.sent —— 全仓此前从未 emit 过该事件，
+ * 是「变慢查不清」的根因之一。bytes = 序列化后 prompt 的 UTF-8 字节数；
+ * powMs 仅 web 后端有（official-api 无 PoW，省略）。
  */
-export interface ExternalTraceEvent {
-  t: 'continuation.decision';
-  reason: ContinuationReason;
-  triggered: boolean;
-}
+export type ExternalTraceEvent =
+  | {
+      t: 'continuation.decision';
+      reason: ContinuationReason;
+      triggered: boolean;
+    }
+  | {
+      t: 'request.sent';
+      bytes: number;
+      powMs?: number;
+    };
 
 type TraceEventSink = (event: ExternalTraceEvent) => void;
 

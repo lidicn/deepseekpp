@@ -9,6 +9,7 @@ import type { ToolJob } from '../tool/job';
 import { MAX_CHAT_TOOL_STEPS, serializeToolExecutions } from './loop-contract';
 import type { ToolCall, ToolExecutionRecord } from '../types';
 import { waitBetweenDeepSeekRequests } from '../inline-agent/step-control';
+import { emitTraceEvent } from '../trace/collector';
 
 export interface ResumeToolLoopDeps {
   // Phase A: 执行单个工具调用
@@ -124,6 +125,14 @@ export async function runResumeToolLoop(
     // 第四件：submitContinuation 前必须 await waitBetweenDeepSeekRequests
     // （2500-6500ms 随机，风控防线不可省）
     await waitBetweenDeepSeekRequests(signal);
+
+    // P0-2 第 2.1 项：续跑路径单独观测。此模块跑在 background SW，
+    // content 侧的 trace sink 不在本上下文 —— emitTraceEvent 无 sink 时
+    // 静默丢弃（观测永不影响主流程）。bytes 用 toolResults 序列化体量近似。
+    emitTraceEvent({
+      t: 'request.sent',
+      bytes: new TextEncoder().encode(toolResultsText).length,
+    });
 
     const result = await deps.submitContinuation({
       parentMessageId: snapshot.parentMessageId ?? null,

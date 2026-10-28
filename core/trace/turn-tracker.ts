@@ -43,6 +43,11 @@ export interface SseCounts {
 export interface TurnTracker {
   /** 开始新的一轮。返回该轮的 turnId。 */
   startTurn(turnId: string): string;
+  /**
+   * 记录「请求真正发出」的观测点（第十批 P0-2）。
+   * bytes = 序列化后 prompt 的 UTF-8 字节数；powMs 可省略（official-api 无 PoW）。
+   */
+  requestSent(bytes: number, powMs?: number): void;
   sseFrame(kind: SseFrameKind, count?: number): void;
   /** 把累计的 SSE 计数冲刷成一条 sse.frame 事件（若为 0 则不产生事件）。 */
   flushSse(): void;
@@ -66,6 +71,8 @@ export function createTurnTracker(options: TurnTrackerOptions = {}): TurnTracker
   const counts: SseCounts = { text: 0, think: 0, tool: 0 };
   let turnId: string | null = null;
   let turnEnded = false;
+  // P0-2 第 2.2 项：每轮第一帧立即 flush，避免 TTFT 被 20 帧聚合阈值高估。
+  let firstFrameFlushed = false;
   // 轮次序号：turnId 必须全局唯一，否则渲染器会把两轮并成一组。
   // 真机教训：原来用 `${loopId}:${stepIndex}`，而 AGENT_STEP_STARTED 的 stepIndex
   // 在同一轮内可能重复（首轮与续轮都可能是 0），导致 turnId 碰撞，
@@ -101,6 +108,7 @@ export function createTurnTracker(options: TurnTrackerOptions = {}): TurnTracker
       // turnId = 前缀 + 序号，保证同一轮内与跨轮都唯一。
       turnId = `${prefix}#${turnSeq}`;
       turnEnded = false;
+      firstFrameFlushed = false;
       counts.text = 0;
       counts.think = 0;
       counts.tool = 0;
@@ -108,9 +116,23 @@ export function createTurnTracker(options: TurnTrackerOptions = {}): TurnTracker
       return turnId;
     },
 
+    requestSent(bytes: number, powMs?: number): void {
+      emitWithTurn(
+        'request.sent',
+        powMs === undefined ? { bytes } : { bytes, powMs },
+      );
+    },
+
     sseFrame(kind: SseFrameKind, count = 1): void {
       if (!turnId) return;
       counts[kind] += count;
+      // P0-2 第 2.2 项：本轮第一帧立即 flush —— 否则首条 sse.frame 的时间戳
+      // 落在第 20 帧，拿它算 TTFT 会系统性高估。
+      if (!firstFrameFlushed) {
+        firstFrameFlushed = true;
+        this.flushSse();
+        return;
+      }
       const total = counts.text + counts.think + counts.tool;
       if (total > 0 && total % SSE_FLUSH_THRESHOLD === 0) this.flushSse();
     },
