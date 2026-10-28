@@ -1,27 +1,32 @@
 /**
- * E2 · 请求节流量化实验（第十批派工 · 性能）。
+ * E2 · 请求节流量化实验 + O1 去重回归守卫（第十批派工 · 性能）。
  *
  * 目标：用确定性假时钟回答「一个步进里 waitBetweenDeepSeekRequests
  * 被调用几次、累计假时间多少」，不依赖浏览器与真实模型。
  *
  * 覆盖两条真实链路：
  *  1. 正常 pi loop（official-api 后端驱动 runAgentLoop 真实链路）
- *     —— 节流点只有 pacedStreamFn（loop-adapter.ts:315-328）；
- *  2. 唤醒续跑 resume-tool-loop（chat-runtime-service.ts:894 的
- *     submitContinuation 会再等一次 —— 与 resume-tool-loop.ts:126 叠加）。
+ *     —— 节流点只有 pacedStreamFn（loop-adapter.ts pacedStreamFn）；
+ *  2. 唤醒续跑 resume-tool-loop —— O1 前 chat-runtime-service 的
+ *     submitContinuation 会再等一次（每步 2 次 = 5–13s）；O1 后只保留
+ *     loop 步内那一道。
  *
  * 断言（也是未来的回归守卫）：
  *  - 正常路径：perStepWaits === 1；每次等待 ∈ [2500, 6500]
- *  - 续跑路径：若仍双重节流，测试记录并断言当前行为（O1 修复后改为 1）
+ *  - 续跑路径（O1 后接线）：perStepWaits === 1
  *
  * 变异自证（写红用，改完必须还原）：
  *  - 在 pacedStreamFn 里连续 await 两次 waitBetweenDeepSeekRequests
  *    → 「normal pi loop」用例红（waitsPerNonFirstRequest 变成 2）
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { createMemoryToolDescriptors } from '../core/tool/memory';
 import type { InlineAgentStartPayload } from '../core/inline-agent/types';
 import type { ToolExecutionRecord } from '../core/types';
+import type { ActiveChatLoop } from '../core/chat/active-loop';
+import type { ToolJob } from '../core/tool/job';
 
 // ---------------------------------------------------------------- mocks
 const officialApiMocks = vi.hoisted(() => ({
@@ -71,7 +76,6 @@ vi.mock('../core/inline-agent/step-control', async (importOriginal) => {
 
 const { runInlineAgentLoop } = await import('../core/inline-agent/loop');
 const { runResumeToolLoop } = await import('../core/chat/resume-tool-loop');
-const stepControl = await import('../core/inline-agent/step-control');
 
 // chrome stub（official-api 分支的存储读取）
 (globalThis as Record<string, unknown>).chrome = {
@@ -254,14 +258,13 @@ describe('E2 · 正常 pi loop 每步节流次数（假时钟）', () => {
   });
 });
 
-describe('E2 · 唤醒续跑路径的节流叠加', () => {
-  it('resume-tool-loop 步内 wait ×1 + submitContinuation 内 wait ×1 = 每步 2 次（chat-runtime-service 接线形状）', async () => {
+describe('E2 · 唤醒续跑路径的节流次数', () => {
+  it('O1 去重后：resume-tool-loop 步内 wait ×1，submitContinuation 不再叠加 ⇒ 每步 1 次', async () => {
     vi.useFakeTimers();
 
-    // 按 chat-runtime-service.ts:892-894 的真实接线复刻：
-    // submitContinuation 内部又 await waitBetweenDeepSeekRequests。
-    const submitContinuation = vi.fn(async (input: { signal: AbortSignal }) => {
-      await stepControl.waitBetweenDeepSeekRequests(input.signal);
+    // O1 后的生产接线（chat-runtime-service.ts submitContinuation）：
+    // 节流只由 resume-tool-loop.ts 步内那一道负责，deps 内不再等待。
+    const submitContinuation = vi.fn(async (_input: { signal: AbortSignal }) => {
       return {
         responseMessageId: 'r-1',
         assistantText: 'done',
@@ -280,9 +283,11 @@ describe('E2 · 唤醒续跑路径的节流叠加', () => {
           executions: [],
           position: { callIndex: 0, depth: 0 },
           state: 'interrupted',
+          attempt: 0,
           startedAt: 0,
-        },
+        } satisfies ToolJob,
         snapshot: {
+          active: true,
           schemaVersion: 1,
           provider: 'web',
           jobId: 'e2-job',
@@ -293,8 +298,9 @@ describe('E2 · 唤醒续跑路径的节流叠加', () => {
           executions: [],
           position: { callIndex: 0, depth: 0 },
           attempt: 0,
+          currentTool: null,
           startedAt: 0,
-        },
+        } satisfies ActiveChatLoop,
         resumeIndex: 0,
         depth: 0,
       },
@@ -308,16 +314,28 @@ describe('E2 · 唤醒续跑路径的节流叠加', () => {
       new AbortController().signal,
     );
 
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(10_000);
     await run;
 
     expect(submitContinuation).toHaveBeenCalledTimes(1);
-    // 实测结论：续跑路径每步 2 次节流（2.5–6.5s ×2 = 5–13s）。
-    // O1 去重后此断言应改为 1。
-    expect(pacing.calls).toBe(2);
-    for (const ms of pacing.waitedMs) {
-      expect(ms).toBeGreaterThanOrEqual(2500);
-      expect(ms).toBeLessThanOrEqual(6500);
-    }
+    // 回归守卫：续跑每步恰好 1 次节流（O1 前是 2 次 = 5–13s/步）。
+    // 若有人往 submitContinuation 接线或 loop 步内再塞一道，此断言红。
+    expect(pacing.calls).toBe(1);
+    expect(pacing.waitedMs).toHaveLength(1);
+    expect(pacing.waitedMs[0]).toBeGreaterThanOrEqual(2500);
+    expect(pacing.waitedMs[0]).toBeLessThanOrEqual(6500);
+  });
+});
+
+describe('O1 · 源码级守卫：chat-runtime-service 不再叠加节流', () => {
+  it('submitContinuation 接线内无 waitBetweenDeepSeekRequests 调用（节流归 resume-tool-loop）', () => {
+    const source = readFileSync(
+      join(process.cwd(), 'entrypoints/background/chat-runtime-service.ts'),
+      'utf8',
+    );
+    // import 可以留作类型/未来使用，但调用点必须为零 —— O1 前 :894 有一处
+    // await waitBetweenDeepSeekRequests(signal)，与 resume-tool-loop 步内叠加。
+    const callSites = source.match(/await\s+waitBetweenDeepSeekRequests\s*\(/g) ?? [];
+    expect(callSites).toEqual([]);
   });
 });

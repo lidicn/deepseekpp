@@ -17,7 +17,6 @@ import {
   type ResumeToolLoopDeps,
   type ResumeToolLoopPlan,
 } from '../../core/chat/resume-tool-loop';
-import { waitBetweenDeepSeekRequests } from '../../core/inline-agent/step-control';
 import type { ModelTurn, SubmitPromptInput } from '../../core/deepseek/automation-client-port';
 import { DeepSeekAuthError } from '../../core/deepseek/errors';
 import type { DeepSeekUploadedFile } from '../../core/deepseek/contracts';
@@ -890,9 +889,8 @@ export function createChatRuntimeService(
           return buildExecutionRecord(call, rawResult);
         },
         submitContinuation: async ({ parentMessageId, toolResults, signal }) => {
-          // 风控间隔：2.5–6.5s 随机，abort 时立即放行（loop 内另有一道）
-          await waitBetweenDeepSeekRequests(signal);
-
+          // O1 去重（第十批 E2）：节流只保留 resume-tool-loop.ts 步内那一道
+          // （贴近请求发送点、每步恰好一次）。此处再等会叠加成 5–13s/步。
           const headers = await dependencies.loadClientHeaders();
           if (!headers) throw new Error('resume_missing_client_headers');
           const modelType = await dependencies.getModelType();
