@@ -21,6 +21,8 @@ import type { ChatMessage } from '../types';
 const STORAGE_KEY = 'deepseek_pp_active_transcript';
 const THROTTLE_MS = 250;
 const THROTTLE_MIN_CHARS = 64;
+/** readTranscript() 读到的记录超过 STALE_AGE_MS 且非 streaming → 视为陈旧、清掉返回空 */
+const STALE_AGE_MS = 30 * 60 * 1000;
 
 export interface ActiveTranscriptChunk {
   seq: number;
@@ -118,9 +120,14 @@ function mergeChunks(
   chunks: ActiveTranscriptChunk[],
 ): ActiveTranscript {
   const base = existing ?? freshTranscript();
-  // 去重：seq 已存在则跳过（background + ChatPage 双写场景下的重复）
+  // 去重：seq 已存在（storage 里）或本批次已见过的 → 跳过
   const seen = new Set<number>(base.pendingChunks.map((c) => c.seq));
-  const deduped = chunks.filter((c) => !seen.has(c.seq));
+  const deduped: ActiveTranscriptChunk[] = [];
+  for (const c of chunks) {
+    if (seen.has(c.seq)) continue;
+    seen.add(c.seq);
+    deduped.push(c);
+  }
   // 合并后按 seq 排序
   const merged = [...base.pendingChunks, ...deduped].sort((a, b) => a.seq - b.seq);
   // 截断：pendingChunks 超过上限时丢最老的
@@ -179,10 +186,21 @@ async function readTranscriptRaw(): Promise<ActiveTranscript | null> {
 /**
  * ChatPage mount 时调用 — 读 storage 拿到完整 transcript。
  * 如果 storage 为空或不存在，返回 fresh transcript。
+ *
+ * 陈旧兜底（P2）：storage 记录 updatedAt 超 30 分钟且 status !== 'streaming'
+ * —— 视为陈旧残留（浏览器关闭前用户离开 + 后台 SW 没机会清理），顺手清掉、返回空。
+ * streaming 状态的记录永不清（意味着后台还有请求在跑）。
  */
 export async function readTranscript(): Promise<ActiveTranscript> {
   await serializeWrite(async () => {
     inMemory = await readTranscriptRaw();
+    if (inMemory !== null
+        && inMemory.status !== 'streaming'
+        && Date.now() - inMemory.updatedAt > STALE_AGE_MS) {
+      // 陈旧记录 → 清掉
+      await chrome.storage.session.remove(STORAGE_KEY);
+      inMemory = freshTranscript();
+    }
   });
   return inMemory ?? freshTranscript();
 }

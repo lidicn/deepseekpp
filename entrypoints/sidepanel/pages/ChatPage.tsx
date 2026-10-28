@@ -32,6 +32,7 @@ import {
   clearTranscript,
   getLastWriteError,
 } from '../../../core/chat/active-transcript';
+import { mergeRestoredTranscript } from '../../../core/transcript-merge';
 import AtFilePanel, { type AtAttachmentStatus } from '../components/AtFilePanel';
 import ChatMessage from '../components/ChatMessage';
 import StepTimeline from '../components/StepTimeline';
@@ -209,40 +210,12 @@ export default function ChatPage() {
         setTranscriptTruncated(Date.now());
       }
       if (transcript.messages.length === 0 && transcript.pendingChunks.length === 0) return;
-      // 恢复消息数组（先 copy，后面可能要追加 pendingChunks）
-      let restoredMessages: ChatMessageType[] = [...transcript.messages];
-      // 把 pendingChunks（background 在 ChatPage 不在时继续写的流尾部）
-      // 合并到最后一条 assistant message 的 text/reasoningText
-      if (transcript.pendingChunks.length > 0) {
-        let lastAssistantText = '';
-        let lastAssistantReasoning = '';
-        const existingLastAssistant = [...transcript.messages].reverse().find((m) => m.role === 'assistant');
-        if (existingLastAssistant) {
-          lastAssistantText = existingLastAssistant.text ?? '';
-          lastAssistantReasoning = existingLastAssistant.reasoningText ?? '';
-        }
-        // 按 seq 排序后依次 append
-        const sortedChunks = [...transcript.pendingChunks].sort((a, b) => a.seq - b.seq);
-        for (const c of sortedChunks) {
-          if (c.text) lastAssistantText += c.text;
-          if (c.reasoningText) lastAssistantReasoning += c.reasoningText;
-        }
-        // 更新或追加 assistant 消息
-        if (existingLastAssistant) {
-          const idx = restoredMessages.lastIndexOf(existingLastAssistant);
-          restoredMessages[idx] = {
-            ...restoredMessages[idx]!,
-            text: lastAssistantText,
-            reasoningText: lastAssistantReasoning || undefined,
-          };
-        } else {
-          restoredMessages.push({
-            role: 'assistant',
-            text: lastAssistantText,
-            reasoningText: lastAssistantReasoning || undefined,
-          });
-        }
-      }
+      // #P1 纯函数：恢复 messages + 合并 pendingChunks（排序/去重/追加到最后 assistant）
+      const { messages: restoredMessages } = mergeRestoredTranscript(
+        transcript.messages as ChatMessageType[],
+        transcript.pendingChunks,
+      );
+      if (restoredMessages.length === 0) return;
       setMessages(restoredMessages);
       messagesRef.current = restoredMessages;
       // 如果 transcript 还在 streaming 或 failed（用户未手动停），恢复 streaming 状态
