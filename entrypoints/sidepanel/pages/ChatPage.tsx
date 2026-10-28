@@ -26,6 +26,12 @@ import { DEEPSEEK_IMAGE_UPLOAD_MAX_BYTES } from '../../../core/deepseek/upload-l
 import { parseAtTrigger } from '../../../core/trusted-directory/at-panel';
 import { normalizeImageMimeType } from '../../../core/trusted-directory/scan';
 import type { ChatMessage as ChatMessageType, ModelType } from '../../../core/types';
+import {
+  readTranscript,
+  addUserMessage,
+  clearTranscript,
+  getLastWriteError,
+} from '../../../core/chat/active-transcript';
 import AtFilePanel, { type AtAttachmentStatus } from '../components/AtFilePanel';
 import ChatMessage from '../components/ChatMessage';
 import StepTimeline from '../components/StepTimeline';
@@ -116,6 +122,8 @@ export default function ChatPage() {
   const [atTrigger, setAtTrigger] = useState<{ active: boolean; query: string }>({ active: false, query: '' });
   const [msgSeq, setMsgSeq] = useState(0);
   const [toolRuns, setToolRuns] = useState<ToolRunRecord[]>([]);
+  // #99 方案 E：超配额截断提示，来自 transcript.truncatedAt
+  const [transcriptTruncated, setTranscriptTruncated] = useState<number | null>(null);
   const [budget, setBudget] = useState<BudgetState | null>(null);
   const { confirm, node: confirmNode } = useConfirm();
   const listRef = useRef<HTMLDivElement>(null);
@@ -185,6 +193,68 @@ export default function ChatPage() {
       reasoningText: `${message.reasoningText ?? ''}${reasoningText}`,
     }));
   }
+
+  // #99 方案 E：mount 时从 storage 恢复对话。
+  // 背景：App.tsx 条件渲染 ChatPage，切 tab 会 unmount → 所有 useState 清空 → 切回来白屏。
+  // active-transcript 作为 session 级 durable shadow，让我们能从 storage 续上。
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const transcript = await readTranscript();
+      if (cancelled) return;
+      // 恢复 truncatedAt 可见
+      if (transcript.truncatedAt) {
+        setTranscriptTruncated(transcript.truncatedAt);
+      } else if (getLastWriteError()) {
+        setTranscriptTruncated(Date.now());
+      }
+      if (transcript.messages.length === 0 && transcript.pendingChunks.length === 0) return;
+      // 恢复消息数组（先 copy，后面可能要追加 pendingChunks）
+      let restoredMessages: ChatMessageType[] = [...transcript.messages];
+      // 把 pendingChunks（background 在 ChatPage 不在时继续写的流尾部）
+      // 合并到最后一条 assistant message 的 text/reasoningText
+      if (transcript.pendingChunks.length > 0) {
+        let lastAssistantText = '';
+        let lastAssistantReasoning = '';
+        const existingLastAssistant = [...transcript.messages].reverse().find((m) => m.role === 'assistant');
+        if (existingLastAssistant) {
+          lastAssistantText = existingLastAssistant.text ?? '';
+          lastAssistantReasoning = existingLastAssistant.reasoningText ?? '';
+        }
+        // 按 seq 排序后依次 append
+        const sortedChunks = [...transcript.pendingChunks].sort((a, b) => a.seq - b.seq);
+        for (const c of sortedChunks) {
+          if (c.text) lastAssistantText += c.text;
+          if (c.reasoningText) lastAssistantReasoning += c.reasoningText;
+        }
+        // 更新或追加 assistant 消息
+        if (existingLastAssistant) {
+          const idx = restoredMessages.lastIndexOf(existingLastAssistant);
+          restoredMessages[idx] = {
+            ...restoredMessages[idx]!,
+            text: lastAssistantText,
+            reasoningText: lastAssistantReasoning || undefined,
+          };
+        } else {
+          restoredMessages.push({
+            role: 'assistant',
+            text: lastAssistantText,
+            reasoningText: lastAssistantReasoning || undefined,
+          });
+        }
+      }
+      setMessages(restoredMessages);
+      messagesRef.current = restoredMessages;
+      // 如果 transcript 还在 streaming 或 failed（用户未手动停），恢复 streaming 状态
+      const wasStreaming = transcript.status === 'streaming' || transcript.status === 'failed';
+      setIsStreaming(wasStreaming);
+      // 递增 msgSeq 强制重渲染消息列表（key 里有它）
+      if (restoredMessages.length > 0) {
+        setMsgSeq((n) => n + 1);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     const text = consumePendingText();
@@ -351,6 +421,10 @@ export default function ChatPage() {
     setIsStreaming(true);
     setError(null);
 
+    // #99 方案 E：写 user msg 到 transcript —— 这样即使 ChatPage 立刻被 unmount，
+    // 对话里至少保留了用户最后一条输入。background 负责后续 chunk 的 durable 写入。
+    void addUserMessage({ role: 'user', text });
+
     void chatController.submitPrompt({
       text,
       authStatus,
@@ -373,6 +447,9 @@ export default function ChatPage() {
       });
       if (!ok) return;
     }
+    // #99 方案 E：newSession 清 transcript —— 不再需要恢复旧对话
+    void clearTranscript();
+    setTranscriptTruncated(null);
     try {
       await chatController.newSession();
     } catch (err) {
@@ -758,6 +835,15 @@ export default function ChatPage() {
             </div>
             <div className="ds-empty-state-title">{t('sidepanel.chatPage.empty')}</div>
             <div className="ds-empty-state-description">{t('sidepanel.chatPage.emptyHelp')}</div>
+          </div>
+        )}
+
+        {/* #99 方案 E：storage 配额截断提示 — 内联文案（审计阶段不碰 i18n 资源） */}
+        {transcriptTruncated && (
+          <div className="ds-chat-truncated-banner" style={{ marginBottom: 8 }}>
+            <StatusMessage tone="warning">
+              {`⚠️ 对话内容过长，早期部分已省略（截断于 ${new Date(transcriptTruncated).toLocaleTimeString()}）`}
+            </StatusMessage>
           </div>
         )}
 

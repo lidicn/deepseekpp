@@ -213,6 +213,12 @@ import {
   saveOfficialApiChatConfig,
 } from '../core/chat/official-api-config';
 import {
+  appendChunk as appendTranscriptChunk,
+  setTerminalStatus as setTranscriptTerminalStatus,
+  markStopped as markTranscriptStopped,
+  peekTranscript as peekTranscriptSnapshot,
+} from '../core/chat/active-transcript';
+import {
   createAutomation,
   deleteAutomation,
   getAllAutomations,
@@ -1869,6 +1875,18 @@ function broadcastChatChunk(
   },
   excludeTabId?: number,
 ) {
+  // #99 方案 E：ChatPage unmount 后 transcript 仍要继续写 —— background 作为
+  // durable writer 确保流不丢。appendChunk 内部自带 fencing（stopped 时静默丢弃）。
+  appendTranscriptChunk({
+    text: chunk.text,
+    reasoningText: chunk.reasoningText,
+    done: chunk.done,
+    phase: chunk.phase,
+  });
+  // error + done 终态 → transcript 推进到 'failed'（mergeChunks 只认 done，不认 error）
+  if (chunk.done && chunk.error) {
+    void setTranscriptTerminalStatus('failed');
+  }
   deliverRuntimeMessageBestEffort(
     chrome.runtime.sendMessage({ type: 'CHAT_STREAM_CHUNK', ...chunk }),
     'chat_stream_notification_failed',
