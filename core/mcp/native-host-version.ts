@@ -31,24 +31,63 @@ function getFirstPartyHostPolicy(
   return null;
 }
 
-function readVersionSegments(value: unknown): number[] | null {
+interface ParsedVersion {
+  segments: number[];
+  /** semver pre-release 标识符；正式版为空数组 */
+  prerelease: string[];
+}
+
+/**
+ * 审计 #70：解析时**保留 pre-release 后缀**。
+ *
+ * 原实现只取 `^\d+(\.\d+)*`，把 `1.2.3-beta` 截成 `[1,2,3]` ⇒ 与 `1.2.3` 判等，
+ * 于是"测试版宿主要不要提示过期"这一判断永远为 false（semver 里 `1.2.3-beta < 1.2.3`）。
+ */
+function readVersion(value: unknown): ParsedVersion | null {
   if (typeof value !== 'string') return null;
-  const match = /^\d+(?:\.\d+)*/.exec(value.trim());
+  const match = /^(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?/.exec(value.trim());
   if (!match) return null;
-  return match[0].split('.').map((segment) => Number.parseInt(segment, 10));
+  return {
+    segments: match[1].split('.').map((segment) => Number.parseInt(segment, 10)),
+    prerelease: match[2] ? match[2].split('.') : [],
+  };
+}
+
+/** semver 11.4：正式版 > 预发布；同前缀逐段比较，数字段按数值、字母段按字典序，数字 < 字母 */
+function comparePrerelease(left: readonly string[], right: readonly string[]): number {
+  if (left.length === 0 && right.length === 0) return 0;
+  if (left.length === 0) return 1;
+  if (right.length === 0) return -1;
+  const width = Math.max(left.length, right.length);
+  for (let index = 0; index < width; index += 1) {
+    const leftPart = left[index];
+    const rightPart = right[index];
+    if (leftPart === undefined) return -1;
+    if (rightPart === undefined) return 1;
+    const leftNumeric = /^\d+$/.test(leftPart);
+    const rightNumeric = /^\d+$/.test(rightPart);
+    if (leftNumeric && rightNumeric) {
+      const delta = Number(leftPart) - Number(rightPart);
+      if (delta !== 0) return delta < 0 ? -1 : 1;
+      continue;
+    }
+    if (leftNumeric !== rightNumeric) return leftNumeric ? -1 : 1;
+    if (leftPart !== rightPart) return leftPart < rightPart ? -1 : 1;
+  }
+  return 0;
 }
 
 export function isOlderVersion(actual: unknown, expected: unknown): boolean {
-  const left = readVersionSegments(actual);
-  const right = readVersionSegments(expected);
+  const left = readVersion(actual);
+  const right = readVersion(expected);
   if (!left || !right) return false;
-  const width = Math.max(left.length, right.length);
+  const width = Math.max(left.segments.length, right.segments.length);
   for (let index = 0; index < width; index += 1) {
-    const leftSegment = left[index] ?? 0;
-    const rightSegment = right[index] ?? 0;
+    const leftSegment = left.segments[index] ?? 0;
+    const rightSegment = right.segments[index] ?? 0;
     if (leftSegment !== rightSegment) return leftSegment < rightSegment;
   }
-  return false;
+  return comparePrerelease(left.prerelease, right.prerelease) < 0;
 }
 
 // Envelope v1 is shared by every host version, so an outdated host answers all
@@ -103,16 +142,17 @@ export function nativeHostVersionHint(
  * bidirectional version mismatch detection.
  */
 export function isNewerVersion(actual: unknown, expected: unknown): boolean {
-  const left = readVersionSegments(actual);
-  const right = readVersionSegments(expected);
+  const left = readVersion(actual);
+  const right = readVersion(expected);
   if (!left || !right) return false;
-  const width = Math.max(left.length, right.length);
+  const width = Math.max(left.segments.length, right.segments.length);
   for (let index = 0; index < width; index += 1) {
-    const leftSegment = left[index] ?? 0;
-    const rightSegment = right[index] ?? 0;
+    const leftSegment = left.segments[index] ?? 0;
+    const rightSegment = right.segments[index] ?? 0;
     if (leftSegment !== rightSegment) return leftSegment > rightSegment;
   }
-  return false;
+  // 审计 #70：数字段相同再比 pre-release（与 isOlderVersion 同一口径，保证双向判断自洽）
+  return comparePrerelease(left.prerelease, right.prerelease) > 0;
 }
 
 export function parseNativeHostOutdatedNote(
