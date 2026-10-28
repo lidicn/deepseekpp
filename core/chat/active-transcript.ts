@@ -96,7 +96,8 @@ export async function flushNow(): Promise<void> {
       const existing = await readTranscriptRaw();
       const merged = mergeChunks(existing, chunks);
       merged.updatedAt = Date.now();
-      await chrome.storage.session.set({ [STORAGE_KEY]: merged });
+      const session = safeSession();
+      if (session) await session.set({ [STORAGE_KEY]: merged });
       inMemory = merged;
       lastWriteError = null;
     } catch (err) {
@@ -162,8 +163,20 @@ function freshTranscript(): ActiveTranscript {
   };
 }
 
+/**
+ * 所有 storage 操作的安全入口 —— 测试环境（无 chrome stub）或扩展上下文失效
+ * 时返回 null，让上层返回 fresh transcript / 静默降级；任何"storage 不可用"
+ * 不许冒泡成未处理 rejection。
+ */
+function safeSession(): typeof chrome.storage.session | null {
+  const c = (globalThis as unknown as { chrome?: { storage?: { session?: typeof chrome.storage.session } } }).chrome;
+  return c?.storage?.session ?? null;
+}
+
 async function readTranscriptRaw(): Promise<ActiveTranscript | null> {
-  const data = await chrome.storage.session.get(STORAGE_KEY) as Record<string, unknown>;
+  const session = safeSession();
+  if (!session) return null;
+  const data = await session.get(STORAGE_KEY) as Record<string, unknown>;
   const raw = data[STORAGE_KEY];
   if (!raw || typeof raw !== 'object') return null;
   const t = raw as Partial<ActiveTranscript>;
@@ -198,7 +211,8 @@ export async function readTranscript(): Promise<ActiveTranscript> {
         && inMemory.status !== 'streaming'
         && Date.now() - inMemory.updatedAt > STALE_AGE_MS) {
       // 陈旧记录 → 清掉
-      await chrome.storage.session.remove(STORAGE_KEY);
+      const session = safeSession();
+      if (session) await session.remove(STORAGE_KEY);
       inMemory = freshTranscript();
     }
   });
@@ -228,7 +242,8 @@ export async function addUserMessage(
       truncatedAt: null,
       updatedAt: Date.now(),
     };
-    await chrome.storage.session.set({ [STORAGE_KEY]: next });
+    const session = safeSession();
+    if (session) await session.set({ [STORAGE_KEY]: next });
     inMemory = next;
   });
 }
@@ -292,7 +307,8 @@ export async function markStopped(): Promise<void> {
       truncatedAt: null,
       updatedAt: Date.now(),
     };
-    await chrome.storage.session.set({ [STORAGE_KEY]: next });
+    const session = safeSession();
+    if (session) await session.set({ [STORAGE_KEY]: next });
     inMemory = next;
   });
 }
@@ -308,7 +324,8 @@ export async function setTerminalStatus(status: 'done' | 'failed'): Promise<void
       status,
       updatedAt: Date.now(),
     };
-    await chrome.storage.session.set({ [STORAGE_KEY]: next });
+    const session = safeSession();
+    if (session) await session.set({ [STORAGE_KEY]: next });
     inMemory = next;
   });
 }
@@ -323,7 +340,8 @@ export async function clearTranscript(): Promise<void> {
     throttleTimer = null;
   }
   await serializeWrite(async () => {
-    await chrome.storage.session.remove(STORAGE_KEY);
+    const session = safeSession();
+    if (session) await session.remove(STORAGE_KEY);
     inMemory = freshTranscript();
   });
 }
