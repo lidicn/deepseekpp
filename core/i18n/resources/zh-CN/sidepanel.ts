@@ -842,6 +842,7 @@ export const sidepanel = {
     stopListening: '停止收听',
     mic: '麦克风',
     stop: '停止',
+    truncated: '⚠️ 对话内容过长，早期部分已省略（截断于 {time}）',
   },
   toolsPage: {
     diagnosticsDefaultQuery: '橘鸦 up主',

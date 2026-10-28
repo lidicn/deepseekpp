@@ -842,6 +842,7 @@ export const sidepanel = {
     stopListening: 'Stop listening',
     mic: 'Mic',
     stop: 'Stop',
+    truncated: '⚠️ Conversation too long — the early part was omitted (truncated at {time})',
   },
   toolsPage: {
     diagnosticsDefaultQuery: 'DeepSeek latest news',

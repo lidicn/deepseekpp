@@ -811,11 +811,11 @@ export default function ChatPage() {
           </div>
         )}
 
-        {/* #99 方案 E：storage 配额截断提示 — 内联文案（审计阶段不碰 i18n 资源） */}
+        {/* #99 方案 E：storage 配额截断提示 */}
         {transcriptTruncated && (
           <div className="ds-chat-truncated-banner" style={{ marginBottom: 8 }}>
             <StatusMessage tone="warning">
-              {`⚠️ 对话内容过长，早期部分已省略（截断于 ${new Date(transcriptTruncated).toLocaleTimeString()}）`}
+              {t('sidepanel.chatPage.truncated', { time: new Date(transcriptTruncated).toLocaleTimeString() })}
             </StatusMessage>
           </div>
         )}

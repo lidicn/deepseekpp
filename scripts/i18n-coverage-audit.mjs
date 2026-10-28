@@ -88,11 +88,6 @@ const lineAllowlist = [
     reason: '模型可见文案，本地化待排期（路线图无对应版本槽位）；window-continuity failure detail returned inside the local_file_read tool result body (audit #67); follow-up owner dpp-worker, re-check 2026-11-11; same ruling as the neighbouring entries: DCD decisions/20261004-DPP审计收口四件-裁定.md §二 Q5',
   },
   {
-    path: 'entrypoints/sidepanel/pages/ChatPage.tsx',
-    includes: '对话内容过长，早期部分已省略',
-    reason: 'user-visible transcript-truncation banner (#99 方案 E); TODO move to i18n keys (chat.transcript.truncated) with en+zh-CN resources; follow-up owner dpp-worker (Trae seat), re-check 2026-11-04',
-  },
-  {
     path: 'core/i18n/resources/en/locale.ts',
     includes: "zhCN: '简体中文'",
     reason: 'language selector uses the native name for Simplified Chinese',
