@@ -335,14 +335,16 @@ describe('E2 · 唤醒续跑路径的节流次数', () => {
 });
 
 describe('O1 · 源码级守卫：chat-runtime-service 不再叠加节流', () => {
-  it('submitContinuation 接线内无 waitBetweenDeepSeekRequests 调用（节流归 resume-tool-loop）', () => {
+  it('submitContinuation 接线内无裸/keyed 节流调用（节流归 resume-tool-loop）', () => {
     const source = readFileSync(
       join(process.cwd(), 'entrypoints/background/chat-runtime-service.ts'),
       'utf8',
     );
-    // import 可以留作类型/未来使用，但调用点必须为零 —— O1 前 :894 有一处
-    // await waitBetweenDeepSeekRequests(signal)，与 resume-tool-loop 步内叠加。
-    const callSites = source.match(/await\s+waitBetweenDeepSeekRequests\s*\(/g) ?? [];
-    expect(callSites).toEqual([]);
+    // O1 前 :894 有一处 await waitBetweenDeepSeekRequests(signal)。
+    // P1-5 后 keyed 版也不许出现在此文件——续跑步内已 keyed，deps 再等必叠加。
+    const bare = source.match(/await\s+waitBetweenDeepSeekRequests\s*\(/g) ?? [];
+    const keyed = source.match(/await\s+waitBetweenDeepSeekRequestsKeyed\s*\(/g) ?? [];
+    expect(bare).toEqual([]);
+    expect(keyed).toEqual([]);
   });
 });
