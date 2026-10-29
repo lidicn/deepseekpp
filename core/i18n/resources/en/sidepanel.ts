@@ -789,6 +789,9 @@ export const sidepanel = {
   chatPage: {
     authRequired: 'Configure a DeepSeek API Key, or sign in at chat.deepseek.com first',
     authHint: 'Without an API Key, sidepanel chat depends on the DeepSeek webpage login session',
+    authChecking: 'Rechecking webpage login…',
+    authRecheck: 'Recheck',
+    authRecheckHint: 'If DeepSeek is already signed in in a tab, refresh that page, then click Recheck.',
     title: 'Chat',
     description: 'Start tasks from the side panel with memory, presets, Skills, and enabled tools available.',
     apiDescription: 'Official API mode with model and thinking controls.',

@@ -288,7 +288,7 @@ import {
 import { createDeepSeekRuntimeHandlers } from './background/deepseek-runtime-handlers';
 import { createBackgroundRuntimeHandlers } from './background/background-runtime-handlers';
 import { refreshRuntimeMessageContextFromBrowserTab } from './background/runtime-message-context';
-import { refreshDeepSeekAuthFromTabs } from './background/deepseek-auth-refresh';
+import { refreshDeepSeekAuthFromTabs, type DeepSeekAuthRefreshOutcome } from './background/deepseek-auth-refresh';
 import { createSyncRuntimeService } from './background/sync-runtime-service';
 import {
   createTranslator,
@@ -1338,11 +1338,29 @@ async function loadOrRefreshClientHeaders(preferredTabId?: number): Promise<Reco
   const cached = await loadClientHeadersFromStorage();
   if (cached) return cached;
 
-  await refreshClientHeadersFromDeepSeekTabs(preferredTabId);
-  return loadClientHeadersFromStorage();
+  // P0-1: one-shot refresh fails when tabs.query is empty or the content
+  // script is not ready ("Receiving end does not exist"). Retry briefly so
+  // a freshly opened sidepanel can still attach to a live DeepSeek tab.
+  const delaysMs = [700, 700, 700];
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await refreshClientHeadersFromDeepSeekTabs(preferredTabId);
+    } catch {
+      // Unexpected delivery errors are already reported inside refresh;
+      // keep probing until the delay budget is spent.
+    }
+    const headers = await loadClientHeadersFromStorage();
+    if (headers) return headers;
+    if (attempt >= delaysMs.length) return null;
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, delaysMs[attempt]);
+    });
+  }
 }
 
-async function refreshClientHeadersFromDeepSeekTabs(preferredTabId?: number): Promise<boolean> {
+async function refreshClientHeadersFromDeepSeekTabs(
+  preferredTabId?: number,
+): Promise<DeepSeekAuthRefreshOutcome> {
   const tabs = await getDeepSeekTabsForAuthRefresh(preferredTabId);
   return refreshDeepSeekAuthFromTabs(tabs, {
     sendMessage: (tabId) => chrome.tabs.sendMessage(tabId, REFRESH_AUTH_MESSAGE),

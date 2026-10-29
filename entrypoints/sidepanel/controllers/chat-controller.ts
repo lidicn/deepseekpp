@@ -10,6 +10,7 @@ import {
   normalizeVoiceSettings,
   type VoiceSettings,
 } from '../../../core/voice/settings';
+import { isChatAuthed, loadAuthStatusWithRetry } from '../../../core/chat/auth-retry';
 import {
   sidepanelRuntimeClient,
   type SidepanelRuntimeClient,
@@ -40,6 +41,8 @@ export interface ChatProviderCapabilities {
 
 export interface ChatController {
   load(): Promise<ChatRuntimeSnapshot>;
+  /** P0-1: re-probe auth after the user clicks「重新检测」(no full reload). */
+  refreshAuthStatus(): Promise<ChatAuthStatus>;
   saveConfig(config: OfficialApiChatConfig): Promise<OfficialApiChatConfig>;
   submitPrompt(options: {
     text: string;
@@ -63,8 +66,10 @@ export function createChatController(
   const controller: ChatController = {
     async load() {
       const loadErrors: unknown[] = [];
-      const [authStatus, chatConfig, webModelType, voiceSettings] = await Promise.all([
-        loadOrReport(
+      // P0-1: one-shot probe fails when the DeepSeek content script is not
+      // ready; retry with backoff before showing the permanent "not logged in" UI.
+      const authStatus = await loadAuthStatusWithRetry(
+        () => loadOrReport(
           runtimeClient.request(
             { type: 'GET_AUTH_STATUS' },
             { decode: normalizeChatAuthStatus },
@@ -72,6 +77,9 @@ export function createChatController(
           { available: false, provider: null, hasApiKey: false, hasToken: false },
           loadErrors,
         ),
+        isChatAuthed,
+      );
+      const [chatConfig, webModelType, voiceSettings] = await Promise.all([
         loadOrReport(
           runtimeClient.request(
             { type: 'GET_OFFICIAL_API_CHAT_CONFIG' },
@@ -98,6 +106,16 @@ export function createChatController(
         ),
       ]);
       return { authStatus, chatConfig, webModelType, voiceSettings, loadErrors };
+    },
+    async refreshAuthStatus() {
+      return loadOrReport(
+        runtimeClient.request(
+          { type: 'GET_AUTH_STATUS' },
+          { decode: normalizeChatAuthStatus },
+        ),
+        { available: false, provider: null, hasApiKey: false, hasToken: false },
+        [],
+      );
     },
     saveConfig: (config) => runtimeClient.request(
       { type: 'SAVE_OFFICIAL_API_CHAT_CONFIG', payload: config },

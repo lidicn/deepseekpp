@@ -11,7 +11,7 @@ describe('DeepSeek auth refresh tab delivery', () => {
     await expect(refreshDeepSeekAuthFromTabs(
       [{ id: 11 }, { id: 12 }],
       { sendMessage, reportError },
-    )).resolves.toBe(true);
+    )).resolves.toEqual({ ok: true });
 
     expect(sendMessage.mock.calls.map(([tabId]) => tabId)).toEqual([11, 12]);
     expect(reportError).not.toHaveBeenCalled();
@@ -50,8 +50,24 @@ describe('DeepSeek auth refresh tab delivery', () => {
           .mockResolvedValueOnce({ hasToken: true }),
         reportError,
       },
-    )).resolves.toBe(true);
+    )).resolves.toEqual({ ok: true });
 
     expect(reportError).toHaveBeenCalledWith('auth_refresh_tab_delivery_failed', unexpected);
+  });
+
+  it('P0-1: reports no_tabs when there are no DeepSeek tabs', async () => {
+    const sendMessage = vi.fn();
+    await expect(refreshDeepSeekAuthFromTabs([], { sendMessage, reportError: vi.fn() }))
+      .resolves.toEqual({ ok: false, reason: 'no_tabs' });
+    expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('P0-1: reports no_connection when tabs exist but content script is not ready', async () => {
+    const sendMessage = vi.fn()
+      .mockRejectedValue(new Error('Could not establish connection. Receiving end does not exist.'));
+    await expect(refreshDeepSeekAuthFromTabs(
+      [{ id: 41 }],
+      { sendMessage, reportError: vi.fn() },
+    )).resolves.toEqual({ ok: false, reason: 'no_connection' });
   });
 });

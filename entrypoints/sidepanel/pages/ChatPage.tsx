@@ -113,6 +113,7 @@ export default function ChatPage() {
   const [inputText, setInputText] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [authStatus, setAuthStatus] = useState<ChatAuthStatus | null>(null);
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [chatConfig, setChatConfig] = useState<OfficialApiChatConfig>(DEFAULT_OFFICIAL_API_CHAT_CONFIG);
   const [webModelType, setWebModelType] = useState<ModelType>(null);
   const [error, setError] = useState<string | null>(null);
@@ -259,6 +260,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     const generation = requestFence.current.begin();
+    setIsAuthChecking(true);
     void chatController.load()
       .then((snapshot) => {
         if (!requestFence.current.isCurrent(generation)) return;
@@ -274,8 +276,33 @@ export default function ChatPage() {
         if (requestFence.current.isCurrent(generation)) {
           setError(getRuntimeErrorMessage(loadError));
         }
+      })
+      .finally(() => {
+        if (requestFence.current.isCurrent(generation)) {
+          setIsAuthChecking(false);
+        }
       });
     return () => requestFence.current.invalidate();
+  }, []);
+
+  const recheckAuth = useCallback(() => {
+    const generation = requestFence.current.begin();
+    setIsAuthChecking(true);
+    void chatController.refreshAuthStatus()
+      .then((nextAuthStatus) => {
+        if (!requestFence.current.isCurrent(generation)) return;
+        setAuthStatus(nextAuthStatus);
+      })
+      .catch((recheckError) => {
+        if (requestFence.current.isCurrent(generation)) {
+          setError(getRuntimeErrorMessage(recheckError));
+        }
+      })
+      .finally(() => {
+        if (requestFence.current.isCurrent(generation)) {
+          setIsAuthChecking(false);
+        }
+      });
   }, []);
 
   useEffect(() => {
@@ -667,15 +694,36 @@ export default function ChatPage() {
     setAtTrigger(parseAtTrigger(value));
   };
 
+  if (isAuthChecking) {
+    return (
+      <div className="ds-chat-auth-empty" data-testid="chat-auth-checking">
+        <p className="text-sm" style={{ color: 'var(--ds-text-secondary)' }}>
+          {t('sidepanel.chatPage.authChecking')}
+        </p>
+      </div>
+    );
+  }
+
   if (authStatus?.available === false) {
     return (
-      <div className="ds-chat-auth-empty">
+      <div className="ds-chat-auth-empty" data-testid="chat-auth-empty">
         <p className="text-sm mb-3" style={{ color: 'var(--ds-text-secondary)' }}>
           {t('sidepanel.chatPage.authRequired')}
         </p>
-        <p className="text-xs" style={{ color: 'var(--ds-text-tertiary)' }}>
+        <p className="text-xs mb-2" style={{ color: 'var(--ds-text-tertiary)' }}>
           {t('sidepanel.chatPage.authHint')}
         </p>
+        <p className="text-xs mb-4" style={{ color: 'var(--ds-text-tertiary)' }}>
+          {t('sidepanel.chatPage.authRecheckHint')}
+        </p>
+        <button
+          type="button"
+          onClick={recheckAuth}
+          className="ds-chat-text-button"
+          data-testid="chat-auth-recheck"
+        >
+          {t('sidepanel.chatPage.authRecheck')}
+        </button>
       </div>
     );
   }

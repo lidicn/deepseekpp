@@ -789,6 +789,9 @@ export const sidepanel = {
   chatPage: {
     authRequired: '请配置 DeepSeek API Key，或先登录 chat.deepseek.com',
     authHint: '未配置 Key 时，侧边栏对话依赖 DeepSeek 网页登录态',
+    authChecking: '正在重新检测网页登录…',
+    authRecheck: '重新检测',
+    authRecheckHint: '若已在 DeepSeek 网页登录，请刷新该页面后点击「重新检测」。',
     title: '对话',
     description: '直接在侧边栏发起任务，可复用记忆、预设、Skill 和已启用工具。',
     apiDescription: '使用官方 API，可选择模型和思考强度。',
