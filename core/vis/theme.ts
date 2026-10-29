@@ -127,6 +127,42 @@ ${scope} .dppvis-img--placeholder {
     hsl(calc(var(--dppvis-hue) + 48) 38% 12%)
   );
 }
+${scope} .dppvis-skeleton {
+  display: flex;
+  gap: calc(var(--dppvis-gap) + 4px);
+  align-items: flex-start;
+}
+${scope} .dppvis-skeleton__poster {
+  flex: 0 0 132px;
+  width: 132px;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--dppvis-radius);
+  background: linear-gradient(100deg, rgba(127,127,127,.14) 20%, rgba(127,127,127,.24) 40%, rgba(127,127,127,.14) 60%);
+  background-size: 220% 100%;
+  animation: dppvis-shimmer 1.5s ease-in-out infinite;
+}
+${scope} .dppvis-skeleton__col {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+}
+${scope} .dppvis-skeleton__bar {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(100deg, rgba(127,127,127,.14) 20%, rgba(127,127,127,.24) 40%, rgba(127,127,127,.14) 60%);
+  background-size: 220% 100%;
+  animation: dppvis-shimmer 1.5s ease-in-out infinite;
+}
+${scope} .dppvis-skeleton__bar--title { height: 18px; width: 62%; }
+${scope} .dppvis-skeleton__bar--line { width: 100%; }
+${scope} .dppvis-skeleton__bar--short { width: 44%; }
+@keyframes dppvis-shimmer {
+  from { background-position: 140% 0; }
+  to { background-position: -40% 0; }
+}
 ${scope} .dppvis-img__alt {
   padding: 8px 12px;
   color: rgba(255, 255, 255, 0.92);

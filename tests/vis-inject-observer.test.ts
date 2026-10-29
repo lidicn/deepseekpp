@@ -50,18 +50,20 @@ describe('观察者收窄', () => {
     injector.start();
 
     const turn = assistantWith('{"v":1,"root":{"type":"Text","text":"一半');
+    // 必须在骨架替换 <pre> **之前**抓住 code 引用：替换后 code 随 pre 一起脱离文档
+    const codeEl = turn.querySelector('code');
     document.body.appendChild(turn);
     await wait(120);
-    // 未闭合：不渲染，且被标记 pending
-    expect(document.querySelectorAll('.dppvis-host').length).toBe(0);
-    expect(turn.querySelector('code')?.getAttribute('data-dppvis-state')).toBe('pending');
+    // 未闭合：不出真卡，先摆骨架，并标记 pending
+    expect(document.querySelectorAll('.dppvis-host--pending').length).toBe(1);
+    expect(codeEl?.getAttribute('data-dppvis-state')).toBe('pending');
 
     // 模拟流式补完（只改文本，不动结构）
-    const code = turn.querySelector('code');
-    if (code) code.textContent = GOOD_DOC;
+    if (codeEl) codeEl.textContent = GOOD_DOC;
     await wait(160);
 
-    expect(document.querySelectorAll('.dppvis-host').length).toBe(1);
+    expect(document.querySelectorAll('.dppvis-host:not(.dppvis-host--pending)').length).toBe(1);
+    expect(document.querySelectorAll('.dppvis-host--pending').length).toBe(0);
     injector.dispose();
   });
 

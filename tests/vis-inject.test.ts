@@ -101,11 +101,15 @@ describe('S7 注入层', () => {
     injector.dispose();
   });
 
-  it('★ 流式未闭合：不处理，等下一次扫描', () => {
+  it('★ 流式未闭合：不出真卡，先摆骨架（三态改造后语义）', () => {
     mountAssistant(fence('{"v":1,"root":{"type":"Text","text":"写到一半'));
     const injector = createVisInjector({ enabled: true, document });
     expect(injector.scan()).toBe(0);
-    expect(document.querySelector('pre')).not.toBeNull();
+    // 三态：未闭合 ⇒ 骨架占位，裸 JSON 不再展示
+    expect(document.querySelectorAll('.dppvis-host--pending').length).toBe(1);
+    expect(injector.pendingCount()).toBe(1);
+    // <pre> 仍在（只是隐藏），保证后续流式更新仍能被观察到
+    expect((document.querySelector('pre') as HTMLElement | null)?.style.display).toBe('none');
     injector.dispose();
   });
 
@@ -133,8 +137,9 @@ describe('S7 注入层', () => {
     injector.dispose();
   });
 
-  it('负控：非法 JSON 保留原文并标记，不抛异常', () => {
-    mountAssistant(fence('{not json'));
+  it('负控：非法 JSON（已闭合）保留原文并标记，不抛异常', () => {
+    // 必须以 } 结尾才会进入 JSON.parse 分支 —— 否则会被当成"流式中"去摆骨架
+    mountAssistant(fence('{not json}'));
     const injector = createVisInjector({ enabled: true, document });
     expect(() => injector.scan()).not.toThrow();
     expect(document.querySelector('pre')).not.toBeNull();

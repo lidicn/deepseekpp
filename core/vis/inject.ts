@@ -1,19 +1,17 @@
 /**
  * S7 注入层：把模型输出里的 `vis-json` 代码块渲染成卡片。
  *
- * 设计约束（每条都对应一个已知失败模式）：
- * 1. **只碰助手回合**：锚在 DeepSeek 的语义类 `.ds-markdown` 内，不劫持用户消息里的 JSON。
- * 2. **判据双通道**：`language-vis-json` 类名**或**内容嗅探（`{"v":1`），避免站点改 fence 实现就整体失效。
- * 3. **未闭合不处理**：流式内容以 `}` 结尾才算完整；否则保持原样（不裸奔、不误判）。
- * 4. **失败一律保留原文**：`RenderOutcome.status === 'failed'` ⇒ 不动 DOM（绝不空白卡片）。
- * 5. **样式隔离**：卡片放进 Shadow DOM，CSS 由 `buildVisCss({ scope: ':host' })` 生成，不污染宿主页面。
- * 6. **幂等 + 可回收**：同一节点重复扫描只渲染一次；节点被框架移除后清理内部状态。
- * 7. **默认关闭**：由调用方传 `enabled`，关闭时 `start()` 不挂任何监听。
- * 8. **监听面收窄**（QA-15 建议）：body 上只监听 `childList`（**不**监听 `characterData`），
- *    仅用于发现**新的**助手回合；真正的内容更新只对已发现的 `.ds-markdown` 根做深度监听。
- *    这样流式期不会因为整页任意文本变化而反复扫描。真正拦住误触发的是 `isRelevant` 谓词
- *    （只放行"新增节点含 .ds-markdown"与"卡片被移除"）；observer 选项收窄的收益是
- *    "少把 mutation 记录递进 JS"，属成本优化，单测不可观测。
+ * 三态（流式体验的关键）：
+ *   · **pending**：围栏还没闭合 ⇒ 先把裸 JSON 换成**骨架卡**（原来用户全程盯着半截 JSON）
+ *   · **complete**：闭合且渲染成功 ⇒ 换成真卡
+ *   · **failed**：版本不符/结构性失败 ⇒ **还原原始代码块**（宁可给原文，也不给空白卡）
+ *
+ * 其余约束（每条对应一个已知失败模式）：
+ * 1. 只碰助手回合（锚 `.ds-markdown`）；判据双通道（类名或内容嗅探）
+ * 2. 样式隔离：Shadow DOM + buildVisCss({scope:':host'})
+ * 3. 幂等 + 可回收；`enabled:false` 时 start() 空操作
+ * 4. 监听面收窄：body 只盯 childList 发现新回合，内容更新只对已发现的回合挂深度监听；
+ *    真正拦住误触发的是 `isRelevant` 谓词（选项收窄是成本优化，单测不可观测）
  */
 
 import type { ImageResolver } from './image-resolver';
@@ -25,31 +23,30 @@ const VIS_LANGUAGE_CLASS = 'vis-json';
 const ASSISTANT_ROOT_SELECTOR = '.ds-markdown';
 const CODE_SELECTOR = 'pre > code';
 const HOST_CLASS = 'dppvis-host';
+const PENDING_CLASS = 'dppvis-host--pending';
 const STATE_ATTR = 'data-dppvis-state';
 const SNIFF = /^\s*\{\s*"v"\s*:\s*1\b/;
 
 export interface VisInjectorOptions {
-  /** 必须显式开启；关闭时 start() 是空操作。 */
   enabled: boolean;
-  /** 注入用的 Document（测试可传 jsdom 的 document）。 */
   document: Document;
   imageResolver?: ImageResolver;
   theme?: 'light' | 'dark';
-  /** 扫描去抖窗口，默认 250ms（QA-15 建议 200–300ms）。 */
+  /** 扫描去抖窗口，默认 250ms。 */
   debounceMs?: number;
-  /** 只在这些容器内找（默认 document.body）。 */
+  /** 流式期是否给骨架卡（默认 true）。关掉则保持原始代码块直到闭合。 */
+  showPendingSkeleton?: boolean;
   roots?: ParentNode[];
-  /** 每次处理的结果回调（便于埋点/诊断）。 */
   onOutcome?: (outcome: RenderOutcome, code: Element) => void;
 }
 
 export interface VisInjector {
   start(): void;
   stop(): void;
-  /** 立即扫描一次，返回本次新渲染的卡片数（测试与手动触发用）。 */
   scan(): number;
-  /** 当前已挂载的卡片数。 */
   mountedCount(): number;
+  /** 当前处于 pending（流式中）的块数。 */
+  pendingCount(): number;
   dispose(): void;
 }
 
@@ -59,6 +56,13 @@ interface Mounted {
   source: string;
 }
 
+interface Pending {
+  host: HTMLElement;
+  /** 被替换下来的原始 <pre>：失败时要还原回去。 */
+  pre: Element;
+  code: Element;
+}
+
 export function createVisInjector(options: VisInjectorOptions): VisInjector {
   const {
     enabled,
@@ -66,11 +70,12 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
     imageResolver,
     theme = 'light',
     debounceMs = 250,
+    showPendingSkeleton = true,
     onOutcome,
   } = options;
 
   const mounted = new Map<Element, Mounted>();
-  /** 已挂深度监听的助手回合根（避免重复 observe）。 */
+  const pending = new Map<Element, Pending>();
   const watchedTurns = new Set<Element>();
   let shallowObserver: MutationObserver | null = null;
   let deepObserver: MutationObserver | null = null;
@@ -90,7 +95,8 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
       stop() {},
       scan() { return 0; },
       mountedCount() { return 0; },
-      dispose() { mounted.clear(); },
+      pendingCount() { return 0; },
+      dispose() { mounted.clear(); pending.clear(); },
     };
   }
 
@@ -108,52 +114,137 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
     return code.closest(ASSISTANT_ROOT_SELECTOR) !== null;
   }
 
-  function buildHost(html: string): HTMLElement {
+  function buildCardHost(html: string): HTMLElement {
     const host = doc.createElement('div');
     host.className = HOST_CLASS;
-    // 用 open 而非 closed：页面脚本本就能看到这段内容，open 便于排障与测试。
     const shadow = host.attachShadow({ mode: 'open' });
     const style = doc.createElement('style');
     style.textContent = buildVisCss({ scope: ':host' });
     shadow.appendChild(style);
     if (theme === 'dark') host.setAttribute('data-dppvis-theme', 'dark');
     const layer = doc.createElement('div');
-    // 输入只来自 renderToHtml 的输出（常量模板 + escapeHtml 结果），见 S4 不变量测试
     layer.innerHTML = html;
     while (layer.firstChild) shadow.appendChild(layer.firstChild);
     return host;
   }
 
+  /** 骨架卡：与真卡同尺寸感（左图右文），只是内容是占位条。 */
+  function buildPendingHost(): HTMLElement {
+    const host = doc.createElement('div');
+    host.className = `${HOST_CLASS} ${PENDING_CLASS}`;
+    host.setAttribute('role', 'status');
+    // 英文标签是临时措施：正式版应走 i18n（新增 vis.card.generating 的 en/zh-CN 键对）\n    host.setAttribute('aria-label', 'Generating card');
+    const shadow = host.attachShadow({ mode: 'open' });
+    const style = doc.createElement('style');
+    style.textContent = buildVisCss({ scope: ':host' });
+    shadow.appendChild(style);
+    if (theme === 'dark') host.setAttribute('data-dppvis-theme', 'dark');
+    const box = doc.createElement('div');
+    box.className = 'dppvis-skeleton';
+    box.innerHTML =
+      '<div class="dppvis-skeleton__poster"></div>' +
+      '<div class="dppvis-skeleton__col">' +
+      '<div class="dppvis-skeleton__bar dppvis-skeleton__bar--title"></div>' +
+      '<div class="dppvis-skeleton__bar dppvis-skeleton__bar--line"></div>' +
+      '<div class="dppvis-skeleton__bar dppvis-skeleton__bar--short"></div>' +
+      '</div>';
+    shadow.appendChild(box);
+    return host;
+  }
+
+  /** 还原原始代码块（失败路径）：删骨架 + 把 <pre> 显示回来。 */
+  function restoreOriginal(code: Element, pre: Element, host: HTMLElement): void {
+    host.remove();
+    (pre as HTMLElement).style.display = '';
+    pending.delete(code);
+    code.setAttribute(STATE_ATTR, 'failed-restored');
+  }
+
   function unmountStale(): void {
     for (const [code, entry] of mounted) {
-      // 注意：渲染后 code 已随 <pre> 被替换而脱离文档，**不能**拿 code.isConnected 判陈旧，
-      // 否则刚挂上的卡片会被自己清掉。只认 host 是否还在 DOM 里。
       if (entry.host.isConnected) continue;
       entry.host.remove();
       mounted.delete(code);
     }
+    for (const [code, entry] of pending) {
+      if (entry.host.isConnected) continue;
+      entry.host.remove();
+      pending.delete(code);
+    }
+  }
+
+  /**
+   * 流式中：未闭合就先摆骨架。
+   *
+   * **关键**：这里是「隐藏 <pre> + 骨架插在其后」，而不是把 <pre> 换掉。
+   * 换掉会把正在流式更新的 <code> 从 DOM 里摘下来 ⇒ 之后的文本更新再也观察不到，
+   * 骨架会永远停在那里（这一点是被测试逼出来的，不是设想）。
+   */
+  function markPending(code: Element, pre: Element): void {
+    code.setAttribute(STATE_ATTR, 'pending');
+    if (!showPendingSkeleton) return;
+    const existing = pending.get(code);
+    if (existing && existing.host.isConnected) return;
+    const host = buildPendingHost();
+    (pre as HTMLElement).style.display = 'none';
+    pre.after(host);
+    pending.set(code, { host, pre, code });
+  }
+
+  /** 已闭合：把 pending 推进成真卡，或失败时还原。返回是否新渲染出卡。 */
+  function resolvePending(code: Element, entry: Pending, raw: string): boolean {
+    const parent = entry.host.parentElement;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      restoreOriginal(code, entry.pre, entry.host);
+      code.setAttribute(STATE_ATTR, 'invalid-json');
+      return false;
+    }
+    const { html, outcome } = renderToHtml(parsed, { imageResolver });
+    onOutcome?.(outcome, code);
+    if (outcome.status === 'failed' || html === '') {
+      restoreOriginal(code, entry.pre, entry.host);
+      code.setAttribute(STATE_ATTR, `failed:${outcome.reasons.join(',')}`);
+      return false;
+    }
+    const card = buildCardHost(html);
+    if (parent) entry.host.replaceWith(card);
+    else entry.pre.after(card);
+    entry.pre.remove();
+    pending.delete(code);
+    code.setAttribute(STATE_ATTR, 'rendered');
+    mounted.set(code, { host: card, code, source: raw });
+    return true;
   }
 
   function handle(code: Element): boolean {
     const existing = mounted.get(code);
     const raw = (code.textContent ?? '').trim();
     if (existing) {
-      // 同一节点内容变了（如重新生成）⇒ 重建；内容没变 ⇒ 幂等跳过
       if (existing.source === raw && existing.host.isConnected) return false;
       existing.host.remove();
       mounted.delete(code);
       code.removeAttribute(STATE_ATTR);
     }
     if (!inAssistantTurn(code)) return false;
-    // 流式未闭合：等下一次扫描，不动 DOM
-    if (!raw.endsWith('}')) {
-      code.setAttribute(STATE_ATTR, 'pending');
-      return false;
-    }
-    if (!codeMatches(code)) return false;
 
     const pre = code.closest('pre');
-    if (!pre || !pre.parentElement) return false;
+    if (!pre || !pre.parentElement) {
+      // 已在 pending 且 <pre> 已脱离文档：只推进状态
+      const held = pending.get(code);
+      if (held) return raw.endsWith('}') ? resolvePending(code, held, raw) : false;
+      return false;
+    }
+
+    if (!raw.endsWith('}')) {
+      markPending(code, pre);
+      return false;
+    }
+    const held = pending.get(code);
+    if (held) return resolvePending(code, held, raw);
+    if (!codeMatches(code)) return false;
 
     let parsed: unknown;
     try {
@@ -166,12 +257,11 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
     const { html, outcome } = renderToHtml(parsed, { imageResolver });
     onOutcome?.(outcome, code);
     if (outcome.status === 'failed' || html === '') {
-      // 结构性失败：保留原代码块，用户仍能读到内容
       code.setAttribute(STATE_ATTR, `failed:${outcome.reasons.join(',')}`);
       return false;
     }
 
-    const host = buildHost(html);
+    const host = buildCardHost(html);
     pre.replaceWith(host);
     code.setAttribute(STATE_ATTR, 'rendered');
     mounted.set(code, { host, code, source: raw });
@@ -181,13 +271,14 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
   function scan(): number {
     unmountStale();
     let rendered = 0;
+
+    // code 始终留在 DOM（只是 <pre> 被隐藏），所以统一走下面这段 DOM 巡查即可
     for (const root of roots()) {
       const codes = root.querySelectorAll(CODE_SELECTOR);
       for (const code of Array.from(codes)) {
         try {
           if (handle(code)) rendered += 1;
         } catch {
-          // 单块失败不影响其它块
           code.setAttribute(STATE_ATTR, 'error');
         }
       }
@@ -195,7 +286,6 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
     return rendered;
   }
 
-  /** 对已发现的助手回合做深度监听（含 characterData：流式文本更新走这里）。 */
   function watchTurn(turn: Element): void {
     if (!deepObserver || watchedTurns.has(turn)) return;
     watchedTurns.add(turn);
@@ -212,7 +302,6 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
     }
   }
 
-  /** 浅监听只关心「新增节点里是否出现助手回合」或「卡片被移除」。 */
   function isRelevant(record: MutationRecord): boolean {
     for (const node of Array.from(record.addedNodes)) {
       if (node.nodeType !== 1) continue;
@@ -236,7 +325,6 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
     timer = set(() => {
       timer = null;
       scan();
-      // 新出现的回合要补挂深度监听
       watchAllTurns();
     }, debounceMs);
   }
@@ -251,7 +339,6 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
         shallowObserver = new MO((records) => {
           if (records.some(isRelevant)) schedule();
         });
-        // 第 1 层：只在 body 上盯 childList（不盯 characterData），用于发现新的助手回合
         for (const root of roots()) {
           shallowObserver.observe(root as Node, { childList: true, subtree: true });
         }
@@ -270,10 +357,13 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
     },
     scan,
     mountedCount() { return mounted.size; },
+    pendingCount() { return pending.size; },
     dispose() {
       this.stop();
       for (const entry of mounted.values()) entry.host.remove();
+      for (const entry of pending.values()) entry.host.remove();
       mounted.clear();
+      pending.clear();
     },
   };
 }
