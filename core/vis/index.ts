@@ -43,3 +43,6 @@ export type { VisComponentRenderer, VisRenderContext } from './registry';
 export { registerCoreVisComponents } from './components';
 export { renderToFragment, renderToHtml } from './render';
 export type { VisRenderOptions, VisRenderResult } from './render';
+
+export { buildVisCss, VIS_THEME_TOKENS } from './theme';
+export type { VisThemeName, VisThemeTokens } from './theme';
