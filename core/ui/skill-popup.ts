@@ -5,10 +5,13 @@ export interface SkillPopupItem {
 
 export interface SkillPopupCopy {
   hint: string;
+  /** 技能列表为空时的提示（例如后台未就绪）。 */
+  emptyHint?: string;
 }
 
 const DEFAULT_COPY: SkillPopupCopy = {
   hint: '↑↓ Navigate · Enter Select · Esc Close',
+  emptyHint: 'No saved skills yet — save one from the conversation first',
 };
 
 let popupEl: HTMLElement | null = null;
@@ -20,6 +23,8 @@ let copy: SkillPopupCopy = DEFAULT_COPY;
 let textareaObserver: MutationObserver | null = null;
 
 let initialized = false;
+/** 空列表时也要弹（否则用户完全看不到反馈）。 */
+let showingEmptyHint = false;
 
 export function initSkillPopup(initialSkills: SkillPopupItem[], nextCopy: Partial<SkillPopupCopy> = {}) {
   skills = initialSkills;
@@ -29,8 +34,12 @@ export function initSkillPopup(initialSkills: SkillPopupItem[], nextCopy: Partia
   initialized = true;
   injectStyles();
   watchTextarea();
+  // keydown 与 input 都走 **document 捕获**：这样即使 composer 被 React 反复重建，
+  // 也不需要重新绑定监听（B1 的根因就是"把监听绑在会被替换的元素上"）。
   document.addEventListener('keydown', onKeydown, true);
+  document.addEventListener('input', onInputCapture, true);
   document.addEventListener('mousedown', onClickOutside);
+  installDiag();
 }
 
 export function stopSkillPopup() {
@@ -38,9 +47,9 @@ export function stopSkillPopup() {
   initialized = false;
   textareaObserver?.disconnect();
   textareaObserver = null;
-  textarea?.removeEventListener('input', onInput);
   textarea = null;
   document.removeEventListener('keydown', onKeydown, true);
+  document.removeEventListener('input', onInputCapture, true);
   document.removeEventListener('mousedown', onClickOutside);
   popupEl?.remove();
   popupEl = null;
@@ -48,55 +57,84 @@ export function stopSkillPopup() {
   skills = [];
   filtered = [];
   activeIdx = 0;
+  showingEmptyHint = false;
   copy = DEFAULT_COPY;
+  removeDiag();
 }
 
 function watchTextarea() {
   tryAttach();
   textareaObserver?.disconnect();
+  // 只用来"提前拿到一次引用"（用于定位弹窗），**不再是功能依赖**：
+  // 真正的触发靠 document 上的 input 捕获。这样即使 #95 的 observer 漏掉重建，
+  // 弹窗依然工作。
   textareaObserver = new MutationObserver(() => {
-    if (!textarea || !document.contains(textarea)) {
-      textarea?.removeEventListener('input', onInput);
-      textarea = null;
-      tryAttach();
-    }
+    if (!textarea || !textarea.isConnected) tryAttach();
   });
-  // #95: 去掉 subtree:true —— 原 observe(document.body, { childList: true, subtree: true })
-  // 在 SPA（chat.deepseek.com）里触发极频繁：每条消息追加、状态更新都冒泡到 body。
-  // 改成只监听 body 直接子元素增删：SPA 重建 textarea 时通常是整个容器被替换
-  // （body 的直接子元素变了），深层单独删除 textarea 在实际中极罕见。
-  textareaObserver.observe(document.body, { childList: true });
+  textareaObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 function tryAttach() {
-  if (textarea) return;
   const el = document.querySelector<HTMLTextAreaElement>('textarea#chat-input')
     || document.querySelector<HTMLTextAreaElement>('textarea');
   if (!el) return;
   textarea = el;
-  el.addEventListener('input', onInput);
 }
 
-function onInput() {
-  if (!textarea) return;
-  const val = textarea.value;
+/**
+ * 事件委托：谁触发 input，谁就是当前 composer。
+ * 这是 B1 的修复核心 —— 不再依赖"记住的那个 textarea 还活着"。
+ */
+function onInputCapture(e: Event) {
+  const el = e.target;
+  if (!(el instanceof HTMLTextAreaElement)) return;
+  if (el.isConnected) textarea = el;
+  handleInput(el);
+}
+
+function handleInput(el: HTMLTextAreaElement | null) {
+  if (!el) return;
+  textarea = el;
+  const val = el.value;
 
   if (val.startsWith('/') && !val.slice(1).includes(' ')) {
     const query = val.slice(1).toLowerCase();
     filtered = query === ''
       ? [...skills]
       : skills.filter(s => s.name.toLowerCase().startsWith(query));
-    if (filtered.length > 0) {
-      activeIdx = 0;
-      showPopup();
+
+    if (filtered.length === 0) {
+      // B2：空列表也要给反馈（后台未就绪 / 还没保存技能）
+      if (skills.length === 0) {
+        showingEmptyHint = true;
+        filtered = [];
+        activeIdx = 0;
+        showPopup();
+      } else {
+        hidePopup();
+      }
       return;
     }
+
+    showingEmptyHint = false;
+    activeIdx = 0;
+    showPopup();
+    return;
   }
   hidePopup();
 }
 
 function onKeydown(e: KeyboardEvent) {
   if (!isVisible()) return;
+  if (showingEmptyHint) {
+    // 空提示不可选，Esc 关掉即可
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      hidePopup();
+    }
+    return;
+  }
 
   switch (e.key) {
     case 'ArrowDown':
@@ -135,12 +173,12 @@ function onClickOutside(e: MouseEvent) {
 }
 
 function selectSkill(skill: SkillPopupItem) {
-  if (!textarea || !skill) return;
+  if (!textarea || !skill || !textarea.isConnected) return;
 
   const newVal = `/${skill.name} `;
 
   // Invalidate React's value tracker so it detects the change
-  const tracker = (textarea as any)._valueTracker;
+  const tracker = (textarea as unknown as { _valueTracker?: { setValue(v: string): void } })._valueTracker;
   if (tracker) tracker.setValue('');
 
   const nativeSetter = Object.getOwnPropertyDescriptor(
@@ -159,20 +197,25 @@ function selectSkill(skill: SkillPopupItem) {
 }
 
 function showPopup() {
-  if (!textarea) return;
+  // B3：游离节点 rect 全 0，会把弹窗画到屏幕外；先尝试重连，连不上就不弹
+  if (!textarea || !textarea.isConnected) {
+    tryAttach();
+    if (!textarea || !textarea.isConnected) return;
+  }
 
   if (!popupEl) {
     popupEl = document.createElement('div');
     popupEl.className = 'dpp-skill-popup';
+    popupEl.setAttribute('data-dpp-skill-popup', 'true');
     document.body.appendChild(popupEl);
   }
 
   const rect = textarea.getBoundingClientRect();
   Object.assign(popupEl.style, {
     display: 'block',
-    left: `${rect.left}px`,
-    bottom: `${window.innerHeight - rect.top + 6}px`,
-    width: `${Math.min(rect.width * 0.5, 280)}px`,
+    left: `${Math.max(8, Math.min(rect.left, window.innerWidth - 288))}px`,
+    bottom: `${Math.max(8, window.innerHeight - rect.top + 6)}px`,
+    width: `${Math.min(Math.max(rect.width * 0.5, 200), 280)}px`,
   });
 
   buildItems();
@@ -180,6 +223,14 @@ function showPopup() {
 
 function buildItems() {
   if (!popupEl) return;
+
+  if (showingEmptyHint) {
+    popupEl.innerHTML = `
+      <div class="dpp-skill-empty">${escapeHtml(copy.emptyHint ?? '')}</div>
+      <div class="dpp-skill-hint">${escapeHtml(copy.hint)}</div>
+    `;
+    return;
+  }
 
   popupEl.innerHTML = filtered.map((s, i) => `
     <div class="dpp-skill-item${i === activeIdx ? ' dpp-active' : ''}" data-i="${i}">
@@ -192,7 +243,7 @@ function buildItems() {
     + `<div class="dpp-skill-hint">${escapeHtml(copy.hint)}</div>`;
 
   popupEl.querySelectorAll('.dpp-skill-item').forEach(el => {
-    const i = parseInt((el as HTMLElement).dataset.i || '0');
+    const i = parseInt((el as HTMLElement).dataset.i || '0', 10);
     el.addEventListener('mouseenter', () => {
       activeIdx = i;
       highlightActive();
@@ -214,10 +265,46 @@ function highlightActive() {
 
 function hidePopup() {
   if (popupEl) popupEl.style.display = 'none';
+  showingEmptyHint = false;
 }
 
 function isVisible() {
   return popupEl !== null && popupEl.style.display !== 'none';
+}
+
+/**
+ * 控制台诊断钩子（MAIN world ⇒ 页面 console 里可直接调用）：
+ *   __dppSkillPopup()
+ * 用来回答"到底哪一环断了"：有没有初始化 / 有几个技能 / 当前 textarea 是否在文档里。
+ */
+function installDiag() {
+  try {
+    (window as unknown as Record<string, unknown>).__dppSkillPopup = () => {
+      // 现场自查：诊断要反映"此刻"能不能用，而不是上次记住的引用
+      if (!textarea || !textarea.isConnected) tryAttach();
+      return ({
+      initialized,
+      hasCss: Boolean(document.getElementById('dpp-skill-popup-css')),
+      skills: skills.length,
+      skillNames: skills.map(s => s.name),
+      filtered: filtered.length,
+      showingEmptyHint,
+      visible: isVisible(),
+      textareaConnected: Boolean(textarea?.isConnected),
+      textareaValue: textarea?.isConnected ? textarea.value : null,
+      });
+    };
+  } catch {
+    // 诊断不能影响主流程
+  }
+}
+
+function removeDiag() {
+  try {
+    delete (window as unknown as Record<string, unknown>).__dppSkillPopup;
+  } catch {
+    // ignore
+  }
 }
 
 function escapeHtml(s: string) {
@@ -311,6 +398,12 @@ body.dpp-theme-dark {
   color: var(--dpp-skill-popup-desc);
   font-size: 11px;
   margin-top: 2px;
+}
+.dpp-skill-empty {
+  padding: 10px 12px;
+  color: var(--dpp-skill-popup-desc);
+  font-size: 12px;
+  text-align: center;
 }
 .dpp-skill-hint {
   text-align: center;
