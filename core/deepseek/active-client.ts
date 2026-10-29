@@ -8,6 +8,7 @@ import {
   isStreamFinishedFromParsed,
   type SSEEvent,
 } from './stream-codec';
+import { createStreamDiagnostics, formatStreamDiagnostics } from './stream-diagnostics';
 import { diagnosticLogBuffer } from '../diagnostics/log-buffer';
 import {
   createResponseTokenSpeedTracker,
@@ -634,6 +635,8 @@ async function readCompletionStreamWithCallbacks(
   const reader = response.body!.getReader();
   const decoder = createDeepSeekSseByteDecoder();
   const summary = createDeepSeekStreamSummary();
+  // P0-1：流结束诊断（纯观测，不改行为）。回答"这次为什么结束"。
+  const streamDiag = createStreamDiagnostics();
   const retainAssistantText = callbacks.retainAssistantText !== false;
   const speedTracker = callbacks.onTokenSpeed
     ? createResponseTokenSpeedTracker((progress) => callbacks.onTokenSpeed?.({
@@ -641,7 +644,7 @@ async function readCompletionStreamWithCallbacks(
       assistantMessageId: summary.responseMessageId,
     }), TOKEN_SPEED_EMIT_INTERVAL_MS)
     : null;
-  const onParsed = speedTracker
+  const onParsedCore = speedTracker
     ? (parsed: unknown, event: SSEEvent) => {
       speedTracker.updateServerStats(extractResponseUsageStatsFromParsed(parsed, event.type));
       const tokenText = extractResponseTextForTokenSpeed(parsed);
@@ -649,6 +652,11 @@ async function readCompletionStreamWithCallbacks(
       if (isStreamFinishedFromParsed(parsed)) speedTracker.finish();
     }
     : undefined;
+  // P0-1：帧记录与 speedTracker 无关，始终执行。
+  const onParsed = (parsed: unknown, event: SSEEvent) => {
+    streamDiag.noteParsed(parsed, event?.type);
+    onParsedCore?.(parsed, event);
+  };
 
   let streamAbortedMidResponse = false;
   // Audit fix (20261007, issue 1): track whether any visible text delta was
@@ -713,11 +721,16 @@ async function readCompletionStreamWithCallbacks(
           || getDeepSeekFragmentState(summary).fragmentTypes.length > 0;
         if (hasPartialContent) {
           streamAbortedMidResponse = true;
+          streamDiag.noteEnd('partial-abort');
           break;
         }
+        streamDiag.noteEnd('error');
         throw readerErr;
       }
-      if (done) break;
+      if (done) {
+        streamDiag.noteEnd('done');
+        break;
+      }
       lastFrameAt = Date.now();
 
       const newText = consumeDeepSeekSseEvents(decoder.push(value!), summary, {
@@ -742,20 +755,25 @@ async function readCompletionStreamWithCallbacks(
       visibleTextLen += finalText.length;
       callbacks.onTextChunk?.(finalText, summary.assistantText);
     }
+    // P0-1：截断告警前把"为什么结束"一起记下来（帧数/最后帧路径与状态/fragment 类型/结束方式）。
+    streamDiag.noteFragmentTypes(getDeepSeekFragmentState(summary).fragmentTypes);
+    streamDiag.noteMessageIds(summary.responseMessageId);
+    const streamDiagnostics = streamDiag.snapshot();
+
     // Audit fix Q-2: the byte stream ended (done===true) but the server never
     // sent an explicit "finished" frame — this is a suspicious truncation, not
     // a clean completion. Log it so it is visible in diagnostics instead of
     // being silently treated as normal.
     if (!summary.finished && !streamAbortedMidResponse) {
       console.warn('[DPP-stream] byte stream ended without explicit finished frame (suspicious truncation)', {
+        ...streamDiagnostics,
         assistantTextLength: summary.assistantText.length,
-        responseMessageId: summary.responseMessageId,
       });
       diagnosticLogBuffer.record({
         level: 'warn',
         source: 'deepseek-stream',
         message: 'suspicious_truncation',
-        details: `len=${summary.assistantText.length} msg=${summary.responseMessageId ?? 'n/a'}`,
+        details: `len=${summary.assistantText.length} msg=${summary.responseMessageId ?? 'n/a'} ${formatStreamDiagnostics(streamDiagnostics)}`,
       });
     }
   } finally {
