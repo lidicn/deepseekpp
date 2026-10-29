@@ -27,52 +27,61 @@ export const BUILTIN_SKILLS: Skill[] = [
     name: 'movie-cards',
     description:
       '高分影视检索与图文卡片：查证评分/年份/主创后，用 vis-json 卡片（左图右文）展示，而不是一大段文字。',
-    instructions: `你在用 DeepSeek++ 的「影视卡片」能力回答影视类问题。目标是把结论做成一张**左图右文**的卡片，而不是长篇文字。
+    instructions: `你在用 DeepSeek++ 的「影视卡片」能力回答影视类问题。目标是把结论做成**左图右文**的卡片。
 
-## 什么时候用
+## 0 · 最高优先级：下面的取图规则是**按序决策表**，命中即停
 
-用户问「推荐几部高分电影/剧集」「这片怎么样」「找类似 X 的片」这类影视信息时使用。
-纯闲聊、纯观点讨论不需要出卡片。
+规则之间如果冲突，**序号小的赢**，不要自己权衡。这一条是上一版的教训：
+协议里同时写了「没直链就 null」和「不要一律 null」，没有优先级 ⇒ 结果全空。
 
-## 先查证，再出卡
+## 1 · 取图（按序命中即停）
 
-1. 如果工具列表里有 \`web_search\` / \`web_fetch\`，**先用它们核实**评分、年份、导演、主演、时长。不要凭记忆编数字。
-2. 查不到就如实说「以下信息可能过时」，并降低不确定字段的表达强度（例如不写具体评分）。
-3. 图片地址：**优先给可信直链**（例如 TMDB / IMDb 的静态海报 CDN，形如 \`https://image.tmdb.org/t/p/w342/xxx.jpg\`）。
-   - 有工具结果里的图片地址就直接用；没有把握时**宁可用 \`null\`**（走渐变占位）。
-   - 允许凭已知作品名写出「你确信存在」的图床直链；**明确禁止**拼接随机 hash、占位域名或编造 ID。
-   - 不要因为「没有搜索工具」就一律填 null —— 那样用户永远只能看到渐变块。
+**第 1 步（有搜索工具就用）**：工具列表里有 \`web_search\` / \`web_fetch\` 时，
+先查 \`<片名> poster TMDB\`，从结果里取 \`image.tmdb.org\` 直链填 \`src\`，并在 meta 里标注来源。
 
-## 输出协议（严格）
+**第 2 步（无搜索工具，但你有把握是经典片）**：直接写出你确信存在的 TMDB 海报路径，
+然后**用 shell 验一遍再填**（shell 工具可用时）：
 
-每部作品输出**一个** \`\`\`vis-json 代码块，内容是 A2UI 子集 JSON；**代码块之外**才写你的点评文字。
+\`\`\`bash
+curl -s -o /dev/null -w "%{http_code}" -I "https://image.tmdb.org/t/p/w342/<poster_path>"
+\`\`\`
+
+- 返回 **200** ⇒ 填 \`src\`，meta 里加「海报已实测」
+- 返回其它码 ⇒ **立刻 \`null\`，不要猜第二次**
+- shell 不可用 ⇒ 直接走第 3 步，**不要盲填**
+
+**第 3 步（新片 / 冷门片 / 前两步都不成立）**：\`src: null\` + \`fallback.hue\`（按题材给一个色相），走渐变占位。
+
+**任何情况都禁止**：拼接随机 hash、编造 TMDB/IMDb ID、使用豆瓣图床（\`doubanio.com\` 实测 418）。
+
+## 2 · 先查证事实，再出卡
+
+评分、年份、导演、主演、时长：**有工具就查，没工具就别写具体分数**（写「口碑较高」这类弱化表述），
+绝不编造数字。诺贝尔式的一句话说清：宁可少一个字段，不要多一个假数字。
+
+## 3 · 输出协议
+
+每部作品输出**一个** \`\`\`vis-json 代码块（**必须用三反引号围栏**；不围栏时渲染层会退化处理），
+块外才写点评。
 
 \`\`\`vis-json
 {"v":1,"root":{"type":"Row","children":[
-  {"type":"Image","src":null,"alt":"肖申克的救赎 海报","ratio":"2/3","fallback":{"hue":208}},
+  {"type":"Image","src":"https://image.tmdb.org/t/p/w342/9O7gLzmreU0nGkIB6K3BsJbzvNv.jpg","alt":"肖申克的救赎 海报","ratio":"2/3","fallback":{"hue":208}},
   {"type":"Column","children":[
     {"type":"Text","text":"肖申克的救赎","variant":"title"},
     {"type":"Text","text":"1994 · 剧情 · 142 分钟 · 豆瓣 9.7","variant":"subtitle"},
     {"type":"Text","text":"关于希望与时间的经典叙事：一个人用二十年凿穿高墙。","variant":"body"},
-    {"type":"Text","text":"导演：弗兰克·德拉邦特 · 主演：蒂姆·罗宾斯 / 摩根·弗里曼","variant":"meta"}
+    {"type":"Text","text":"导演：弗兰克·德拉邦特 · 主演：蒂姆·罗宾斯 / 摩根·弗里曼 · 海报已实测","variant":"meta"}
   ]}
 ]}}
 \`\`\`
 
-字段白名单（**只能出现这些**，多一个字段就会被丢弃）：
+字段白名单（多一个字段就会被丢弃）：\`v\`(=1) / \`root\`；容器 \`Column\`/\`Row\` 只接受 \`children\`；
+\`Text\`：\`text\`(≤400 字) + \`variant\` ∈ title|subtitle|body|meta；
+\`Image\`：\`src\`(https 直链或 null) + \`alt\` + \`ratio\` ∈ "2/3"|"16/9" + \`fallback.hue\` ∈ 0-360。
 
-- 顶层：\`v\`（必须为 1）、\`root\`
-- 容器：\`Column\` / \`Row\`，二者都只接受 \`children\` 数组
-- \`Text\`：\`text\`（必填，≤400 字）、\`variant\` ∈ title | subtitle | body | meta
-- \`Image\`：\`src\`（https 直链或 null）、\`alt\`、\`ratio\` ∈ "2/3" | "16/9"、\`fallback.hue\` ∈ 0–360
-
-硬约束：
-
-- 版式固定为 \`Row[ Image, Column[ Text(title), Text(subtitle), Text(body), Text(meta) ] ]\`；不要自创层级。
-- 一次回答最多 3 个 vis-json 块（3 部作品）；更多就分组说明，不要刷屏。
-- 嵌套深度 ≤ 8，单个容器子节点 ≤ 24，单段文本 ≤ 400 字。
-- JSON 必须是**单行合法 JSON**（不带注释、不带尾逗号）。写错会退回显示原始代码块。
-- **不要把解析失败当成格式问题反复重写**：一次不成功就用普通文字回答。`,
+硬约束：版式固定 \`Row[Image, Column[title, subtitle, body, meta]]\`、一次 ≤3 张、深度 ≤8、
+JSON 必须单行合法；**格式失败一次就改用纯文字回答**，不要反复重写。`,
     source: 'builtin',
     memoryEnabled: false,
   },
@@ -321,51 +330,62 @@ const ENGLISH_BUILTIN_SKILL_TEXT: Record<string, BuiltinSkillText> = {
   'movie-cards': {
     description:
       'High-rated film/TV lookup with visual cards: verify rating/year/credits, then answer with a vis-json (image-left, text-right) card instead of a wall of text.',
-    instructions: `You are answering film/TV questions with DeepSeek++ visual cards. The goal is a **image-left, text-right** card, not prose.
+    instructions: `You answer film/TV questions with DeepSeek++ visual cards (image-left, text-right).
 
-## When to use
+## 0 - Highest priority: the image rules below are an ORDERED decision table. First match wins.
 
-Use it when the user asks for high-rated movie/TV recommendations, "is this film any good", or "find something like X". Plain chit-chat or opinion discussion needs no card.
+If two rules conflict, the lower number wins. Do not re-weigh them yourself. This exact ambiguity
+(one rule saying "null when unsure", another saying "do not default to null") previously produced
+all-null posters: without an explicit priority, the model picked the safe one every time.
 
-## Verify first, then render
+## 1 - Getting a poster (ordered, first match wins)
 
-1. If \`web_search\` / \`web_fetch\` are available, use them first to confirm rating, year, director, cast, runtime. Do not invent numbers from memory.
-2. If you cannot verify, say the data may be outdated and soften uncertain fields (e.g. omit an exact rating).
-3. Image URL: **prefer a trustworthy direct link** (e.g. TMDB / IMDb static poster CDN, like \`https://image.tmdb.org/t/p/w342/xxx.jpg\`).
-   - Use any image URL found in tool results; when unsure, fall back to \`null\` (gradient placeholder).
-   - You may write a CDN link you are confident exists for a known title; **never** fabricate random hashes, placeholder domains or invented IDs.
-   - Do not default to \`null\` just because no search tool is available — that leaves users with gradient blocks forever.
+**Step 1 (search tools available)**: when \`web_search\` / \`web_fetch\` are in the tool list, search
+\`<title> poster TMDB\`, take the \`image.tmdb.org\` direct link and put it in \`src\`, noting the source in meta.
 
-## Output protocol (strict)
+**Step 2 (no search tool, but you are confident it is a well-known film)**: write the TMDB poster path you
+believe exists, then **verify it before using it** (when a shell tool is available):
 
-For each title, emit **one** \`\`\`vis-json fenced block containing A2UI-subset JSON; put your commentary **outside** the block.
+\`\`\`bash
+curl -s -o /dev/null -w "%{http_code}" -I "https://image.tmdb.org/t/p/w342/<poster_path>"
+\`\`\`
+
+- **200** => use it in \`src\`, add "poster verified" to meta
+- anything else => set \`null\` immediately, **do not guess a second path**
+- no shell available => go to step 3; **never fill blindly**
+
+**Step 3 (new/obscure title, or steps 1-2 do not apply)**: \`src: null\` plus \`fallback.hue\`.
+
+**Never, under any rule**: fabricate random hashes, invent TMDB/IMDb ids, or use \`doubanio.com\` (measured 418).
+
+## 2 - Verify facts before rendering
+
+Rating, year, director, cast, runtime: **search when you can; when you cannot, omit exact numbers**
+and use softer wording. Never invent a number: one missing field beats one fake number.
+
+## 3 - Output protocol
+
+One \`\`\`vis-json fenced block per title (**use real backtick fences**; without them the renderer falls back),
+commentary outside the block.
 
 \`\`\`vis-json
 {"v":1,"root":{"type":"Row","children":[
-  {"type":"Image","src":null,"alt":"The Shawshank Redemption poster","ratio":"2/3","fallback":{"hue":208}},
+  {"type":"Image","src":"https://image.tmdb.org/t/p/w342/9O7gLzmreU0nGkIB6K3BsJbzvNv.jpg","alt":"The Shawshank Redemption poster","ratio":"2/3","fallback":{"hue":208}},
   {"type":"Column","children":[
     {"type":"Text","text":"The Shawshank Redemption","variant":"title"},
     {"type":"Text","text":"1994 · Drama · 142 min · 9.3/10","variant":"subtitle"},
     {"type":"Text","text":"A story about hope and time: a man carves his way through the wall.","variant":"body"},
-    {"type":"Text","text":"Director: Frank Darabont · Cast: Tim Robbins / Morgan Freeman","variant":"meta"}
+    {"type":"Text","text":"Director: Frank Darabont · Cast: Tim Robbins / Morgan Freeman · poster verified","variant":"meta"}
   ]}
 ]}}
 \`\`\`
 
-Field allowlist (anything else is dropped):
+Field allowlist (anything else is dropped): \`v\`(=1) / \`root\`; containers \`Column\`/\`Row\` accept only \`children\`;
+\`Text\`: \`text\` (<=400 chars) + \`variant\` in title|subtitle|body|meta;
+\`Image\`: \`src\` (https direct link or null) + \`alt\` + \`ratio\` in "2/3"|"16/9" + \`fallback.hue\` in 0-360.
 
-- top level: \`v\` (must be 1), \`root\`
-- containers: \`Column\` / \`Row\`, each accepting only a \`children\` array
-- \`Text\`: \`text\` (required, <=400 chars), \`variant\` in title | subtitle | body | meta
-- \`Image\`: \`src\` (https direct link or null), \`alt\`, \`ratio\` in "2/3" | "16/9", \`fallback.hue\` in 0-360
-
-Hard limits:
-
-- Layout is fixed: \`Row[ Image, Column[ Text(title), Text(subtitle), Text(body), Text(meta) ] ]\`. Do not invent other nesting.
-- At most 3 vis-json blocks per answer. For more titles, summarise in text instead of flooding.
-- Depth <= 8, children per container <= 24, single text <= 400 chars.
-- The JSON must be a single valid line (no comments, no trailing commas). Invalid JSON falls back to showing the raw block.
-- **Do not loop on format retries**: if it fails once, answer in plain text.`,
+Hard limits: layout is \`Row[Image, Column[title, subtitle, body, meta]]\`; at most 3 cards; depth <=8;
+single-line valid JSON; **after one formatting failure, answer in plain text** instead of retrying.`,
   },
   shell: {
     description: 'Local command-line assistant: run shell commands on the user machine through Native Messaging. Use for file operations, script execution, system inspection, and any task that requires a terminal.',
