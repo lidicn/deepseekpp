@@ -1,7 +1,6 @@
 import { escapeHtml, isRecord, toText } from '../escape';
-import { noteOutcome } from '../types';
+import { DEFAULT_HUE, noteOutcome } from '../types';
 import type { VisComponentRenderer } from '../registry';
-import { DEFAULT_HUE } from '../types';
 
 function ratioClass(ratio: unknown): string {
   if (ratio === '2/3') return 'dppvis-ratio-2x3';
@@ -17,6 +16,7 @@ function normalizeHue(value: unknown): number {
 
 export const imageRenderer: VisComponentRenderer = {
   type: 'Image',
+  allowsChildren: false,
   render(props, ctx) {
     const alt = toText(props.alt);
     const ratio = ratioClass(props.ratio);

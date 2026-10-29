@@ -37,8 +37,8 @@ export interface A2UIDocument {
   root: A2UINode;
 }
 
-/** 组件类型名的字面量集合（catalog / 注册表共用）。 */
-export type VisComponentType = 'Column' | 'Image' | 'Text';
+/** 核心组件类型（供文档/测试引用；注册表本身接受任意 string）。 */
+export type CoreVisComponentType = 'Column' | 'Image' | 'Text';
 
 // ---------------- limits（集中一处，便于 catalog 与渲染器共用） ----------------
 export const MAX_DEPTH = 8;

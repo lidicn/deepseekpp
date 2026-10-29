@@ -7,11 +7,11 @@ export type {
   A2UIImageNode,
   A2UINode,
   A2UITextNode,
+  CoreVisComponentType,
   ImageRatio,
   RenderOutcome,
   RenderStatus,
   TextVariant,
-  VisComponentType,
 } from './types';
 export {
   A2UI_VERSION,
@@ -24,10 +24,17 @@ export {
 export { escapeHtml, toText, truncateText } from './escape';
 export { isSafeImageSrc, passthroughImageResolver } from './image-resolver';
 export type { ImageResolver, ResolvedImage } from './image-resolver';
-export { COMPONENT_SPECS, isKnownComponentType } from './catalog';
+export {
+  getComponentSpec,
+  isKnownComponentType,
+  listComponentSpecs,
+  registerComponentSpec,
+} from './catalog';
+export type { ComponentSpec } from './catalog';
 export {
   getRegisteredTypes,
   registerVisComponent,
+  renderVisChildren,
   renderVisNode,
   resetVisRegistryForTests,
   unregisterVisComponent,

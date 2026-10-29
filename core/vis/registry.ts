@@ -1,12 +1,13 @@
 /**
- * 组件注册表：与仓内 registerToolResultRenderer 同范式（数组 + 逐个 try/catch）。
+ * 组件注册表：与仓内 registerToolResultRenderer 同范式（注册 + 逐个 try/catch）。
  *
- * 扩展性契约：新增组件只注册，不改本文件；renderVisNode 通过 catalog 判断结构与上限。
+ * 扩展性契约：**加组件 = 新增 components/*.ts + 一行 registerVisComponent(...)**，
+ * 不修改本文件、不修改 render.ts、不修改 catalog.ts。
  */
-import { COMPONENT_SPECS, isKnownComponentType } from './catalog';
-import { escapeHtml, isRecord, toText } from './escape';
+import { getComponentSpec, registerComponentSpec } from './catalog';
+import { escapeHtml, isRecord } from './escape';
 import type { ImageResolver } from './image-resolver';
-import { MAX_DEPTH, MAX_NODES_TOTAL, type RenderOutcome, noteOutcome, type VisComponentType } from './types';
+import { MAX_DEPTH, MAX_NODES_TOTAL, type RenderOutcome, noteOutcome } from './types';
 
 export interface VisRenderContext {
   depth: number;
@@ -17,18 +18,32 @@ export interface VisRenderContext {
 }
 
 export interface VisComponentRenderer {
-  type: VisComponentType;
+  /** 组件类型名。 */
+  type: string;
+  /** 是否允许 children（缺省 false）。 */
+  allowsChildren?: boolean;
+  /** 子节点上限（缺省 MAX_CHILDREN_PER_NODE）。 */
+  maxChildren?: number;
   /** 返回 HTML 片段；内部所有文本/属性必须走 escape.ts。 */
   render(props: Record<string, unknown>, ctx: VisRenderContext): string;
 }
 
-const renderers = new Map<VisComponentType, VisComponentRenderer>();
+const renderers = new Map<string, VisComponentRenderer>();
 
 export function registerVisComponent(renderer: VisComponentRenderer): void {
   renderers.set(renderer.type, renderer);
+  registerComponentSpec({
+    type: renderer.type,
+    allowsChildren: renderer.allowsChildren === true,
+    maxChildren: renderer.maxChildren ?? 0,
+  });
 }
 
-export function getRegisteredTypes(): VisComponentType[] {
+export function unregisterVisComponent(type: string): void {
+  renderers.delete(type);
+}
+
+export function getRegisteredTypes(): string[] {
   return [...renderers.keys()];
 }
 
@@ -60,12 +75,13 @@ export function renderVisNode(node: unknown, ctx: VisRenderContext): string {
 
   const record = isRecord(node) ? node : null;
   const rawType = record !== null && typeof record.type === 'string' ? record.type : '';
-  if (!isKnownComponentType(rawType)) {
+
+  if (!isRegisteredType(rawType)) {
     // 未知 type：与旧实现一致 —— 退化为「可读标题 + meta」，并丢弃其子树。
     noteOutcome(ctx.outcome, 'degraded', `unknown_type:${rawType || 'missing'}`);
     return renderTextFallback(node, ctx);
   }
-  const type: VisComponentType = rawType;
+  const type = rawType;
 
   const renderer = renderers.get(type);
   if (!renderer) {
@@ -73,9 +89,9 @@ export function renderVisNode(node: unknown, ctx: VisRenderContext): string {
     return renderTextFallback(node, ctx);
   }
 
-  const spec = COMPONENT_SPECS[type];
+  const spec = getComponentSpec(type);
   let props: Record<string, unknown> = record ?? {};
-  if (!spec.allowsChildren) {
+  if (!spec || !spec.allowsChildren) {
     const { children: _ignored, ...rest } = props;
     props = rest;
   } else if (Array.isArray(props.children) && props.children.length > spec.maxChildren) {
@@ -100,6 +116,10 @@ export function renderVisChildren(rawChildren: unknown, ctx: VisRenderContext): 
   return children.map((child) => renderVisNode(child, next)).join('');
 }
 
+function isRegisteredType(type: string): boolean {
+  return renderers.has(type);
+}
+
 function renderTextFallback(node: unknown, ctx: VisRenderContext): string {
   const textRenderer = renderers.get('Text');
   if (!textRenderer) return escapeHtml(readableTitle(node));
@@ -110,12 +130,7 @@ function renderTextFallback(node: unknown, ctx: VisRenderContext): string {
   }
 }
 
+/** 仅供测试：清空注册表（含 spec）。 */
 export function resetVisRegistryForTests(): void {
   renderers.clear();
 }
-
-export function unregisterVisComponent(type: VisComponentType): void {
-  renderers.delete(type);
-}
-
-void toText;

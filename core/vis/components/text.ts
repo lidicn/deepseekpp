@@ -12,6 +12,7 @@ function variantClass(variant: unknown): string {
 
 export const textRenderer: VisComponentRenderer = {
   type: 'Text',
+  allowsChildren: false,
   render(props) {
     const body = escapeHtml(truncateText(toText(props.text)));
     return `<div class="dppvis-text ${variantClass(props.variant)}">${body}</div>`;
