@@ -22,6 +22,7 @@ export {
   getAgentReasoningNote,
   collapseAllAgentToolGroups,
   updateStepStreamText,
+  clearStepBodyText,
   updateStepStatus,
   renderAgentStreamText,
   followAgentStreamBottom,

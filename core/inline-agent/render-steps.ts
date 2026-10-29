@@ -166,6 +166,20 @@ export function collapseAllAgentToolGroups(stream: HTMLElement): void {
   if (state) state.currentToolGroup = null;
 }
 
+/**
+ * 只清空 step 的**正文文本**，保留 step 本体（工具记录、推理笔记挂载点都在上面）。
+ *
+ * 为什么要单独有这个原语：`updateStepStreamText(step, '')` 会把整个 step 删掉
+ * （见本文件 :172-177），用于"原生拥有最终答案"的去重时，会连带删掉该 step 里的
+ * 工具记录 ⇒ 工具历史丢失。有工具记录时只能用本函数。
+ */
+export function clearStepBodyText(step: HTMLElement): void {
+  const body = step.querySelector<HTMLElement>('.dpp-agent-step-body');
+  if (!body) return;
+  body.textContent = '';
+  body.removeAttribute('data-dpp-raw-text');
+}
+
 export function updateStepStreamText(step: HTMLElement, visibleText: string): void {
   const body = step.querySelector<HTMLElement>('.dpp-agent-step-body');
   if (!body) return;

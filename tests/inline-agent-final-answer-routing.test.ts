@@ -1,15 +1,20 @@
 /**
- * 「最终答案唯一」的不变量测试（先让它红，再谈修）。
+ * 「最终答案唯一」的不变量测试 + 渲染安全护栏。
  *
- * 覆盖三件事：
- *   ① **路由**：ownsFinalTurn 时必须 clear（不是跳过）—— 这是原实现的漏洞
- *   ② **判据唯一**：live 与 restore 必须同解；额外条件（toolExecutions.length===0）不得回归
- *   ③ **不变量**：一次 run 结束后，页面里"可见的出现次数"必须 == 1
+ * 三次教训（按时间）：
+ *   ① 原实现 `if (!hasNativeTurn)` 只"跳过再画"，收不回已流式画在屏上的那份 ⇒ 双份。
+ *   ② 我第一版改成 `clear`（`updateStepStreamText(step,'')`）⇒ **整个 step 被删**，
+ *      连带删掉工具记录。恢复侧那个 `toolExecutions.length === 0` 其实是渲染护栏，
+ *      不是判定 bug。
+ *   ③ 因此本模块把「答案归谁」与「这个 step 能不能动」分开：
+ *      owns + 装答案 + 有工具记录 ⇒ `clear-text`（只清正文）
+ *      owns + 装答案 + 无工具记录 ⇒ `clear-step`
+ *      owns + 不装答案 ⇒ `none`（**不许删工具记录**）
  *
  * 变异（可判红）：
- *   - 把 `if (input.ownsFinalTurn) return { kind: 'clear' }` 改成 `return { kind: 'none' }`
- *     ⇒ 用例 1 红（这正是"不新增但老那份还在"的旧行为）
- *   - 给 `traceOwnsFinalTurn` 加回额外条件 ⇒ 用例 5 红
+ *   - `lastStepHasToolEntries ? 'clear-text' : 'clear-step'` 改成恒 `'clear-step'` ⇒ 用例 2 红
+ *   - `stepHoldsAnswer` 判断删掉（恒 true）⇒ 用例 3 红
+ *   - 给 `traceOwnsFinalTurn` 加回 `toolExecutions` 条件 ⇒ 用例 6 红
  */
 import { describe, expect, it } from 'vitest';
 import {
@@ -20,8 +25,8 @@ import {
 import type { InlineAgentTraceRecord } from '../core/inline-agent/types';
 
 const ANSWER = '最终答案：这部片值得看，因为它在克制里蓄力。';
+const PARTIAL = '最终答案：这部片值得看';
 
-/** 造一个"已提交到原生历史"的 trace 最小形状（只带被判据读到的字段）。 */
 function makeTrace(overrides: Partial<InlineAgentTraceRecord> = {}): InlineAgentTraceRecord {
   return {
     id: 'trace-1',
@@ -42,92 +47,114 @@ function makeTrace(overrides: Partial<InlineAgentTraceRecord> = {}): InlineAgent
 const isFinalStepText = (stepText: string, finalText: string) =>
   stepText === finalText || finalText.startsWith(stepText);
 
-describe('routeFinalAnswer · 路由', () => {
-  it('★ 原生拥有 ⇒ clear（即使正文为空也必须清空屏上那份）', () => {
-    const action = routeFinalAnswer({
-      ownsFinalTurn: true,
-      finalText: ANSWER,
-      resolvedAnswer: { answer: ANSWER, fromStep: false },
-      lastStepText: ANSWER, // 流式期已经画在屏上的那份
-      isFinalStepText,
-    });
-    expect(action).toEqual({ kind: 'clear' });
+const base = {
+  finalText: ANSWER,
+  resolvedAnswer: { answer: ANSWER, fromStep: false },
+  lastStepText: ANSWER,
+  lastStepHasToolEntries: false,
+  isFinalStepText,
+};
 
-    // 边界：没有任何正文时也要 clear（屏上可能有上一轮残留）
-    const empty = routeFinalAnswer({
+describe('routeFinalAnswer · 原生拥有（去重）', () => {
+  it('★ 装答案 + 无工具记录 ⇒ clear-step（整块移除，这是纯答案步）', () => {
+    expect(routeFinalAnswer({ ...base, ownsFinalTurn: true })).toEqual({ kind: 'clear-step' });
+  });
+
+  it('★★ 装答案 + **有工具记录** ⇒ clear-text（只清正文，工具记录必须留下）', () => {
+    const action = routeFinalAnswer({
+      ...base,
+      ownsFinalTurn: true,
+      lastStepHasToolEntries: true,
+    });
+    expect(action).toEqual({ kind: 'clear-text' });
+  });
+
+  it('★★ 该 step 不装答案 ⇒ none（原生拥有不等于可以删工具记录）', () => {
+    const action = routeFinalAnswer({
+      ...base,
+      ownsFinalTurn: true,
+      lastStepText: '我先调了个工具，结果如下',
+      lastStepHasToolEntries: true,
+    });
+    expect(action).toEqual({ kind: 'none' });
+  });
+
+  it('负控：正文为空 + 原生拥有 ⇒ none（没有证据说这一步装着答案）', () => {
+    const action = routeFinalAnswer({
+      ...base,
       ownsFinalTurn: true,
       finalText: '',
       resolvedAnswer: { answer: '', fromStep: false },
-      lastStepText: '残留',
-      isFinalStepText,
+      lastStepText: '残留文本',
+      lastStepHasToolEntries: true,
     });
-    expect(empty).toEqual({ kind: 'clear' });
+    expect(action).toEqual({ kind: 'none' });
   });
 
-  it('★ 扩展拥有 + 最后一步就是答案 ⇒ replace', () => {
+  it('边界：fromStep=true 时即使没有前缀关系也认作装答案', () => {
     const action = routeFinalAnswer({
-      ownsFinalTurn: false,
-      finalText: ANSWER,
-      resolvedAnswer: { answer: ANSWER, fromStep: false },
-      lastStepText: '最终答案：这部片值得看，因为它在克制里蓄力。',
-      isFinalStepText,
+      ...base,
+      ownsFinalTurn: true,
+      resolvedAnswer: { answer: ANSWER, fromStep: true },
+      lastStepText: '完全不同的文本',
     });
-    expect(action).toEqual({ kind: 'replace', text: ANSWER });
+    expect(action.kind).toBe('clear-step');
+  });
+});
+
+describe('routeFinalAnswer · 扩展拥有（正常渲染）', () => {
+  it('★ 最后一步就是答案 ⇒ replace', () => {
+    expect(routeFinalAnswer({ ...base, ownsFinalTurn: false })).toEqual({
+      kind: 'replace',
+      text: ANSWER,
+    });
   });
 
-  it('★ 扩展拥有 + 前缀关系 ⇒ 仍 replace（不追加）', () => {
+  it('★ 前缀关系 ⇒ 仍 replace（不追加）', () => {
     const action = routeFinalAnswer({
+      ...base,
       ownsFinalTurn: false,
-      finalText: ANSWER,
-      resolvedAnswer: { answer: ANSWER, fromStep: false },
-      lastStepText: '最终答案：这部片值得看',
-      isFinalStepText,
+      lastStepText: PARTIAL,
     });
     expect(action.kind).toBe('replace');
   });
 
-  it('★ 扩展拥有 + 不构成前缀 ⇒ append（这是 §2.2 的 step↔narration 双份来源，靠 clear/唯一所有者兜）', () => {
+  it('★ 不构成前缀 ⇒ append（§2.2 step↔narration 的来源，靠 owner 兜）', () => {
     const action: FinalAnswerAction = routeFinalAnswer({
+      ...base,
       ownsFinalTurn: false,
-      finalText: ANSWER,
-      resolvedAnswer: { answer: ANSWER, fromStep: false },
       lastStepText: '我先说点别的，然后再说结论。',
-      isFinalStepText,
     });
     expect(action).toEqual({ kind: 'append', text: ANSWER });
   });
 
-  it('负控：没有正文、扩展拥有 ⇒ none（不画空 narration）', () => {
+  it('负控：没有正文 ⇒ none', () => {
     expect(
       routeFinalAnswer({
+        ...base,
         ownsFinalTurn: false,
         finalText: '',
         resolvedAnswer: { answer: '', fromStep: false },
-        lastStepText: 'x',
-        isFinalStepText,
       }),
     ).toEqual({ kind: 'none' });
   });
 });
 
 describe('traceOwnsFinalTurn · 判据唯一', () => {
-  it('★ 原生历史回溯的 trace ⇒ true', () => {
+  it('原生历史回溯的 trace ⇒ true', () => {
     expect(traceOwnsFinalTurn(makeTrace(), { budgetPaused: false })).toBe(true);
   });
 
-  it('★ 预算暂停 ⇒ false（哪怕 trace 看起来像原生回溯）', () => {
+  it('★ 预算暂停 ⇒ false', () => {
     expect(traceOwnsFinalTurn(makeTrace(), { budgetPaused: true })).toBe(false);
   });
 
-  it('负控：没有 trace ⇒ false', () => {
+  it('负控：null / undefined ⇒ false', () => {
     expect(traceOwnsFinalTurn(null, { budgetPaused: false })).toBe(false);
     expect(traceOwnsFinalTurn(undefined, { budgetPaused: false })).toBe(false);
   });
 
-  it('★ 关键回归守卫：判据不接受"最后一步有无工具执行"这类额外条件', () => {
-    // 同一个 trace、同样的 budgetPaused，无论 steps 里塞了什么，判定必须一致。
-    // 旧实现 restore 侧多加了 `lastStepRecord?.toolExecutions.length === 0`，
-    // 导致同一轮"收尾判原生拥有、刷新后判扩展拥有"。
+  it('★ 回归守卫：判据不接受"末步有无工具执行"这类额外条件', () => {
     const withTools = makeTrace({
       steps: [
         {
@@ -162,15 +189,10 @@ describe('traceOwnsFinalTurn · 判据唯一', () => {
   });
 });
 
-describe('不变量：一次 run 结束后最终答案只出现一次', () => {
-  /**
-   * DOM 级不变量：用假 DOM 模拟"扩展 console + 原生消息"两个世界，
-   * 按路由动作执行后统计**可见**出现次数。
-   */
+describe('DOM 不变量：答案只出现一次，且工具记录不丢', () => {
   function visibleOccurrences(root: HTMLElement, needle: string): number {
     let count = 0;
     for (const el of [root, ...Array.from(root.querySelectorAll<HTMLElement>('*'))]) {
-      // 只统计"叶子文本块"：自身不含子元素，且不隐藏在 none/hidden 子树里
       if (el.children.length > 0) continue;
       if (el.closest('[hidden]')) continue;
       if (el.style?.display === 'none') continue;
@@ -179,8 +201,21 @@ describe('不变量：一次 run 结束后最终答案只出现一次', () => {
     return count;
   }
 
-  function applyAction(container: HTMLElement, nativeHasAnswer: boolean, action: FinalAnswerAction) {
-    const step = container.querySelector<HTMLElement>('.dpp-agent-step-body');
+  function makeConsole(withTools: boolean): HTMLElement {
+    const consoleRoot = document.createElement('div');
+    consoleRoot.className = 'dpp-agent-container';
+    consoleRoot.innerHTML = `
+      <div class="dpp-agent-step">
+        ${withTools ? '<div class="dpp-agent-tool-group"><span>shell_exec</span></div>' : ''}
+        <div class="dpp-agent-step-body">${ANSWER}</div>
+      </div>`;
+    document.body.appendChild(consoleRoot);
+    return consoleRoot;
+  }
+
+  function apply(consoleRoot: HTMLElement, action: FinalAnswerAction, nativeHasAnswer: boolean) {
+    const step = consoleRoot.querySelector<HTMLElement>('.dpp-agent-step');
+    const body = consoleRoot.querySelector<HTMLElement>('.dpp-agent-step-body');
     if (nativeHasAnswer) {
       const native = document.createElement('div');
       native.className = 'ds-message';
@@ -188,17 +223,20 @@ describe('不变量：一次 run 结束后最终答案只出现一次', () => {
       document.body.appendChild(native);
     }
     switch (action.kind) {
-      case 'clear':
-        step?.parentElement?.remove();   // 与 updateStepStreamText(step, '') 等价：整个 step 移除
+      case 'clear-step':
+        step?.remove();
+        break;
+      case 'clear-text':
+        if (body) body.textContent = '';
         break;
       case 'replace':
-        if (step) step.textContent = action.text;
+        if (body) body.textContent = action.text;
         break;
       case 'append': {
         const narration = document.createElement('div');
         narration.className = 'dpp-agent-step-body';
         narration.textContent = action.text;
-        container.appendChild(narration);
+        consoleRoot.appendChild(narration);
         break;
       }
       case 'none':
@@ -206,41 +244,30 @@ describe('不变量：一次 run 结束后最终答案只出现一次', () => {
     }
   }
 
-  it('★ live：原生拥有时，屏上不得残留扩展那份（旧实现 skip ⇒ 两份 ⇒ 红）', () => {
+  it('★ 原生拥有 + 有工具记录：答案只 1 份，工具组仍在', () => {
     document.body.innerHTML = '';
-    const consoleRoot = document.createElement('div');
-    consoleRoot.className = 'dpp-agent-container';
-    consoleRoot.innerHTML = `<div class="dpp-agent-step"><div class="dpp-agent-step-body">${ANSWER}</div></div>`;
-    document.body.appendChild(consoleRoot);
-
-    const action = routeFinalAnswer({
-      ownsFinalTurn: true,
-      finalText: ANSWER,
-      resolvedAnswer: { answer: ANSWER, fromStep: false },
-      lastStepText: ANSWER,
-      isFinalStepText,
-    });
-    applyAction(consoleRoot, true, action);
-
+    const consoleRoot = makeConsole(true);
+    apply(
+      consoleRoot,
+      routeFinalAnswer({ ...base, ownsFinalTurn: true, lastStepHasToolEntries: true }),
+      true,
+    );
     expect(visibleOccurrences(document.body, ANSWER)).toBe(1);
+    expect(consoleRoot.querySelector('.dpp-agent-tool-group')).not.toBeNull();
   });
 
-  it('★ 扩展拥有时：屏上只有扩展那份', () => {
+  it('★ 原生拥有 + 无工具记录：整个 step 移除，答案只 1 份', () => {
     document.body.innerHTML = '';
-    const consoleRoot = document.createElement('div');
-    consoleRoot.className = 'dpp-agent-container';
-    consoleRoot.innerHTML = `<div class="dpp-agent-step"><div class="dpp-agent-step-body">我先说点别的</div></div>`;
-    document.body.appendChild(consoleRoot);
+    const consoleRoot = makeConsole(false);
+    apply(consoleRoot, routeFinalAnswer({ ...base, ownsFinalTurn: true }), true);
+    expect(visibleOccurrences(document.body, ANSWER)).toBe(1);
+    expect(consoleRoot.querySelector('.dpp-agent-step')).toBeNull();
+  });
 
-    const action = routeFinalAnswer({
-      ownsFinalTurn: false,
-      finalText: ANSWER,
-      resolvedAnswer: { answer: ANSWER, fromStep: false },
-      lastStepText: '我先说点别的',
-      isFinalStepText,
-    });
-    applyAction(consoleRoot, false, action);
-
+  it('★ 扩展拥有：屏上只有扩展那份', () => {
+    document.body.innerHTML = '';
+    const consoleRoot = makeConsole(false);
+    apply(consoleRoot, routeFinalAnswer({ ...base, ownsFinalTurn: false }), false);
     expect(visibleOccurrences(document.body, ANSWER)).toBe(1);
   });
 });

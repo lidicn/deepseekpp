@@ -146,6 +146,7 @@ import {
   createAgentStepElement,
   mountAgentNarration,
   updateStepStreamText,
+  clearStepBodyText,
   updateStepStatus,
   updateAgentReasoningNoteElement,
   getAgentReasoningNote,
@@ -6683,10 +6684,16 @@ async function handleAgentLoopComplete(
       finalText,
       resolvedAnswer,
       lastStepText: lastCompletedStepText,
+      // 工具记录决定"能不能整块删"：有记录时只清正文，否则会连工具历史一起丢。
+      lastStepHasToolEntries: Boolean(
+        lastCompletedStep?.querySelector(".dpp-agent-tool-group"),
+      ),
       isFinalStepText: isInlineAgentStepTextTheFinalAnswer,
     });
-    if (finalAnswerAction.kind === "clear") {
+    if (finalAnswerAction.kind === "clear-step") {
       if (lastCompletedStep) updateStepStreamText(lastCompletedStep, "");
+    } else if (finalAnswerAction.kind === "clear-text") {
+      if (lastCompletedStep) clearStepBodyText(lastCompletedStep);
     } else if (finalAnswerAction.kind === "replace") {
       if (lastCompletedStep) {
         updateStepStreamText(lastCompletedStep, finalAnswerAction.text);
