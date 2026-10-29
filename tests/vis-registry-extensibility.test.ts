@@ -111,7 +111,8 @@ describe('S2 组件注册表（开放扩展）', () => {
     resetVisRegistryForTests();
     expect(getRegisteredTypes()).toEqual([]);
     registerCoreVisComponents();
-    expect(getRegisteredTypes().length).toBe(3);
+    // 按名单断言，而不是数个数：新增核心组件（如 Row）不该让这条守卫变红
+    expect(getRegisteredTypes().sort()).toEqual(['Column', 'Image', 'Row', 'Text']);
   });
 });
 

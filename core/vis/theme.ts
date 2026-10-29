@@ -83,6 +83,22 @@ ${scope}[data-dppvis-theme="dark"] {
 ${tokenBlock(VIS_THEME_TOKENS.dark)}
 }
 ${scope} .dppvis-column { display: flex; flex-direction: column; gap: var(--dppvis-gap); }
+${scope} .dppvis-row {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: calc(var(--dppvis-gap) + 4px);
+}
+/* Fixed image width inside Row: a 2:3 poster must not stretch to full width (card would reach ~800px tall) */
+${scope} .dppvis-row > .dppvis-img,
+${scope} .dppvis-row > .dppvis-img--placeholder {
+  flex: 0 0 132px;
+  width: 132px;
+}
+${scope} .dppvis-row > .dppvis-column {
+  flex: 1 1 auto;
+  min-width: 0;
+}
 ${scope} .dppvis-text { margin: 0; overflow-wrap: anywhere; }
 ${scope} .dppvis-text--title { font-size: 18px; font-weight: 650; letter-spacing: -0.01em; }
 ${scope} .dppvis-text--subtitle { font-size: 13px; font-weight: 600; color: var(--dppvis-muted); }

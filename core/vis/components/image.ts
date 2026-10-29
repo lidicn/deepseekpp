@@ -25,7 +25,9 @@ export const imageRenderer: VisComponentRenderer = {
     if (resolved.src !== null) {
       return `<img class="${cls}" src="${ctx.escape(resolved.src)}" alt="${ctx.escape(alt)}">`;
     }
-    if (resolved.reason) noteOutcome(ctx.outcome, 'degraded', resolved.reason);
+    // 语义区分：模型**没给图**（src=null）是 PoC 的设计内状态 → 渐变占位，**不算降级**；
+    // 只有**协议被拒**（javascript:/data:/ftp: 等）才是安全降级，需要进 outcome。
+    if (resolved.reason === 'image_unsafe_src') noteOutcome(ctx.outcome, 'degraded', resolved.reason);
     const fallback = isRecord(props.fallback) ? props.fallback : null;
     const hue = normalizeHue(fallback === null ? undefined : fallback.hue);
     return (

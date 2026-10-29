@@ -10,6 +10,7 @@ import { buildVisCss, VIS_THEME_TOKENS } from '../core/vis/theme';
 
 const REQUIRED_CLASSES = [
   '.dppvis-column',
+  '.dppvis-row',
   '.dppvis-text--title',
   '.dppvis-text--subtitle',
   '.dppvis-text--body',
