@@ -166,7 +166,9 @@ export interface InlineAgentLoopErrorMsg {
 }
 
 export const INLINE_AGENT_MAX_STEPS = 25;
-export const INLINE_AGENT_MAX_NUDGES = 8;
+// 2026-10-30 P0-3：8 → 3。一次截断最多放大 3 次（原来 8 次 = 8×24KB 重复上传），
+// 且能更快以可读错误收尾，而不是长时间空转。
+export const INLINE_AGENT_MAX_NUDGES = 3;
 /**
  * Step timeout: must exceed the shell MCP request timeout (120s) so that
  * shell has its full budget and the agent still has headroom for the

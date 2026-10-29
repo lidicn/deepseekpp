@@ -149,3 +149,24 @@ export function formatStreamDiagnostics(snapshot: StreamDiagnosticsSnapshot): st
   ];
   return parts.join(' ');
 }
+
+/**
+ * 流结束分类（P0-2）。用 P0-1 已采的事实判定"这次结束是不是正常"，
+ * 而不是继续往 shouldNudge 里加文本启发式。
+ *
+ * - `clean`：见到 FINISHED 帧
+ * - `tool-turn-close`：见过 TOOL fragment、拿到了正的 responseMessageId、没见 FINISHED
+ *   ⇒ 极可能是"工具轮正常收尾但服务端没发结束帧"。**不该当成截断去 nudge**。
+ * - `truncated`：有 TOOL fragment 未闭合，或既无 id 也无正文 ⇒ 真截断
+ * - `connection-error`：读流抛错（连接层）
+ */
+export type StreamEndClass = 'clean' | 'tool-turn-close' | 'truncated' | 'connection-error';
+
+export function classifyStreamEnd(snapshot: StreamDiagnosticsSnapshot): StreamEndClass {
+  if (snapshot.lastFrameStatus === 'FINISHED') return 'clean';
+  if (snapshot.endedBy === 'error') return 'connection-error';
+  // 工具轮收尾：声明过 TOOL fragment，且服务端确实落了一条消息（正 id）
+  if (snapshot.sawToolFragment && snapshot.responseMessageId !== null) return 'tool-turn-close';
+  return 'truncated';
+}
+

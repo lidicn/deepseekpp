@@ -120,7 +120,15 @@ export function shouldNudge(
   visibleText: string,
 ): boolean {
   if (extractTaskCompleteSignal(visibleText)) return false;
-  if (!visibleText) return true;
+  // P0-3（2026-10-30）：空文本不许**无条件**续轮。
+  //
+  // 旧行为 `if (!visibleText) return true` 是"一次截断 → 8 次空转"的放大器：
+  // 工具轮没有可见文本（TOOL fragment 走 text 通道且被解析器吃掉），
+  // 一旦服务端没发 FINISHED 帧，就被判成"需要续"，续轮再截断再续……
+  //
+  // 新规则：只有**本轮确实产出了工具执行**才续（说明有东西要总结）；
+  // 纯空轮直接停，由上层给出可读的 emptyOutcome，而不是静默空转。
+  if (visibleText.trim().length === 0) return executions.length > 0;
   const tail = getNudgeDecisionText(visibleText);
   // Fenced code block at the tail = renderable deliverable, treat complete.
   // R4-N6: 旧判据 tail.includes('```') 会把"写到一半被截断的未闭合代码块"（``` 出现

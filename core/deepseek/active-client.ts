@@ -8,7 +8,11 @@ import {
   isStreamFinishedFromParsed,
   type SSEEvent,
 } from './stream-codec';
-import { createStreamDiagnostics, formatStreamDiagnostics } from './stream-diagnostics';
+import {
+  classifyStreamEnd,
+  createStreamDiagnostics,
+  formatStreamDiagnostics,
+} from './stream-diagnostics';
 import { diagnosticLogBuffer } from '../diagnostics/log-buffer';
 import {
   createResponseTokenSpeedTracker,
@@ -764,7 +768,18 @@ async function readCompletionStreamWithCallbacks(
     // sent an explicit "finished" frame — this is a suspicious truncation, not
     // a clean completion. Log it so it is visible in diagnostics instead of
     // being silently treated as normal.
-    if (!summary.finished && !streamAbortedMidResponse) {
+    const streamEndClass = classifyStreamEnd(streamDiagnostics);
+
+    // P0-2：工具轮正常收尾（见过 TOOL fragment + 拿到正 id + 没 FINISHED）不算截断，
+    // 只记 info 级诊断，不刷 warn —— 否则每个纯工具轮都报一次"疑似截断"，真截断被淹没。
+    if (streamEndClass === 'tool-turn-close' && !streamAbortedMidResponse) {
+      diagnosticLogBuffer.record({
+        level: 'info',
+        source: 'deepseek-stream',
+        message: 'tool_turn_close',
+        details: formatStreamDiagnostics(streamDiagnostics),
+      });
+    } else if (!summary.finished && !streamAbortedMidResponse) {
       console.warn('[DPP-stream] byte stream ended without explicit finished frame (suspicious truncation)', {
         ...streamDiagnostics,
         assistantTextLength: summary.assistantText.length,
