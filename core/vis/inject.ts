@@ -174,6 +174,41 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
   }
 
   /**
+   * 热链图片的兜底：<img> 加载失败（防盗链/404/超时）时，就地换成渐变占位。
+   *
+   * 为什么不做后台代理：本扩展**没有**任何图片站点的 host 权限，
+   * 代理要先扩权限（用户手势授权或商店审核），那是产品决策，不是 PoC 能自裁的。
+   * 所以这里走"先渲染、失败降级"——最坏情况就是用户看到渐变块，而不是破图。
+   */
+  function hydrateImages(shadow: ShadowRoot): void {
+    const imgs = shadow.querySelectorAll('img');
+    for (const el of Array.from(imgs)) {
+      const imgEl = el as HTMLImageElement;
+      if (imgEl.dataset.dppvisFallbackBound === '1') continue;
+      imgEl.dataset.dppvisFallbackBound = '1';
+      imgEl.addEventListener(
+        'error',
+        () => {
+          // 用渲染器同一套类名与文案造占位，视觉上与"本来就没图"一致
+          const alt = imgEl.getAttribute('alt') ?? '';
+          const cls = imgEl.getAttribute('class') ?? 'dppvis-img';
+          const holder = doc.createElement('div');
+          holder.setAttribute('class', `${cls} dppvis-img--placeholder`);
+          holder.setAttribute('style', '--dppvis-hue:210');
+          holder.setAttribute('role', 'img');
+          holder.setAttribute('aria-label', alt);
+          const label = doc.createElement('span');
+          label.className = 'dppvis-img__alt';
+          label.textContent = alt;                       // textContent：零注入面
+          holder.appendChild(label);
+          imgEl.replaceWith(holder);
+        },
+        { once: true },
+      );
+    }
+  }
+
+  /**
    * 流式中：未闭合就先摆骨架。
    *
    * **关键**：这里是「隐藏 <pre> + 骨架插在其后」，而不是把 <pre> 换掉。
@@ -212,6 +247,7 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
     const card = buildCardHost(html);
     if (parent) entry.host.replaceWith(card);
     else entry.pre.after(card);
+    if (card.shadowRoot) hydrateImages(card.shadowRoot);
     entry.pre.remove();
     pending.delete(code);
     code.setAttribute(STATE_ATTR, 'rendered');
@@ -263,6 +299,7 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
 
     const host = buildCardHost(html);
     pre.replaceWith(host);
+    if (host.shadowRoot) hydrateImages(host.shadowRoot);
     code.setAttribute(STATE_ATTR, 'rendered');
     mounted.set(code, { host, code, source: raw });
     return true;

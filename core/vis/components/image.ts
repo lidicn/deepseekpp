@@ -23,7 +23,12 @@ export const imageRenderer: VisComponentRenderer = {
     const cls = ratio === '' ? 'dppvis-img' : `dppvis-img ${ratio}`;
     const resolved = ctx.imageResolver.resolve(props.src);
     if (resolved.src !== null) {
-      return `<img class="${cls}" src="${ctx.escape(resolved.src)}" alt="${ctx.escape(alt)}">`;
+      // lazy/async 省流量与主线程；no-referrer 是刻意选择：不少图床按 Referer 判防盗链，
+      // 不带 Referer 反而更容易过（豆瓣 418 就是"带了外来 Referer"导致的）。
+      return (
+        `<img class="${cls}" src="${ctx.escape(resolved.src)}" alt="${ctx.escape(alt)}"` +
+        ` loading="lazy" decoding="async" referrerpolicy="no-referrer">`
+      );
     }
     // 语义区分：模型**没给图**（src=null）是 PoC 的设计内状态 → 渐变占位，**不算降级**；
     // 只有**协议被拒**（javascript:/data:/ftp: 等）才是安全降级，需要进 outcome。
