@@ -40,6 +40,7 @@ import {
 } from '../../deepseek/adapter';
 import { emitTraceEvent } from '../../trace/collector';
 import { extractToolCalls } from '../../interceptor/tool-parser';
+import { diagnosticLogBuffer } from '../../diagnostics/log-buffer';
 import { createStreamingToolCallParser } from '../../interceptor/streaming-tool-call-parser';
 import { createStreamingToolTextAccumulator } from '../../interceptor/streaming-tool-text';
 import type { ToolCall as CoreToolCall } from '../../types';
@@ -308,6 +309,17 @@ export function createDeepSeekStreamFn(deps: DeepSeekStreamFnDeps): StreamFn {
         // errors on the next turn. Only update when we actually captured an id.
         if (result.responseMessageId !== null) {
           session.setParentMessageId(result.responseMessageId);
+        } else if (session.parentMessageId !== null) {
+          // M3 观测（不改行为）：截断轮没拿到新 id，parentMessageId 沿用上一轮。
+          // 下游 chainResponseMessageId() 会把它当成"本轮已提交原生历史"，
+          // 从而污染 isInlineAgentNativeHistoryBackedTrace 的裁决。
+          // 这里只记录事实，用来证实"陈旧正值"是否真的可达。
+          diagnosticLogBuffer.record({
+            level: 'warn',
+            source: 'inline-agent-stream',
+            message: 'stale_parent_message_id',
+            details: `reused=${session.parentMessageId} partial=${isPartialCompletion}`,
+          });
         }
 
         onParsed(toolCallParser.flush());
