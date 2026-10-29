@@ -145,6 +145,8 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
   let stepReasoning = ''; // current step's accumulated reasoning text (per-turn thinking deltas)
   /** 本轮流是否被截断（stopReason='length'）—— 结算层与 steering 共用。 */
   let lastTurnInterrupted = false;
+  /** 本轮起点时的 chain id（M3：用于识别"陈旧正值"）。 */
+  let parentIdAtTurnStart: number | null = session.parentMessageId;
   let lastPostedReasoning = '';
   let finalizeDone = false;
   let resolvedFinalText: string | null = null;
@@ -185,10 +187,13 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
   };
 
   const postStepComplete = () => {
-    post('AGENT_STEP_COMPLETE', {
+    // M3：只有本轮真的推进了 chain 才上报 id；否则上报 null，避免陈旧正值被当成"已提交"。
+const chainId = chainResponseMessageId();
+const chainAdvanced = chainId !== null && chainId !== parentIdAtTurnStart;
+post('AGENT_STEP_COMPLETE', {
       loopId,
       stepIndex,
-      responseMessageId: chainResponseMessageId(),
+      responseMessageId: chainAdvanced ? chainId : null,
       toolExecutions: [...executedInStep],
     } satisfies InlineAgentStepCompleteMsg);
   };
@@ -545,6 +550,9 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
           lastStepCompleted = false;
           stepReasoning = '';
           lastPostedReasoning = '';
+          // M3（独立评审 §4.5）：记下本轮起点的 chain id。收尾时若 chain 未推进，
+          // 说明本轮没拿到新 responseMessageId，session.parentMessageId 仍是上一轮的陈旧正值。
+          parentIdAtTurnStart = session.parentMessageId;
           post('AGENT_STEP_STARTED', { loopId, stepIndex });
         }
         break;
@@ -666,6 +674,7 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
     // term was dead code — `||` already short-circuits on `signal.aborted`).
     if (signal.aborted) {
       post('AGENT_LOOP_COMPLETE', {
+        interrupted: lastTurnInterrupted,
         loopId,
         totalSteps: stepIndex,
         totalTools: collectedExecutions.length,

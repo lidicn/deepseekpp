@@ -126,6 +126,7 @@ import {
   findInlineAgentRestoreTarget,
 } from "../core/inline-agent/message-anchor";
 import { classifyEmptyAnswer, hasAssistantMessage, readLastAssistantAnswerText, shouldWarnEmptyAnswer } from "../core/inline-agent/empty-answer";
+import { resolveTerminalHeader } from "../core/inline-agent/terminal-header";
 import { diagnosticLogBuffer } from "../core/diagnostics/log-buffer";
 import { routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
 import { probePageRenderState } from "../core/inline-agent/page-render-state";
@@ -6724,11 +6725,17 @@ async function handleAgentLoopComplete(
     } else if (finalAnswerAction.kind === "append") {
       appendInlineAgentNarration(inlineAgentContainer, finalAnswerAction.text, msg.loopId);
     }
+    // F2（独立评审 §6）：截断轮不得显示「已完成」—— 统一由 resolveTerminalHeader 决策。
+    const terminalHeader = resolveTerminalHeader({
+      interrupted: msg.interrupted === true,
+      budgetPaused,
+    });
     renderTerminalAgentConsoleHeader(
       inlineAgentContainer,
-      budgetPaused ? "paused" : "complete",
+      terminalHeader.phase,
       msg.totalSteps,
       msg.totalTools,
+      terminalHeader.labelKey ? contentT(terminalHeader.labelKey) : undefined,
     );
     const stream = getAgentConsoleBody(inlineAgentContainer);
     if (stream) {
