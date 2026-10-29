@@ -27,61 +27,56 @@ export const BUILTIN_SKILLS: Skill[] = [
     name: 'movie-cards',
     description:
       '高分影视检索与图文卡片：查证评分/年份/主创后，用 vis-json 卡片（左图右文）展示，而不是一大段文字。',
-    instructions: `你在用 DeepSeek++ 的「影视卡片」能力回答影视类问题。目标是把结论做成**左图右文**的卡片。
+    instructions: `你用 DeepSeek++ 的「影视卡片」回答影视类问题：把结论做成**左图右文**的卡片。
 
-## 0 · 最高优先级：下面的取图规则是**按序决策表**，命中即停
+## 0 · 平台已经替你做了什么（不用你操心，也不用你验证）
 
-规则之间如果冲突，**序号小的赢**，不要自己权衡。这一条是上一版的教训：
-协议里同时写了「没直链就 null」和「不要一律 null」，没有优先级 ⇒ 结果全空。
+- **渲染**：\`vis-json\` 文档 → 卡片。带 \`\`\` 围栏或不带围栏（正文里直接写 JSON）都能识别。
+- **取图**：你给的任意 \`https\` 直链，平台会用后台抓取并内联成图片（绕 CORS 与防盗链）。
+- **兜底**：图取不到 / JSON 不合法 / 版本不对 ⇒ 平台自动降级（渐变占位、保留原文），不会出现破图或空白卡。
 
-## 1 · 取图（按序命中即停）
+所以你只需要给「语义正确的图」，不需要保证它一定能 200，**也不需要自己去验链**。
 
-**第 1 步（有搜索工具就用）**：工具列表里有 \`web_search\` / \`web_fetch\` 时，
-先查 \`<片名> poster TMDB\`，从结果里取 \`image.tmdb.org\` 直链填 \`src\`，并在 meta 里标注来源。
+## 1 · 图片 URL 从哪来（参考，不是白名单）
 
-**第 2 步（无搜索工具，但你有把握是经典片）**：直接写出你确信存在的 TMDB 海报路径，
-然后**用 shell 验一遍再填**（shell 工具可用时）：
+按这个顺序想，哪个成立用哪个：
 
-\`\`\`bash
-curl -s -o /dev/null -w "%{http_code}" -I "https://image.tmdb.org/t/p/w342/<poster_path>"
-\`\`\`
+1. **有搜索工具（\`web_search\` / \`web_fetch\`）**：查 \`<片名> poster\`，从结果里挑真实的海报直链。
+2. **没有搜索工具**：凭你对这部作品的了解写直链。常见形态可参考：
+   - TMDB：\`https://image.tmdb.org/t/p/w342/<poster_path>\`（\`poster_path\` 是形如 \`9O7gLzmreU0nGkIB6K3BsJbzvNv\` 的 27 位串）
+   - Wikimedia：\`https://upload.wikimedia.org/wikipedia/<...>\`（维基条目里那张海报）
+   - 豆瓣图床 \`img*.doubanio.com\`：实测常被 418 挡，能不用就不用
+   - **其它任何 CDN 都可以** —— 平台会去取，取不到就降级，不影响卡片其余部分
+3. **没把握**：\`src: null\` + \`fallback.hue\`（按题材给色相）。渐变占位是正常结果，不是失败。
 
-- 返回 **200** ⇒ 填 \`src\`，meta 里加「海报已实测」
-- 返回其它码 ⇒ **立刻 \`null\`，不要猜第二次**
-- shell 不可用 ⇒ 直接走第 3 步，**不要盲填**
+**唯一禁止**：编造随机 hash / 编造作品 ID / 用占位域名（\`example.com\` 这类）。宁可 null。
 
-**第 3 步（新片 / 冷门片 / 前两步都不成立）**：\`src: null\` + \`fallback.hue\`（按题材给一个色相），走渐变占位。
+## 2 · 事实字段
 
-**任何情况都禁止**：拼接随机 hash、编造 TMDB/IMDb ID、使用豆瓣图床（\`doubanio.com\` 实测 418）。
-
-## 2 · 先查证事实，再出卡
-
-评分、年份、导演、主演、时长：**有工具就查，没工具就别写具体分数**（写「口碑较高」这类弱化表述），
-绝不编造数字。诺贝尔式的一句话说清：宁可少一个字段，不要多一个假数字。
+评分、年份、导演、主演、时长：有工具就查；没工具就弱化表述（「口碑较高」而不是编一个 9.1）。
+少一个字段好过多一个假数字。
 
 ## 3 · 输出协议
 
-每部作品输出**一个** \`\`\`vis-json 代码块（**必须用三反引号围栏**；不围栏时渲染层会退化处理），
-块外才写点评。
+每部一个 \`vis-json\` 文档，块外写点评。
 
 \`\`\`vis-json
 {"v":1,"root":{"type":"Row","children":[
   {"type":"Image","src":"https://image.tmdb.org/t/p/w342/9O7gLzmreU0nGkIB6K3BsJbzvNv.jpg","alt":"肖申克的救赎 海报","ratio":"2/3","fallback":{"hue":208}},
   {"type":"Column","children":[
     {"type":"Text","text":"肖申克的救赎","variant":"title"},
-    {"type":"Text","text":"1994 · 剧情 · 142 分钟 · 豆瓣 9.7","variant":"subtitle"},
+    {"type":"Text","text":"1994 · 剧情 · 142 分钟","variant":"subtitle"},
     {"type":"Text","text":"关于希望与时间的经典叙事：一个人用二十年凿穿高墙。","variant":"body"},
-    {"type":"Text","text":"导演：弗兰克·德拉邦特 · 主演：蒂姆·罗宾斯 / 摩根·弗里曼 · 海报已实测","variant":"meta"}
+    {"type":"Text","text":"导演：弗兰克·德拉邦特 · 主演：蒂姆·罗宾斯 / 摩根·弗里曼","variant":"meta"}
   ]}
 ]}}
 \`\`\`
 
-字段白名单（多一个字段就会被丢弃）：\`v\`(=1) / \`root\`；容器 \`Column\`/\`Row\` 只接受 \`children\`；
+字段：\`v\`(=1) / \`root\`；容器 \`Column\`/\`Row\` 只收 \`children\`；
 \`Text\`：\`text\`(≤400 字) + \`variant\` ∈ title|subtitle|body|meta；
 \`Image\`：\`src\`(https 直链或 null) + \`alt\` + \`ratio\` ∈ "2/3"|"16/9" + \`fallback.hue\` ∈ 0-360。
 
-硬约束：版式固定 \`Row[Image, Column[title, subtitle, body, meta]]\`、一次 ≤3 张、深度 ≤8、
-JSON 必须单行合法；**格式失败一次就改用纯文字回答**，不要反复重写。`,
+版式用 \`Row[Image, Column[title, subtitle, body, meta]]\`；一次 ≤3 张；深度 ≤8；JSON 单行合法。`,
     source: 'builtin',
     memoryEnabled: false,
   },
@@ -332,60 +327,53 @@ const ENGLISH_BUILTIN_SKILL_TEXT: Record<string, BuiltinSkillText> = {
       'High-rated film/TV lookup with visual cards: verify rating/year/credits, then answer with a vis-json (image-left, text-right) card instead of a wall of text.',
     instructions: `You answer film/TV questions with DeepSeek++ visual cards (image-left, text-right).
 
-## 0 - Highest priority: the image rules below are an ORDERED decision table. First match wins.
+## 0 - What the platform already does for you (do not re-do it)
 
-If two rules conflict, the lower number wins. Do not re-weigh them yourself. This exact ambiguity
-(one rule saying "null when unsure", another saying "do not default to null") previously produced
-all-null posters: without an explicit priority, the model picked the safe one every time.
+- **Rendering**: a \`vis-json\` document becomes a card, with or without \`\`\` fences.
+- **Images**: any \`https\` direct link you give is fetched in the background and inlined (CORS / hotlink protection handled for you).
+- **Fallback**: unreachable image / invalid JSON / wrong version => graceful degradation (gradient placeholder, raw text preserved). No broken images, no blank cards.
 
-## 1 - Getting a poster (ordered, first match wins)
+So you only need a *semantically correct* image; you do not need to guarantee it returns 200, and you do not need to verify links yourself.
 
-**Step 1 (search tools available)**: when \`web_search\` / \`web_fetch\` are in the tool list, search
-\`<title> poster TMDB\`, take the \`image.tmdb.org\` direct link and put it in \`src\`, noting the source in meta.
+## 1 - Where image URLs come from (reference, not an allowlist)
 
-**Step 2 (no search tool, but you are confident it is a well-known film)**: write the TMDB poster path you
-believe exists, then **verify it before using it** (when a shell tool is available):
+Try in this order:
 
-\`\`\`bash
-curl -s -o /dev/null -w "%{http_code}" -I "https://image.tmdb.org/t/p/w342/<poster_path>"
-\`\`\`
+1. **Search tools present (\`web_search\` / \`web_fetch\`)**: search \`<title> poster\` and take a real direct link from the results.
+2. **No search tool**: write a link you know. Common shapes:
+   - TMDB: \`https://image.tmdb.org/t/p/w342/<poster_path>\` (27-char id like \`9O7gLzmreU0nGkIB6K3BsJbzvNv\`)
+   - Wikimedia: \`https://upload.wikimedia.org/wikipedia/<...>\`
+   - Douban CDN \`img*.doubanio.com\`: measured 418 often; prefer avoiding it
+   - **Any other CDN is fine** - the platform fetches it and degrades if it fails
+3. **Unsure**: \`src: null\` plus \`fallback.hue\`. A gradient placeholder is a legitimate result, not a failure.
 
-- **200** => use it in \`src\`, add "poster verified" to meta
-- anything else => set \`null\` immediately, **do not guess a second path**
-- no shell available => go to step 3; **never fill blindly**
+**Only forbidden**: fabricating random hashes, inventing title IDs, or using placeholder domains. Prefer null over invention.
 
-**Step 3 (new/obscure title, or steps 1-2 do not apply)**: \`src: null\` plus \`fallback.hue\`.
+## 2 - Facts
 
-**Never, under any rule**: fabricate random hashes, invent TMDB/IMDb ids, or use \`doubanio.com\` (measured 418).
-
-## 2 - Verify facts before rendering
-
-Rating, year, director, cast, runtime: **search when you can; when you cannot, omit exact numbers**
-and use softer wording. Never invent a number: one missing field beats one fake number.
+Rating / year / director / cast / runtime: search when you can; otherwise soften the wording. One missing field beats one fake number.
 
 ## 3 - Output protocol
 
-One \`\`\`vis-json fenced block per title (**use real backtick fences**; without them the renderer falls back),
-commentary outside the block.
+One \`vis-json\` document per title; commentary outside.
 
 \`\`\`vis-json
 {"v":1,"root":{"type":"Row","children":[
   {"type":"Image","src":"https://image.tmdb.org/t/p/w342/9O7gLzmreU0nGkIB6K3BsJbzvNv.jpg","alt":"The Shawshank Redemption poster","ratio":"2/3","fallback":{"hue":208}},
   {"type":"Column","children":[
     {"type":"Text","text":"The Shawshank Redemption","variant":"title"},
-    {"type":"Text","text":"1994 · Drama · 142 min · 9.3/10","variant":"subtitle"},
-    {"type":"Text","text":"A story about hope and time: a man carves his way through the wall.","variant":"body"},
-    {"type":"Text","text":"Director: Frank Darabont · Cast: Tim Robbins / Morgan Freeman · poster verified","variant":"meta"}
+    {"type":"Text","text":"1994 - Drama - 142 min","variant":"subtitle"},
+    {"type":"Text","text":"A story about hope and time.","variant":"body"},
+    {"type":"Text","text":"Director: Frank Darabont - Cast: Tim Robbins / Morgan Freeman","variant":"meta"}
   ]}
 ]}}
 \`\`\`
 
-Field allowlist (anything else is dropped): \`v\`(=1) / \`root\`; containers \`Column\`/\`Row\` accept only \`children\`;
+Fields: \`v\`(=1) / \`root\`; containers \`Column\`/\`Row\` take only \`children\`;
 \`Text\`: \`text\` (<=400 chars) + \`variant\` in title|subtitle|body|meta;
-\`Image\`: \`src\` (https direct link or null) + \`alt\` + \`ratio\` in "2/3"|"16/9" + \`fallback.hue\` in 0-360.
+\`Image\`: \`src\` (https direct link or null) + \`alt\` + \`ratio\` in "2/3"|"16/9" + \`fallback.hue\` 0-360.
 
-Hard limits: layout is \`Row[Image, Column[title, subtitle, body, meta]]\`; at most 3 cards; depth <=8;
-single-line valid JSON; **after one formatting failure, answer in plain text** instead of retrying.`,
+Layout \`Row[Image, Column[title, subtitle, body, meta]]\`; at most 3 cards; depth <=8; single-line JSON.`,
   },
   shell: {
     description: 'Local command-line assistant: run shell commands on the user machine through Native Messaging. Use for file operations, script execution, system inspection, and any task that requires a terminal.',
