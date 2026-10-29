@@ -103,3 +103,13 @@ describe('诊断器到分类器的端到端一致性', () => {
     expect(classifyStreamEnd(diag.snapshot())).toBe('tool-turn-close');
   });
 });
+describe('shouldNudge · 只思考没回答（真机 2026-10-30）', () => {
+  it('★★ 空文本 + 有 reasoning ⇒ 续一轮（旧逻辑直接抛错，用户只看到"已思考…"）', () => {
+    expect(shouldNudge('审计这个仓库', [], '', { hadReasoning: true })).toBe(true);
+  });
+
+  it('★ 空文本 + 无 reasoning + 无执行 ⇒ 仍不续（避免纯空轮空转）', () => {
+    expect(shouldNudge('审计这个仓库', [], '', { hadReasoning: false })).toBe(false);
+    expect(shouldNudge('审计这个仓库', [], '')).toBe(false);
+  });
+});

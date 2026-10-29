@@ -114,10 +114,22 @@ export function stripDanglingLeadingPunctuation(text: string): string {
   return text.replace(/^[\s\u3000]*(?:[，,、。．.;；:：]\s*)+/, '').trimStart();
 }
 
+export interface ShouldNudgeOptions {
+  /**
+   * 本轮是否产出过 reasoning/thinking 文本。
+   *
+   * 真机实测（2026-10-30）：模型有时**只输出思考**就停下（可见文本为空、
+   * 无工具调用），旧逻辑直接抛错，用户只看到一段"已思考…"然后什么都没有。
+   * 这种轮次值得给它一次"把答案写出来"的续轮机会（受 MAX_NUDGES 封顶）。
+   */
+  hadReasoning?: boolean;
+}
+
 export function shouldNudge(
   originalTask: string,
   executions: ToolExecutionRecord[],
   visibleText: string,
+  options: ShouldNudgeOptions = {},
 ): boolean {
   if (extractTaskCompleteSignal(visibleText)) return false;
   // P0-3（2026-10-30）：空文本不许**无条件**续轮。
@@ -128,7 +140,10 @@ export function shouldNudge(
   //
   // 新规则：只有**本轮确实产出了工具执行**才续（说明有东西要总结）；
   // 纯空轮直接停，由上层给出可读的 emptyOutcome，而不是静默空转。
-  if (visibleText.trim().length === 0) return executions.length > 0;
+  if (visibleText.trim().length === 0) {
+    // 有工具结果 ⇒ 有东西要总结；只思考没回答 ⇒ 值得再要一次答案。
+    return executions.length > 0 || options.hadReasoning === true;
+  }
   const tail = getNudgeDecisionText(visibleText);
   // Fenced code block at the tail = renderable deliverable, treat complete.
   // R4-N6: 旧判据 tail.includes('```') 会把"写到一半被截断的未闭合代码块"（``` 出现

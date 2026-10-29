@@ -379,6 +379,13 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
       // 可展示内容也没产生新 message id（responseMessageId=null），继续 nudge
       // 只会让 mock/真实流在第二轮挂起（已提交测试 line 227/249/278 复现）。
       if (!text.trim()) {
+        // 2026-10-30 真机：模型只输出思考就停下（可见文本空、无工具），
+        // 旧逻辑直接抛错 ⇒ 用户只看到"已思考…"，任务彻底失败。
+        // 若本轮确实有 reasoning、chain 可续、nudge 预算未耗尽 ⇒ 续一轮把答案要出来。
+        const hadReasoning = stepReasoning.trim().length > 0;
+        if (hadReasoning && hasContinuableChain() && nudge.count < budget.maxNudges) {
+          return false;
+        }
         throw new Error('DeepSeek returned an empty agent continuation without a continuable response message.');
       }
       if (!hasContinuableChain()) {
@@ -439,6 +446,7 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
           payload.originalPrompt,
           collectedExecutions,
           stripRetiredArtifactProtocolBlocks(lastTurnText),
+          { hadReasoning: stepReasoning.trim().length > 0 },
         )) {
         // R4 修复：nudge 受 maxNudges 封顶（之前是死字段，只增不减）
         if (nudge.count >= budget.maxNudges) {
