@@ -16,7 +16,9 @@
 export const DEFAULT_CATALOG_BUDGET_BYTES = 8_000;
 
 /** 目录固定开销预留（共享区 + shell/python 提示 + 分隔符）。 */
-export const DEFAULT_CATALOG_RESERVE_BYTES = 1_200;
+// 真机实测：共享区 + shell/python 提示 + hiddenSummary ≈ 2.9KB。
+// 预留按实测抬高，否则 catalog 会稳定超预算（实测 9,442B > 8,000B 目标）。
+export const DEFAULT_CATALOG_RESERVE_BYTES = 3_200;
 
 /** 名称索引里每个工具标题的最大字符数。 */
 const INDEX_TITLE_MAX_CHARS = 40;

@@ -4,6 +4,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  TOOL_RATE_POLICY,
   checkExecutionGate,
   resetExecutionGatesForTests,
 } from '../core/tool/execution-gates';
@@ -66,9 +67,9 @@ describe('execution-gates · W19 熔断器', () => {
 describe('execution-gates · W18 限流', () => {
   beforeEach(() => resetExecutionGatesForTests());
 
-  it('maxCalls=60 内放行，第 61 次被拒', () => {
+  it(`maxCalls=${TOOL_RATE_POLICY.maxCalls} 内放行，第 ${TOOL_RATE_POLICY.maxCalls + 1} 次被拒`, () => {
     const d = desc('mcp', 'serverA');
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < TOOL_RATE_POLICY.maxCalls; i++) {
       expect(checkExecutionGate(d, 'en').allowed).toBe(true);
     }
     const g = checkExecutionGate(d, 'en');
@@ -79,7 +80,7 @@ describe('execution-gates · W18 限流', () => {
   it('窗口滑动后恢复', () => {
     const d = desc('mcp', 'serverA');
     const now = 1_000_000;
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < TOOL_RATE_POLICY.maxCalls; i++) {
       const g = checkExecutionGate(d, 'en');
       // 直接操作 limiter 注入 now
       g.limiter.tryAcquire(now);
@@ -92,7 +93,7 @@ describe('execution-gates · W18 限流', () => {
   it('两个 provider 互不影响', () => {
     const a = desc('mcp', 'serverA');
     const b = desc('mcp', 'serverB');
-    for (let i = 0; i < 60; i++) checkExecutionGate(a, 'en');
+    for (let i = 0; i < TOOL_RATE_POLICY.maxCalls; i++) checkExecutionGate(a, 'en');
     expect(checkExecutionGate(a, 'en').allowed).toBe(false);
     expect(checkExecutionGate(b, 'en').allowed).toBe(true);
   });

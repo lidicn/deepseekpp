@@ -27,7 +27,7 @@ import {
 } from './authorization';
 import { enforceLocalSkillCwd } from './local-skill-cwd';
 import { truncateToolResultDetail } from './result-governance';
-import { checkExecutionGate } from './execution-gates';
+import { acquireExecutionGate } from './execution-gates';
 
 export interface RuntimeToolCallOptions {
   timeoutMs?: number;
@@ -310,7 +310,7 @@ async function executeRuntimeToolCall(
         resolvedCall = resolution.call;
         executionDescriptor = resolution.descriptor;
         // W18/W19：先过 provider 维度的熔断 + 限流闸门
-        const gate = checkExecutionGate(executionDescriptor, locale);
+        const gate = await acquireExecutionGate(executionDescriptor, locale);
         if (!gate.allowed) {
           result = gate.blockedResult!;
         } else {
@@ -339,7 +339,7 @@ async function executeRuntimeToolCall(
       }
     } else {
       // W18/W19：先过 provider 维度的熔断 + 限流闸门
-      const gate = checkExecutionGate(executionDescriptor, locale);
+      const gate = await acquireExecutionGate(executionDescriptor, locale);
       if (!gate.allowed) {
         result = gate.blockedResult!;
       } else {

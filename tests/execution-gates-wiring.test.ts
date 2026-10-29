@@ -17,7 +17,7 @@ import {
   type RuntimeToolProvider,
 } from '../core/tool/provider-registry';
 import { createRuntimeToolRuntime } from '../core/tool/runtime';
-import { resetExecutionGatesForTests } from '../core/tool/execution-gates';
+import { TOOL_RATE_POLICY, resetExecutionGatesForTests } from '../core/tool/execution-gates';
 import type {
   ToolCall,
   ToolDescriptor,
@@ -134,12 +134,12 @@ describe('W18 速率限制已接在 runtime 上', () => {
 
     // 全部成功 ⇒ 熔断器不会介入，只能由限流器拦
     const first = [];
-    for (let i = 0; i < 60; i += 1) first.push(await runtime.executeToolCall(call, 'test', 'en'));
+    for (let i = 0; i < TOOL_RATE_POLICY.maxCalls; i += 1) first.push(await runtime.executeToolCall(call, 'test', 'en'));
     expect(first.every((r) => r.ok)).toBe(true);
-    expect(execute).toHaveBeenCalledTimes(60);
+    expect(execute).toHaveBeenCalledTimes(TOOL_RATE_POLICY.maxCalls);
 
     const limited = await runtime.executeToolCall(call, 'test', 'en');
-    expect(execute).toHaveBeenCalledTimes(60); // ← 第 61 次没有落到 provider
+    expect(execute).toHaveBeenCalledTimes(TOOL_RATE_POLICY.maxCalls); // ← 第 61 次没有落到 provider
     expect(limited.ok).toBe(false);
     expect(limited.error?.code).toBe('TOOL_RATE_LIMITED');
     expect(limited.error?.retryable).toBe(true);
