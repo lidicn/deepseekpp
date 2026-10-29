@@ -17,6 +17,11 @@ import {
   renderCatalogParts,
   renderCatalogSharedRegion,
 } from './catalog-template';
+import {
+  renderCatalogNameIndex,
+  resolveCatalogBudgetBytes,
+  selectCatalogTools,
+} from './catalog-selection';
 import { refactorTelemetry } from '../debug/refactor-telemetry';
 
 export interface PromptAugmentationOptions {
@@ -75,7 +80,16 @@ export function buildPromptAugmentation(
   const memBlock = memoryEnabled
     ? formatMemoriesBlock(selected, locale)
     : translate(locale, 'prompt.memoryDisabled');
-  const toolsBlock = systemPromptEnabled ? renderToolSchemas(toolDescriptors, locale, hiddenSummary) : '';
+  // 2026-10-30：工具目录预算（24,084B → ≤8,000B）。完整参数块只给 top-k，
+  // 其余只给一行名字 —— 保证"一个工具都不丢"（名字仍可发现，调用按名字解析）。
+  // 回滚开关（无需改码）：localStorage.setItem('dpp:catalogBudget', '0') ⇒ 全量。
+  const catalogSelection = selectCatalogForPrompt(toolDescriptors, originalPrompt);
+  const toolNameIndex = renderCatalogNameIndex(catalogSelection.indexOnly);
+  const toolsBlock = systemPromptEnabled
+    ? [renderToolSchemas(catalogSelection.full, locale, hiddenSummary), toolNameIndex]
+      .filter(Boolean)
+      .join('\n\n')
+    : '';
   const baseSystem = systemPromptEnabled
     ? translate(
       locale,
@@ -205,6 +219,46 @@ function renderPythonMcpHint(
     translate(locale, 'prompt.pythonHintAvailability'),
     translate(locale, 'prompt.pythonHintSafety'),
   ].filter(Boolean).join('\n');
+}
+
+const catalogSelectionCache = new Map<string, { descriptors: readonly ToolDescriptor[]; full: ToolDescriptor[]; indexOnly: ToolDescriptor[] }>();
+
+/**
+ * 选择结果缓存：`renderToolSchemas` 的缓存以 **descriptors 数组引用** 为键，
+ * 每次新建数组会让它永远 miss。这里按 (数组引用, 用户文本, 预算) 复用同一个 full 数组。
+ */
+function selectCatalogForPrompt(
+  descriptors: readonly ToolDescriptor[],
+  userText: string,
+): { full: ToolDescriptor[]; indexOnly: ToolDescriptor[] } {
+  const budget = resolveCatalogBudgetBytes();
+  const key = `${userText.length}:${userText.slice(0, 64)}|${budget}`;
+  const cached = catalogSelectionCache.get(key);
+  if (cached && cached.descriptors === descriptors) {
+    return { full: cached.full, indexOnly: cached.indexOnly };
+  }
+  const selection = selectCatalogTools({
+    tools: descriptors.map((descriptor) => ({
+      name: descriptor.name,
+      title: descriptor.title,
+      description: descriptor.description,
+      descriptor,
+    })),
+    userText,
+    measure: (entry) => measureToolSchemaBytes(entry.descriptor),
+    budgetBytes: budget,
+  });
+  const entry = {
+    descriptors,
+    full: selection.full.map((item) => item.descriptor),
+    indexOnly: selection.indexOnly.map((item) => item.descriptor),
+  };
+  if (catalogSelectionCache.size >= 4) {
+    const oldest = catalogSelectionCache.keys().next();
+    if (!oldest.done) catalogSelectionCache.delete(oldest.value);
+  }
+  catalogSelectionCache.set(key, entry);
+  return { full: entry.full, indexOnly: entry.indexOnly };
 }
 
 function renderToolSchema(descriptor: ToolDescriptor, catalog: ToolInvocationCatalog): string {
