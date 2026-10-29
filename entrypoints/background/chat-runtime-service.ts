@@ -44,6 +44,11 @@ import {
   MAX_CHAT_TOOL_STEPS,
   serializeToolExecutions,
 } from '../../core/chat/loop-contract';
+import {
+  createBackgroundWebChatTrace,
+  utf8ByteLength,
+  type BackgroundWebChatTrace,
+} from '../../core/trace/background-web-chat-trace';
 
 /**
  * R08：工具运行事件，随 CHAT_STREAM_CHUNK 广播给侧边栏工具面板。
@@ -227,6 +232,7 @@ export function createChatRuntimeService(
     call: ToolCall,
     step?: number,
     excludeTabId?: number,
+    webTrace?: BackgroundWebChatTrace,
   ): Promise<ToolExecutionRecord> => {
     assertTurnActive(turn);
 
@@ -244,6 +250,7 @@ export function createChatRuntimeService(
     let result: ToolExecutionRecord;
     let ok = false;
     let summary = '';
+    let durationMs = 0;
     try {
       const rawResult = await dependencies.executeToolCall(call, {
         signal: turn.controller.signal,
@@ -259,6 +266,9 @@ export function createChatRuntimeService(
       ok = result.result.ok;
       summary = result.result.summary ?? '';
     } finally {
+      durationMs = Date.now() - startedAt;
+      // P0-2: W29 tool.exec with real duration on the background web path.
+      webTrace?.toolExec(call.name, durationMs, ok);
       // P0-3: 清除当前工具标记 + 追加到历史
       void clearCurrentTool().catch(() => {});
       // R08: 成功/失败都在结算后广播 end（finally 保证不遗漏）。
@@ -271,7 +281,7 @@ export function createChatRuntimeService(
           step,
           startedAt,
           ok,
-          durationMs: Date.now() - startedAt,
+          durationMs,
           summary: summary.slice(0, 200),
         },
       }, excludeTabId);
@@ -292,15 +302,36 @@ export function createChatRuntimeService(
     let currentInput = input;
     // R07: 无工具截断续轮单独计数，区别于含工具的 step，超限即停（防空转烧配额）。
     let autoContinues = 0;
+    // P0-2: background web path W29 trace (persisted to dpp_inline_agent_traces).
+    const webTrace = createBackgroundWebChatTrace();
+    let totalTools = 0;
+    let lastFullText = '';
+
+    const persistWebTrace = (status: 'complete' | 'error') => {
+      void webTrace.persist({
+        chatSessionId: currentInput.chatSessionId,
+        originalPrompt: input.prompt ?? '',
+        agentTaskPrompt: input.prompt ?? '',
+        finalText: lastFullText,
+        totalTools,
+        status,
+      });
+    };
 
     for (let step = 0; step < MAX_CHAT_TOOL_STEPS; step++) {
       assertTurnActive(turn);
       let accumulated = '';
+      // One model request = one W29 turn (same semantics as content inline agent).
+      webTrace.beginTurn(`web-chat:${step}`);
+      const powStartedAt = Date.now();
       const powHeaders = await dependencies.createPowHeaders(
         currentInput.clientHeaders,
         turn.controller.signal,
       );
+      const powMs = Date.now() - powStartedAt;
       assertTurnActive(turn);
+      // P0-2: request.sent immediately before the completion POST.
+      webTrace.requestSent(utf8ByteLength(currentInput.prompt ?? ''), powMs);
       // R06: web 路径历史在服务端，本地只能粗估当前 prompt + 本轮已生成文本（非全量，见账本决策）。
       // 仅 warn/critical 才广播，ok 不发 chunk，避免插队污染既有流顺序与取消判定。
       const webBudget = evaluateBudgetForText(`${currentInput.prompt ?? ''}\n${accumulated}`);
@@ -311,11 +342,17 @@ export function createChatRuntimeService(
           excludeTabId,
         );
       }
+      let firstFrameRecorded = false;
       const result = await dependencies.submitWebPrompt({
         ...currentInput,
         powHeaders,
       }, {
         onTextChunk(newText, fullText) {
+          if (!firstFrameRecorded) {
+            firstFrameRecorded = true;
+            // First frame flush = TTFT (same Step 2.2 semantics).
+            webTrace.sseFrame('text');
+          }
           accumulated = fullText;
           emitChunk(turn, { text: newText, done: false, phase: 'answer' }, excludeTabId);
         },
@@ -324,6 +361,10 @@ export function createChatRuntimeService(
         // stream-codec split); forward them like the official-API loop so the
         // sidepanel keeps showing the thinking process.
         onReasoningChunk(newText) {
+          if (!firstFrameRecorded) {
+            firstFrameRecorded = true;
+            webTrace.sseFrame('think');
+          }
           emitChunk(turn, {
             text: '',
             reasoningText: newText,
@@ -338,7 +379,10 @@ export function createChatRuntimeService(
       // M1-2: 写 parentMessageId 到 marker
       void updateMarker({ parentMessageId: chatParentMessageId }).catch(() => {});
       const fullText = accumulated || result.assistantText;
+      lastFullText = fullText || lastFullText;
       if (!fullText) {
+        webTrace.endTurn('empty', false);
+        persistWebTrace('error');
         emitChunk(turn, {
           text: '',
           done: true,
@@ -360,6 +404,8 @@ export function createChatRuntimeService(
           // R07: 续轮次数超限 → 明确广播 exhausted，不再空转。
           if (autoContinues >= MAX_AUTO_CONTINUE) {
             console.log('[chat-runtime] auto-continue exhausted', { step, autoContinues });
+            webTrace.endTurn('auto_continue_exhausted', false);
+            persistWebTrace('error');
             emitChunk(turn, {
               text: fullText,
               done: true,
@@ -369,6 +415,7 @@ export function createChatRuntimeService(
           }
           autoContinues++;
           console.log('[chat-runtime] truncated stream without tool calls, auto-continuing', { step, autoContinues });
+          webTrace.endTurn('auto_continue', false);
           currentInput = {
             ...currentInput,
             prompt: dependencies.continueWithToolResults('(stream interrupted, no new tool results — please continue completing your answer)'),
@@ -376,6 +423,8 @@ export function createChatRuntimeService(
           };
           continue;
         }
+        webTrace.endTurn(result.finished ? 'finalized' : 'partial', true);
+        persistWebTrace('complete');
         emitChunk(turn, {
           text: fullText,
           done: true,
@@ -385,7 +434,12 @@ export function createChatRuntimeService(
       }
 
       const executions: ToolExecutionRecord[] = [];
-      for (const call of toolCalls) executions.push(await executeChatTool(turn, call, step, excludeTabId));
+      for (const call of toolCalls) {
+        executions.push(await executeChatTool(turn, call, step, excludeTabId, webTrace));
+        totalTools += 1;
+      }
+      webTrace.endTurn('step_advanced', false);
+      persistWebTrace('complete');
       const continuationPrompt = dependencies.continueWithToolResults(
         serializeToolExecutions(executions),
       );
@@ -396,6 +450,8 @@ export function createChatRuntimeService(
       };
     }
 
+    webTrace.endTurn('max_tool_steps', false);
+    persistWebTrace('complete');
     emitChunk(
       turn,
       { text: dependencies.maxToolStepsMessage(), done: true },
