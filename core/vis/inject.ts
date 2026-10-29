@@ -22,7 +22,9 @@ import type { RenderOutcome } from './types';
 
 const VIS_LANGUAGE_CLASS = 'vis-json';
 const ASSISTANT_ROOT_SELECTOR = '.ds-markdown';
-const CODE_SELECTOR = 'pre > code';
+// 不假设只有 pre > code：不同渲染器可能在 pre 与 code 之间插一层包装；
+// 同时接受没有 pre 的裸 code（只要类名或内容像 vis-json）。
+const CODE_SELECTOR = 'pre code, code[class*="vis-json"]';
 const HOST_CLASS = 'dppvis-host';
 const PENDING_CLASS = 'dppvis-host--pending';
 const STATE_ATTR = 'data-dppvis-state';
@@ -336,14 +338,44 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
     return true;
   }
 
+  /**
+   * 诊断快照：写进 <html data-dppvis-diag>，页面控制台一行可读。
+   * 目的：区分「模型没输出代码块」/「代码块不在助手回合」/「判据没命中」/「渲染被拒」。
+   */
+  function writeDiag(input: { scanned: number; sawFence: number; inTurn: number; rendered: number; mounted: number; pending: number }): void {
+    try {
+      const turnCount = doc.querySelectorAll(ASSISTANT_ROOT_SELECTOR).length;
+      // 采样最多 5 个代码块：类名 + 前 24 字符，用来判定"模型有没有出围栏"与"围栏类名是什么"
+      const samples = Array.from(doc.querySelectorAll(CODE_SELECTOR)).slice(0, 5).map((el) => ({
+        cls: el.getAttribute('class') ?? '',
+        head: (el.textContent ?? '').trim().slice(0, 24),
+        inTurn: el.closest(ASSISTANT_ROOT_SELECTOR) !== null,
+      }));
+      doc.documentElement.setAttribute(
+        'data-dppvis-diag',
+        JSON.stringify({ ...input, turns: turnCount, blocks: samples, at: Date.now() }),
+      );
+    } catch {
+      // 诊断不能影响主流程
+    }
+  }
+
   function scan(): number {
     unmountStale();
     let rendered = 0;
 
     // code 始终留在 DOM（只是 <pre> 被隐藏），所以统一走下面这段 DOM 巡查即可
+    let scanned = 0;
+    let sawFence = 0;
+    let inTurn = 0;
     for (const root of roots()) {
       const codes = root.querySelectorAll(CODE_SELECTOR);
+      scanned += codes.length;
       for (const code of Array.from(codes)) {
+        if (codeMatches(code)) {
+          sawFence += 1;
+          if (inAssistantTurn(code)) inTurn += 1;
+        }
         try {
           if (handle(code)) rendered += 1;
         } catch {
@@ -351,6 +383,7 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
         }
       }
     }
+    writeDiag({ scanned, sawFence, inTurn, rendered, mounted: mounted.size, pending: pending.size });
     return rendered;
   }
 

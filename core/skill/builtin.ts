@@ -38,7 +38,10 @@ export const BUILTIN_SKILLS: Skill[] = [
 
 1. 如果工具列表里有 \`web_search\` / \`web_fetch\`，**先用它们核实**评分、年份、导演、主演、时长。不要凭记忆编数字。
 2. 查不到就如实说「以下信息可能过时」，并降低不确定字段的表达强度（例如不写具体评分）。
-3. **绝对不要编造图片地址**：没有可信直链就把 \`src\` 设为 \`null\`，靠渐变占位。
+3. 图片地址：**优先给可信直链**（例如 TMDB / IMDb 的静态海报 CDN，形如 \`https://image.tmdb.org/t/p/w342/xxx.jpg\`）。
+   - 有工具结果里的图片地址就直接用；没有把握时**宁可用 \`null\`**（走渐变占位）。
+   - 允许凭已知作品名写出「你确信存在」的图床直链；**明确禁止**拼接随机 hash、占位域名或编造 ID。
+   - 不要因为「没有搜索工具」就一律填 null —— 那样用户永远只能看到渐变块。
 
 ## 输出协议（严格）
 
@@ -328,7 +331,10 @@ Use it when the user asks for high-rated movie/TV recommendations, "is this film
 
 1. If \`web_search\` / \`web_fetch\` are available, use them first to confirm rating, year, director, cast, runtime. Do not invent numbers from memory.
 2. If you cannot verify, say the data may be outdated and soften uncertain fields (e.g. omit an exact rating).
-3. **Never invent an image URL**: if you have no trustworthy direct link, set \`src\` to \`null\` and rely on the gradient placeholder.
+3. Image URL: **prefer a trustworthy direct link** (e.g. TMDB / IMDb static poster CDN, like \`https://image.tmdb.org/t/p/w342/xxx.jpg\`).
+   - Use any image URL found in tool results; when unsure, fall back to \`null\` (gradient placeholder).
+   - You may write a CDN link you are confident exists for a known title; **never** fabricate random hashes, placeholder domains or invented IDs.
+   - Do not default to \`null\` just because no search tool is available — that leaves users with gradient blocks forever.
 
 ## Output protocol (strict)
 
