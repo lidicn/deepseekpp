@@ -8,6 +8,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyEmptyAnswer,
+  hasAssistantMessage,
+  readLastAssistantAnswerText,
   shouldWarnEmptyAnswer,
 } from '../core/inline-agent/empty-answer';
 
@@ -41,3 +43,45 @@ describe('classifyEmptyAnswer', () => {
     expect(shouldWarnEmptyAnswer('empty')).toBe(true);
   });
 });
+describe('DOM 级判定（真机：payload.text 带着思考，不能用它判）', () => {
+  function dom(html: string): HTMLElement {
+    const root = document.createElement('div');
+    root.innerHTML = html;
+    return root;
+  }
+
+  it('★★ 只有思考块、没有 .ds-markdown 正文 ⇒ 读出空串（而非把思考当正文）', () => {
+    const root = dom(`
+      <div class="ds-message"><div class="ds-think">已思考（用时 1 秒）…让我开始。</div></div>`);
+    expect(hasAssistantMessage(root)).toBe(true);
+    expect(readLastAssistantAnswerText(root)).toBe('');
+  });
+
+  it('★ 有正文 ⇒ 读出正文', () => {
+    const root = dom(`
+      <div class="ds-message"><div class="ds-think">思考</div><div class="ds-markdown">这是答案。</div></div>`);
+    expect(readLastAssistantAnswerText(root)).toBe('这是答案。');
+  });
+
+  it('负控：没有 assistant 消息 ⇒ 空串（调用方回退用 payload）', () => {
+    const root = dom('<div></div>');
+    expect(hasAssistantMessage(root)).toBe(false);
+    expect(readLastAssistantAnswerText(root)).toBe('');
+  });
+
+  it('★ 端到端：只有思考的 DOM ⇒ 必须提示；有正文 ⇒ 不提示', () => {
+    const thinking = dom(`
+      <div class="ds-message"><div class="ds-think">先看结构。让我开始。</div></div>`);
+    const thinkingVerdict = classifyEmptyAnswer({
+      answerText: readLastAssistantAnswerText(thinking),
+      reasoningText: '先看结构。让我开始。',
+    });
+    expect(thinkingVerdict).toBe('thinking-only');
+    expect(shouldWarnEmptyAnswer(thinkingVerdict)).toBe(true);
+
+    const answered = dom(`
+      <div class="ds-message"><div class="ds-think">思考</div><div class="ds-markdown">答案</div></div>`);
+    const okVerdict = classifyEmptyAnswer({ answerText: readLastAssistantAnswerText(answered) });
+    expect(okVerdict).toBe('ok');
+    expect(shouldWarnEmptyAnswer(okVerdict)).toBe(false);
+  });});

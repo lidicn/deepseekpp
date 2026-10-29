@@ -125,7 +125,7 @@ import {
   findAssistantMessageByContentSnippet,
   findInlineAgentRestoreTarget,
 } from "../core/inline-agent/message-anchor";
-import { classifyEmptyAnswer, shouldWarnEmptyAnswer } from "../core/inline-agent/empty-answer";
+import { classifyEmptyAnswer, hasAssistantMessage, readLastAssistantAnswerText, shouldWarnEmptyAnswer } from "../core/inline-agent/empty-answer";
 import { diagnosticLogBuffer } from "../core/diagnostics/log-buffer";
 import { routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
 import { probePageRenderState } from "../core/inline-agent/page-render-state";
@@ -1518,8 +1518,12 @@ async function dispatchMainWorldMessage(
         // 2026-10-30 真机：DeepSeek 有时发 FINISHED 帧但正文为空、只有思考块
         // （"已思考…让我开始。" 然后 5 分钟不动）。这不是断流也不是正常完成，
         // 用户看到的就是"什么都没发生"。这里识别出来并给一条可见提示 + 诊断记录。
+        // 判据读**渲染出来的正文**：payload.text 里带着整段思考，用它判会漏报。
+        const domAnswerText = hasAssistantMessage(document)
+          ? readLastAssistantAnswerText(document)
+          : (complete.text ?? "");
         const emptyAnswerVerdict = classifyEmptyAnswer({
-          answerText: complete.text ?? "",
+          answerText: domAnswerText,
           hasToolExecutions: completedExecutions.length > 0,
         });
         if (shouldWarnEmptyAnswer(emptyAnswerVerdict)) {
