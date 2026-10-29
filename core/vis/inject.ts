@@ -16,6 +16,7 @@
 
 import type { ImageResolver } from './image-resolver';
 import { fetchRemoteImage, type RemoteImagePort } from './remote-image';
+import { blockElementsFor, findVisDocuments } from './text-detect';
 import { renderToHtml } from './render';
 import { buildVisCss } from './theme';
 import type { RenderOutcome } from './types';
@@ -29,6 +30,8 @@ const HOST_CLASS = 'dppvis-host';
 const PENDING_CLASS = 'dppvis-host--pending';
 const STATE_ATTR = 'data-dppvis-state';
 const SNIFF = /^\s*\{\s*"v"\s*:\s*1\b/;
+/** 正文模式：回合内已经因为"找到了卡片"而被替换过的标记，避免重复渲染。 */
+const TEXT_RENDERED_ATTR = 'data-dppvis-text-rendered';
 
 export interface VisInjectorOptions {
   enabled: boolean;
@@ -342,7 +345,7 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
    * 诊断快照：写进 <html data-dppvis-diag>，页面控制台一行可读。
    * 目的：区分「模型没输出代码块」/「代码块不在助手回合」/「判据没命中」/「渲染被拒」。
    */
-  function writeDiag(input: { scanned: number; sawFence: number; inTurn: number; rendered: number; mounted: number; pending: number }): void {
+  function writeDiag(input: { scanned: number; sawFence: number; inTurn: number; rendered: number; textRendered?: number; mounted: number; pending: number }): void {
     try {
       const turnCount = doc.querySelectorAll(ASSISTANT_ROOT_SELECTOR).length;
       // 采样最多 5 个代码块：类名 + 前 24 字符，用来判定"模型有没有出围栏"与"围栏类名是什么"
@@ -383,7 +386,75 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
         }
       }
     }
-    writeDiag({ scanned, sawFence, inTurn, rendered, mounted: mounted.size, pending: pending.size });
+    // 3) 正文兜底：模型没打围栏时（实测常见），直接在回合正文里找 JSON
+    let textRendered = 0;
+    if (scanned === 0) {
+      for (const turn of Array.from(doc.querySelectorAll(ASSISTANT_ROOT_SELECTOR))) {
+        try {
+          textRendered += scanTurnText(turn);
+        } catch {
+          // 单回合失败不影响其它回合
+        }
+      }
+      rendered += textRendered;
+    }
+
+    writeDiag({
+      scanned,
+      sawFence,
+      inTurn,
+      rendered,
+      textRendered,
+      mounted: mounted.size,
+      pending: pending.size,
+    });
+    return rendered;
+  }
+
+  /**
+   * 正文模式：模型常常不打 ``` 围栏，而是把 JSON 当正文段落输出。
+   * 这里在回合正文里找 `{"v":1` → 配平括号 → parse → 把承载它的段落整体换成卡片。
+   * 返回渲染出的卡片数。
+   */
+  /** 删掉"只剩围栏标签"的相邻段落（"vis-json" / ```vis-json / ```）。 */
+  function stripFenceLabel(el: Element | null): void {
+    if (!el) return;
+    const text = (el.textContent ?? '').trim();
+    if (/^`{0,3}\s*vis-json\s*`{0,3}$/i.test(text) || /^`{3,}$/.test(text)) {
+      el.remove();
+    }
+  }
+
+  function scanTurnText(turn: Element): number {
+    if (turn.getAttribute(TEXT_RENDERED_ATTR) === '1') return 0;
+    let found: ReturnType<typeof findVisDocuments>;
+    try {
+      found = findVisDocuments(turn, 3);
+    } catch {
+      return 0;
+    }
+    let rendered = 0;
+    for (const item of found) {
+      const { html, outcome } = renderToHtml(item.doc, { imageResolver });
+      onOutcome?.(outcome, turn as Element);
+      if (outcome.status === 'failed' || html === '') continue;
+
+      const blocks = blockElementsFor(item.range, turn);
+      const card = buildCardHost(html);
+      if (blocks.length === 0) {
+        turn.appendChild(card);
+        rendered += 1;
+        continue;
+      }
+      const first = blocks[0];
+      first.replaceWith(card);
+      // 清掉模型留下的裸标签行（"vis-json" / "```vis-json" / "```"），否则卡片旁边会多一行噪音
+      stripFenceLabel(card.previousElementSibling);
+      stripFenceLabel(card.nextElementSibling);
+      if (card.shadowRoot) hydrateImages(card.shadowRoot);
+      rendered += 1;
+    }
+    if (rendered > 0) turn.setAttribute(TEXT_RENDERED_ATTR, '1');
     return rendered;
   }
 
