@@ -100,7 +100,7 @@ ${scope} .dppvis-img {
 }
 ${scope} .dppvis-ratio-2x3 { aspect-ratio: 2 / 3; }
 ${scope} .dppvis-ratio-16x9 { aspect-ratio: 16 / 9; }
-/* 占位不用图：纯 hsl 变量，天然离线、天然无请求 */
+/* Placeholder uses hsl vars only: fully offline, zero network requests */
 ${scope} .dppvis-img--placeholder {
   display: flex;
   align-items: center;

@@ -200,7 +200,11 @@ const BUDGET = Object.freeze({
     //   来自 #99 方案 E 的 mount-restore（transcript 恢复 + pendingChunks 合并 + transcript-merge 纯函数）。
     //   第一次重设写成 30_334 是在**旧构建产物**上量的（+3_103），QA 独立重建后测得 30_808，
     //   PM 重建复测与 QA 一致 ⇒ 基线按实测为准。教训：体积基线必须基于本次 build 的 dist。
-    ChatPage: { raw: 30_808, gzip: 9_337 },
+    // 2026-10-29 重设（第三次，按重建后实测）：
+    //   30_808 → 32_028 raw（+1_220）/ 9_337 → 9_546 gzip（+209）。
+    //   归因：12 批 P0-1（cb5b2e7）给 ChatPage 加了「认证退避重试 + 重新检测按钮」的 UI（+48 行），
+    //   与本轮 vis 工作无关（vis 全部在 core/vis + 独立 content script，不进 ChatPage chunk）。
+    ChatPage: { raw: 32_028, gzip: 9_546 },
     LibraryPage: { raw: 2_500, gzip: 1_200 },
     MemoryPage: { raw: 10_546, gzip: 3_186 },
     SavedPage: { raw: 10_000, gzip: 4_000 },
