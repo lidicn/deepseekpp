@@ -39,6 +39,7 @@ function buildContext(options: VisRenderOptions, outcome: RenderOutcome): VisRen
     outcome,
     imageResolver: options.imageResolver ?? passthroughImageResolver,
     counter: { nodes: 0 },
+    escape: escapeHtml,
   };
 }
 
@@ -69,8 +70,12 @@ export function renderToHtml(doc: unknown, options: VisRenderOptions = {}): VisR
 }
 
 /**
- * 渲染为 DocumentFragment：**零 innerHTML**，文本一律走 textContent。
- * 与 renderToHtml 的语义一致性由单测守护（同 doc 两出口文本相等）。
+ * 渲染为 DocumentFragment。
+ *
+ * 实现走「单一真源」：先 `renderToHtml`，再把结果放进一个**游离 div**、搬进 fragment。
+ * 也就是说这里**确实用了一次 innerHTML** —— 但输入不含任何未经 escapeHtml 的模型数据
+ * （不变量由 `tests/vis-render-contract.test.ts` 的 XSS 用例与 `vis-hardening` 的敌对 props 矩阵守护）。
+ * 不做"DOM 直构"是刻意的：那要把每个组件写两遍，两条出口必然漂移（评审 I3 类缺陷）。
  */
 export function renderToFragment(
   doc: unknown,

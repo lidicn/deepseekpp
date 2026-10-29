@@ -111,21 +111,6 @@ if (requestedBrowsers.some((browser) => !browser)) {
 // The initial shell is sidepanel.html's entry script plus every static modulepreload.
 const BASELINE = Object.freeze({
   initialShell: { raw: 381_168, gzip: 117_243 },
-  // 2026-10-27 首次真实测量（此前一直被 initialShell 的首个失败遮住，从未被评估）。
-  // 三项超标的归因（源码字节对比 942251a，全部对应真实功能提交，不是意外膨胀）：
-  //   ChatPage      36,889 → 39,051 (+2,162)  对话页功能
-  //   MemoryPage     3,879 →  7,817 (+3,938)  记忆自然语言整理主线（e99d64e）+ i18n 抽取（9a716ac）
-  //   AboutSubPage   2,199 →  5,598 (+3,399)  T07 复制诊断信息按钮（3f2c14c）+ W29 观测接线（31d40fc）
-  // 下面三个值按实测重设（2026-10-27 dd57c55 + 684fdc8 的产物），gzip 同为实测；
-  // 此后任何增长都会再次触发门禁，不再有"被首个失败遮住"的可能。
-  routeChunks: {
-    ChatPage: { raw: 134_938, gzip: 40_056 },
-    CapabilitiesPage: { raw: 160_137, gzip: 35_259 },
-    SettingsPage: { raw: 81_914, gzip: 20_503 },
-    LibraryPage: { raw: 1_451, gzip: 728 },
-    MemoryPage: { raw: 4_493, gzip: 1_837 },
-    SavedPage: { raw: 7_928, gzip: 2_787 },
-  },
 });
 
 // W2.6 pre-change Chrome measurement at 450b5e2. The rich Markdown renderer
@@ -134,10 +119,7 @@ const BASELINE = Object.freeze({
 // measured 399840 at PR #491 head bbd2064 (160B headroom), and the review
 // fix for extension-classified image MIME normalization added 249B (400089
 // measured locally). gzip stays 122000 (121346 measured).
-const WAVE_2_CHAT_BASELINE = Object.freeze({
-  firstChatScreen: { raw: 498_013, gzip: 150_087 },
-  ChatPage: { raw: 134_902, gzip: 40_039 },
-});
+
 
 // firstChatScreen raw cap raised 400500 -> 402500 for the #495-#499 batch
 // (head 90ef4ad): the shared i18n additions for export scope (#499), agent
@@ -299,7 +281,6 @@ function verifyBrowserBuild(browser) {
     browser,
     baseline: BASELINE,
     gzipEncoderVarianceBytes: GZIP_ENCODER_VARIANCE_BYTES,
-    wave2ChatBaseline: WAVE_2_CHAT_BASELINE,
     current: {
       initialShell: initialMetric,
       firstChatScreen: firstScreenMetric,

@@ -1,4 +1,4 @@
-import { escapeHtml, toText, truncateText } from '../escape';
+import { toText, truncateText } from '../escape';
 import type { VisComponentRenderer } from '../registry';
 
 function variantClass(variant: unknown): string {
@@ -13,8 +13,8 @@ function variantClass(variant: unknown): string {
 export const textRenderer: VisComponentRenderer = {
   type: 'Text',
   allowsChildren: false,
-  render(props) {
-    const body = escapeHtml(truncateText(toText(props.text)));
+  render(props, ctx) {
+    const body = ctx.escape(truncateText(toText(props.text)));
     return `<div class="dppvis-text ${variantClass(props.variant)}">${body}</div>`;
   },
 };

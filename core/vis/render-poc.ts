@@ -22,6 +22,7 @@ export function renderPocHtml(input: unknown): string {
     outcome,
     imageResolver: { resolve: (raw) => ({ src: isSafeImageSrc(raw) ? raw : null }) },
     counter: { nodes: 0 },
+    escape: escapeHtml,
   };
   const root = isRecordNode(input) ? input.root : undefined;
   return `<div class="dppvis-root">${renderVisNode(root, ctx)}</div>`;

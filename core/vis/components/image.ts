@@ -1,4 +1,4 @@
-import { escapeHtml, isRecord, toText } from '../escape';
+import { isRecord, toText } from '../escape';
 import { DEFAULT_HUE, noteOutcome } from '../types';
 import type { VisComponentRenderer } from '../registry';
 
@@ -23,14 +23,14 @@ export const imageRenderer: VisComponentRenderer = {
     const cls = ratio === '' ? 'dppvis-img' : `dppvis-img ${ratio}`;
     const resolved = ctx.imageResolver.resolve(props.src);
     if (resolved.src !== null) {
-      return `<img class="${cls}" src="${escapeHtml(resolved.src)}" alt="${escapeHtml(alt)}">`;
+      return `<img class="${cls}" src="${ctx.escape(resolved.src)}" alt="${ctx.escape(alt)}">`;
     }
     if (resolved.reason) noteOutcome(ctx.outcome, 'degraded', resolved.reason);
     const fallback = isRecord(props.fallback) ? props.fallback : null;
     const hue = normalizeHue(fallback === null ? undefined : fallback.hue);
     return (
-      `<div class="${cls} dppvis-img--placeholder" style="${escapeHtml(`--dppvis-hue:${hue}`)}"` +
-      ` role="img" aria-label="${escapeHtml(alt)}"><span class="dppvis-img__alt">${escapeHtml(alt)}</span></div>`
+      `<div class="${cls} dppvis-img--placeholder" style="--dppvis-hue:${hue}"` +
+      ` role="img" aria-label="${ctx.escape(alt)}"><span class="dppvis-img__alt">${ctx.escape(alt)}</span></div>`
     );
   },
 };

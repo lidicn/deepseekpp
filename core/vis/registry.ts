@@ -15,6 +15,12 @@ export interface VisRenderContext {
   imageResolver: ImageResolver;
   /** 已渲染节点计数（用于 MAX_NODES_TOTAL 上限）。 */
   counter: { nodes: number };
+  /**
+   * 转义入口。**注册的组件必须用它处理一切可变文本/属性值**，
+   * 而不是自己拼字符串 —— 这样"转义"从口头约定变成可注入、可断言的契约
+   * （测试可注入计数版 escape 断言"每个可变值都被转义过"）。
+   */
+  escape: (value: unknown) => string;
 }
 
 export interface VisComponentRenderer {
