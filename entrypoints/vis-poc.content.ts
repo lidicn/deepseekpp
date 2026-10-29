@@ -36,7 +36,9 @@ export default defineContentScript({
   main() {
     let enabled = false;
     try {
-      enabled = localStorage.getItem(POC_FLAG_KEY) === '1';
+      // 默认开启（PoC 已验证到可用阶段）；想临时关掉就在控制台执行
+      // localStorage.dpp_vis_poc='0' 并刷新
+      enabled = localStorage.getItem(POC_FLAG_KEY) !== '0';
     } catch {
       enabled = false;
     }

@@ -24,6 +24,56 @@ function renderMemoryToolSchemas(locale: SupportedLocale): string {
 
 export const BUILTIN_SKILLS: Skill[] = [
   {
+    name: 'movie-cards',
+    description:
+      '高分影视检索与图文卡片：查证评分/年份/主创后，用 vis-json 卡片（左图右文）展示，而不是一大段文字。',
+    instructions: `你在用 DeepSeek++ 的「影视卡片」能力回答影视类问题。目标是把结论做成一张**左图右文**的卡片，而不是长篇文字。
+
+## 什么时候用
+
+用户问「推荐几部高分电影/剧集」「这片怎么样」「找类似 X 的片」这类影视信息时使用。
+纯闲聊、纯观点讨论不需要出卡片。
+
+## 先查证，再出卡
+
+1. 如果工具列表里有 \`web_search\` / \`web_fetch\`，**先用它们核实**评分、年份、导演、主演、时长。不要凭记忆编数字。
+2. 查不到就如实说「以下信息可能过时」，并降低不确定字段的表达强度（例如不写具体评分）。
+3. **绝对不要编造图片地址**：没有可信直链就把 \`src\` 设为 \`null\`，靠渐变占位。
+
+## 输出协议（严格）
+
+每部作品输出**一个** \`\`\`vis-json 代码块，内容是 A2UI 子集 JSON；**代码块之外**才写你的点评文字。
+
+\`\`\`vis-json
+{"v":1,"root":{"type":"Row","children":[
+  {"type":"Image","src":null,"alt":"肖申克的救赎 海报","ratio":"2/3","fallback":{"hue":208}},
+  {"type":"Column","children":[
+    {"type":"Text","text":"肖申克的救赎","variant":"title"},
+    {"type":"Text","text":"1994 · 剧情 · 142 分钟 · 豆瓣 9.7","variant":"subtitle"},
+    {"type":"Text","text":"关于希望与时间的经典叙事：一个人用二十年凿穿高墙。","variant":"body"},
+    {"type":"Text","text":"导演：弗兰克·德拉邦特 · 主演：蒂姆·罗宾斯 / 摩根·弗里曼","variant":"meta"}
+  ]}
+]}}
+\`\`\`
+
+字段白名单（**只能出现这些**，多一个字段就会被丢弃）：
+
+- 顶层：\`v\`（必须为 1）、\`root\`
+- 容器：\`Column\` / \`Row\`，二者都只接受 \`children\` 数组
+- \`Text\`：\`text\`（必填，≤400 字）、\`variant\` ∈ title | subtitle | body | meta
+- \`Image\`：\`src\`（https 直链或 null）、\`alt\`、\`ratio\` ∈ "2/3" | "16/9"、\`fallback.hue\` ∈ 0–360
+
+硬约束：
+
+- 版式固定为 \`Row[ Image, Column[ Text(title), Text(subtitle), Text(body), Text(meta) ] ]\`；不要自创层级。
+- 一次回答最多 3 个 vis-json 块（3 部作品）；更多就分组说明，不要刷屏。
+- 嵌套深度 ≤ 8，单个容器子节点 ≤ 24，单段文本 ≤ 400 字。
+- JSON 必须是**单行合法 JSON**（不带注释、不带尾逗号）。写错会退回显示原始代码块。
+- **不要把解析失败当成格式问题反复重写**：一次不成功就用普通文字回答。`,
+    source: 'builtin',
+    memoryEnabled: false,
+  },
+  {
     name: 'shell',
     description: '本地命令行助手：通过 Native Messaging 在用户本机执行 shell 命令。适用于文件操作、脚本运行、系统管理等任何需要命令行的场景。',
     instructions: `你正在通过 DeepSeek++ Shell MCP 执行本地命令。可用工具：${SHELL_TOOL_NAMES.join('、')}。
@@ -265,6 +315,52 @@ instructions: Markdown 格式的指令正文，结构清晰，有层次
 ];
 
 const ENGLISH_BUILTIN_SKILL_TEXT: Record<string, BuiltinSkillText> = {
+  'movie-cards': {
+    description:
+      'High-rated film/TV lookup with visual cards: verify rating/year/credits, then answer with a vis-json (image-left, text-right) card instead of a wall of text.',
+    instructions: `You are answering film/TV questions with DeepSeek++ visual cards. The goal is a **image-left, text-right** card, not prose.
+
+## When to use
+
+Use it when the user asks for high-rated movie/TV recommendations, "is this film any good", or "find something like X". Plain chit-chat or opinion discussion needs no card.
+
+## Verify first, then render
+
+1. If \`web_search\` / \`web_fetch\` are available, use them first to confirm rating, year, director, cast, runtime. Do not invent numbers from memory.
+2. If you cannot verify, say the data may be outdated and soften uncertain fields (e.g. omit an exact rating).
+3. **Never invent an image URL**: if you have no trustworthy direct link, set \`src\` to \`null\` and rely on the gradient placeholder.
+
+## Output protocol (strict)
+
+For each title, emit **one** \`\`\`vis-json fenced block containing A2UI-subset JSON; put your commentary **outside** the block.
+
+\`\`\`vis-json
+{"v":1,"root":{"type":"Row","children":[
+  {"type":"Image","src":null,"alt":"The Shawshank Redemption poster","ratio":"2/3","fallback":{"hue":208}},
+  {"type":"Column","children":[
+    {"type":"Text","text":"The Shawshank Redemption","variant":"title"},
+    {"type":"Text","text":"1994 · Drama · 142 min · 9.3/10","variant":"subtitle"},
+    {"type":"Text","text":"A story about hope and time: a man carves his way through the wall.","variant":"body"},
+    {"type":"Text","text":"Director: Frank Darabont · Cast: Tim Robbins / Morgan Freeman","variant":"meta"}
+  ]}
+]}}
+\`\`\`
+
+Field allowlist (anything else is dropped):
+
+- top level: \`v\` (must be 1), \`root\`
+- containers: \`Column\` / \`Row\`, each accepting only a \`children\` array
+- \`Text\`: \`text\` (required, <=400 chars), \`variant\` in title | subtitle | body | meta
+- \`Image\`: \`src\` (https direct link or null), \`alt\`, \`ratio\` in "2/3" | "16/9", \`fallback.hue\` in 0-360
+
+Hard limits:
+
+- Layout is fixed: \`Row[ Image, Column[ Text(title), Text(subtitle), Text(body), Text(meta) ] ]\`. Do not invent other nesting.
+- At most 3 vis-json blocks per answer. For more titles, summarise in text instead of flooding.
+- Depth <= 8, children per container <= 24, single text <= 400 chars.
+- The JSON must be a single valid line (no comments, no trailing commas). Invalid JSON falls back to showing the raw block.
+- **Do not loop on format retries**: if it fails once, answer in plain text.`,
+  },
   shell: {
     description: 'Local command-line assistant: run shell commands on the user machine through Native Messaging. Use for file operations, script execution, system inspection, and any task that requires a terminal.',
     instructions: `You are executing local shell commands through the DeepSeek++ Shell MCP. Available tools: ${SHELL_TOOL_NAMES.join(', ')}.
