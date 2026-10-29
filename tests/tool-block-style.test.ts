@@ -188,7 +188,15 @@ describe('content tool block styles', () => {
     expect(source).toContain('await persistInlineAgentTraceImmediately(completedTrace);');
     expect(source).toContain('shouldReloadInlineAgentNativeHistory({');
     expect(source).toContain('if (shouldReloadNativeHistory) reloadInlineAgentNativeHistory();');
-    expect(source).toContain('isInlineAgentNativeHistoryBackedTrace(trace)');
+    // 「谁拥有最终答案」只能有**一个**判定点：live 与 restore 都走 traceOwnsFinalTurn。
+    expect(source).toContain('traceOwnsFinalTurn(completedTrace');
+    // 回归守卫：restore 的归属赋值**只**来自 traceOwnsFinalTurn，
+    // 不得再带额外条件（旧实现多了 "最后一步无工具执行"，导致跨刷新归属不一致）。
+    const ownershipIdx = source.indexOf('const nativeHistoryOwnsFinalTurn =');
+    expect(ownershipIdx).toBeGreaterThan(-1);
+    const ownershipBlock = source.slice(ownershipIdx, ownershipIdx + 200);
+    expect(ownershipBlock).toContain('traceOwnsFinalTurn(trace');
+    expect(ownershipBlock).not.toContain('toolExecutions');
     expect(source).toContain('const nativeHistoryOwnsFinalTurn =');
     const loopStart = source.indexOf('async function startInlineAgentLoop(');
     const loopEnd = source.indexOf('\nfunction handleInlineAgentLoopEvent(', loopStart);

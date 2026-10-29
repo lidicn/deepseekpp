@@ -125,6 +125,7 @@ import {
   findAssistantMessageByContentSnippet,
   findInlineAgentRestoreTarget,
 } from "../core/inline-agent/message-anchor";
+import { routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
 import { probePageRenderState } from "../core/inline-agent/page-render-state";
 import { createSerializedQueue } from "../core/persistence/serialized-queue";
 import type {
@@ -6671,24 +6672,28 @@ async function handleAgentLoopComplete(
     });
 
     // 2) 用「已 complete」的 completedTrace 做去重判断
-    // 该轮是否已提交到原生历史（web 后端 + 有 responseMessageId）。
-    // 如果是，刷新后原生消息会渲染最终答案，扩展不应再渲染一份，否则重复。
-    const hasNativeTurn = !budgetPaused && completedTrace
-      ? isInlineAgentNativeHistoryBackedTrace(completedTrace)
-      : false;
+    // 该轮是否由原生消息拥有最终答案 —— 判定**只在** traceOwnsFinalTurn 一处：
+    // live 与 refresh-restore 共用，禁止再传额外条件（否则跨刷新归属不一致）。
+    const ownsFinalTurn = traceOwnsFinalTurn(completedTrace ?? null, { budgetPaused });
 
-    // 3) 再决定是否渲染扩展那份
-    if (!hasNativeTurn) {
-      if (
-        lastCompletedStep &&
-        (resolvedAnswer.fromStep ||
-          isInlineAgentStepTextTheFinalAnswer(lastCompletedStepText, finalText))
-      ) {
-        updateStepStreamText(lastCompletedStep, finalText);
+    // 3) 路由：原生拥有 ⇒ **清空**扩展已流式画在屏上的那份（不是"跳过再画"）。
+    //    原实现只做 skip，屏上那份永远留着 ⇒ 原生一份 + 扩展一份。
+    const finalAnswerAction = routeFinalAnswer({
+      ownsFinalTurn,
+      finalText,
+      resolvedAnswer,
+      lastStepText: lastCompletedStepText,
+      isFinalStepText: isInlineAgentStepTextTheFinalAnswer,
+    });
+    if (finalAnswerAction.kind === "clear") {
+      if (lastCompletedStep) updateStepStreamText(lastCompletedStep, "");
+    } else if (finalAnswerAction.kind === "replace") {
+      if (lastCompletedStep) {
+        updateStepStreamText(lastCompletedStep, finalAnswerAction.text);
         refreshAgentStepCodeRunners(lastCompletedStep);
-      } else if (finalText) {
-        appendInlineAgentNarration(inlineAgentContainer, finalText, msg.loopId);
       }
+    } else if (finalAnswerAction.kind === "append") {
+      appendInlineAgentNarration(inlineAgentContainer, finalAnswerAction.text, msg.loopId);
     }
     renderTerminalAgentConsoleHeader(
       inlineAgentContainer,
@@ -9645,10 +9650,12 @@ function createRestoredInlineAgentContainer(
   // reasoning and final markdown; rendering them again here would duplicate
   // the answer after every refresh. Official-API and budget-paused traces keep
   // the extension-owned final narration.
-  const nativeHistoryOwnsFinalTurn =
-    !restoredBudgetPaused &&
-    lastStepRecord?.toolExecutions.length === 0 &&
-    isInlineAgentNativeHistoryBackedTrace(trace);
+  // 判据与 live **共用** traceOwnsFinalTurn。
+  // 此前这里多一个 `lastStepRecord?.toolExecutions.length === 0`，导致同一轮
+  // 「收尾时判原生拥有、刷新后判扩展拥有」—— 见 二次结论-根因定位-20261029.md §2.4。
+  const nativeHistoryOwnsFinalTurn = traceOwnsFinalTurn(trace, {
+    budgetPaused: restoredBudgetPaused,
+  });
 
   let lastStepReplaced = false;
   // The trigger turn's tool executions (the legacy tool block is suppressed
