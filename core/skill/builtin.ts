@@ -27,56 +27,72 @@ export const BUILTIN_SKILLS: Skill[] = [
     name: 'movie-cards',
     description:
       '高分影视检索与图文卡片：查证评分/年份/主创后，用 vis-json 卡片（左图右文）展示，而不是一大段文字。',
-    instructions: `你用 DeepSeek++ 的「影视卡片」回答影视类问题：把结论做成**左图右文**的卡片。
+    instructions: `你用 DeepSeek++ 的「影视卡片」回答影视类问题：把结论做成**左图右文**的卡片流。
 
-## 0 · 平台已经替你做了什么（不用你操心，也不用你验证）
+## 0 · 规则冲突时，序号小的赢（别自己权衡）
 
-- **渲染**：\`vis-json\` 文档 → 卡片。带 \`\`\` 围栏或不带围栏（正文里直接写 JSON）都能识别。
-- **取图**：你给的任意 \`https\` 直链，平台会用后台抓取并内联成图片（绕 CORS 与防盗链）。
-- **兜底**：图取不到 / JSON 不合法 / 版本不对 ⇒ 平台自动降级（渐变占位、保留原文），不会出现破图或空白卡。
+上一版协议里「没直链就 null」与「不要一律 null」互相打架、又没写优先级，
+结果模型每次都选保守那条 ⇒ 整批渐变方块。**下面每条都写了序号，冲突时按序号。**
 
-所以你只需要给「语义正确的图」，不需要保证它一定能 200，**也不需要自己去验链**。
+## 1 · 平台已经替你做了什么（不用你操心，也不用你验）
 
-## 1 · 图片 URL 从哪来（参考，不是白名单）
+- **渲染**：\`vis-json\` 文档 → 卡片；带 \`\`\` 围栏或不围栏（正文里直接写）都能识别。
+- **取图**：你给的任意 \`https\` 直链，平台用后台抓取并内联（绕 CORS 与防盗链）。
+- **兜底**：图取不到 / JSON 不合法 ⇒ 平台自动降级（渐变占位、保留原文），不会破图、不会空白卡。
 
-按这个顺序想，哪个成立用哪个：
+⇒ 你只需给**语义正确**的图，**不需要**保证它 200，**也不需要**用 shell/curl 自己验链。
 
-1. **有搜索工具（\`web_search\` / \`web_fetch\`）**：查 \`<片名> poster\`，从结果里挑真实的海报直链。
-2. **没有搜索工具**：凭你对这部作品的了解写直链。常见形态可参考：
-   - TMDB：\`https://image.tmdb.org/t/p/w342/<poster_path>\`（\`poster_path\` 是形如 \`9O7gLzmreU0nGkIB6K3BsJbzvNv\` 的 27 位串）
-   - Wikimedia：\`https://upload.wikimedia.org/wikipedia/<...>\`（维基条目里那张海报）
-   - 豆瓣图床 \`img*.doubanio.com\`：实测常被 418 挡，能不用就不用
-   - **其它任何 CDN 都可以** —— 平台会去取，取不到就降级，不影响卡片其余部分
-3. **没把握**：\`src: null\` + \`fallback.hue\`（按题材给色相）。渐变占位是正常结果，不是失败。
+## 2 · 第一原则：没有图就不是卡片
 
-**唯一禁止**：编造随机 hash / 编造作品 ID / 用占位域名（\`example.com\` 这类）。宁可 null。
+海报不是装饰，是卡片的一半。整批 \`src: null\` 等于这次输出失败。
 
-## 2 · 事实字段
+## 3 · 取图链路（按序，命中即停）
 
-评分、年份、导演、主演、时长：有工具就查；没工具就弱化表述（「口碑较高」而不是编一个 9.1）。
-少一个字段好过多一个假数字。
+1. **有搜索/抓取能力**（\`web_search\` / \`web_fetch\` / browser / shell 的 curl）：
+   用作品原名搜 \`<title> poster\`；中文搜不到就换**英文原名 / 日文原名**。
+   有 TMDB API 访问能力时可直接取 \`poster_path\` 拼 \`https://image.tmdb.org/t/p/w342/<poster_path>.jpg\`。
+   必须确认直链对应的是**这部作品本身**。
+2. **无搜索能力**：只用你**高置信度**记得的 TMDB \`poster_path\`（27 位字母数字）或 Wikimedia 文件直链。
+   宁可少推一部，也不要给假 hash。
+3. **确实没有可靠直链**：\`src: null\` + \`fallback.hue\`（按题材给色相）。
+   同批 null **最多占 1/3**，且必须在正文末尾加一行：本批 N 张为渐变占位，原因：…
 
-## 3 · 输出协议
+## 4 · 禁止
 
-每部一个 \`vis-json\` 文档，块外写点评。
+- 编造 hash、编造 TMDB id、用 \`example.com\` 之类占位域名。
+- 用 \`img*.doubanio.com\`（实测常被 418 挡，等于没图）。
+- 把渐变兜底包装成「设计感」——它只是故障降级。
+- 海报与作品错配。
+- 把「本批全 null」当正常结果交付。
+
+## 5 · 事实字段
+
+- 评分**必须写来源**（IMDb / 烂番茄 / 豆瓣）；没来源就写「口碑较高」，不要凭空给 9.1。
+- 年份、集数、主创只写确定的，不确定就省略。
+- \`body\` ≤ 400 字，写「为什么值得看」，不要复述剧情简介。
+- 默认门槛 IMDb ≥ 7.0；用户另有要求时以用户为准。
+
+## 6 · 输出协议
+
+每部一个 \`vis-json\` 文档，块外写 1–2 句点评。**一次 ≤10 部**，超出分批。
 
 \`\`\`vis-json
 {"v":1,"root":{"type":"Row","children":[
-  {"type":"Image","src":"https://image.tmdb.org/t/p/w342/9O7gLzmreU0nGkIB6K3BsJbzvNv.jpg","alt":"肖申克的救赎 海报","ratio":"2/3","fallback":{"hue":208}},
+  {"type":"Image","src":"https://image.tmdb.org/t/p/w342/9O7gLzmreU0nGkIB6K3BsJbzvNv.jpg","alt":"片名 海报","ratio":"2/3","fallback":{"hue":208}},
   {"type":"Column","children":[
-    {"type":"Text","text":"肖申克的救赎","variant":"title"},
-    {"type":"Text","text":"1994 · 剧情 · 142 分钟","variant":"subtitle"},
-    {"type":"Text","text":"关于希望与时间的经典叙事：一个人用二十年凿穿高墙。","variant":"body"},
-    {"type":"Text","text":"导演：弗兰克·德拉邦特 · 主演：蒂姆·罗宾斯 / 摩根·弗里曼","variant":"meta"}
+    {"type":"Text","text":"片名（原名）","variant":"title"},
+    {"type":"Text","text":"1994 · 剧情 · 142 分钟 · 豆瓣 9.7","variant":"subtitle"},
+    {"type":"Text","text":"为什么值得看（≤400 字，不复述简介）","variant":"body"},
+    {"type":"Text","text":"导演：… · 主演：…","variant":"meta"}
   ]}
 ]}}
 \`\`\`
 
 字段：\`v\`(=1) / \`root\`；容器 \`Column\`/\`Row\` 只收 \`children\`；
-\`Text\`：\`text\`(≤400 字) + \`variant\` ∈ title|subtitle|body|meta；
+\`Text\`：\`text\`(≤400) + \`variant\` ∈ title|subtitle|body|meta；
 \`Image\`：\`src\`(https 直链或 null) + \`alt\` + \`ratio\` ∈ "2/3"|"16/9" + \`fallback.hue\` ∈ 0-360。
 
-版式用 \`Row[Image, Column[title, subtitle, body, meta]]\`；一次 ≤3 张；深度 ≤8；JSON 单行合法。`,
+版式 \`Row[Image, Column[title, subtitle, body, meta]]\`；深度 ≤8；JSON 单行合法。`,
     source: 'builtin',
     memoryEnabled: false,
   },
@@ -327,53 +343,70 @@ const ENGLISH_BUILTIN_SKILL_TEXT: Record<string, BuiltinSkillText> = {
       'High-rated film/TV lookup with visual cards: verify rating/year/credits, then answer with a vis-json (image-left, text-right) card instead of a wall of text.',
     instructions: `You answer film/TV questions with DeepSeek++ visual cards (image-left, text-right).
 
-## 0 - What the platform already does for you (do not re-do it)
+## 0 - On rule conflicts, the lower number wins (do not re-weigh)
+
+An earlier protocol said "use null when unsure" AND "do not default to null" with no priority;
+the model picked the safe one every time and shipped all-gradient cards. Every rule below is numbered.
+
+## 1 - What the platform already does for you (do not re-do it, do not verify links)
 
 - **Rendering**: a \`vis-json\` document becomes a card, with or without \`\`\` fences.
-- **Images**: any \`https\` direct link you give is fetched in the background and inlined (CORS / hotlink protection handled for you).
-- **Fallback**: unreachable image / invalid JSON / wrong version => graceful degradation (gradient placeholder, raw text preserved). No broken images, no blank cards.
+- **Images**: any \`https\` direct link is fetched in the background and inlined (CORS / hotlink handled).
+- **Fallback**: unreachable image / invalid JSON => graceful degradation (gradient placeholder, raw text kept).
 
-So you only need a *semantically correct* image; you do not need to guarantee it returns 200, and you do not need to verify links yourself.
+=> Give a *semantically correct* image. You do NOT need to guarantee 200, and you do NOT need to curl-verify.
 
-## 1 - Where image URLs come from (reference, not an allowlist)
+## 2 - First principle: no image, no card
 
-Try in this order:
+The poster is half the card. An all-\`null\` batch is a failed output, not a design choice.
 
-1. **Search tools present (\`web_search\` / \`web_fetch\`)**: search \`<title> poster\` and take a real direct link from the results.
-2. **No search tool**: write a link you know. Common shapes:
-   - TMDB: \`https://image.tmdb.org/t/p/w342/<poster_path>\` (27-char id like \`9O7gLzmreU0nGkIB6K3BsJbzvNv\`)
-   - Wikimedia: \`https://upload.wikimedia.org/wikipedia/<...>\`
-   - Douban CDN \`img*.doubanio.com\`: measured 418 often; prefer avoiding it
-   - **Any other CDN is fine** - the platform fetches it and degrades if it fails
-3. **Unsure**: \`src: null\` plus \`fallback.hue\`. A gradient placeholder is a legitimate result, not a failure.
+## 3 - Image chain (ordered, first match wins)
 
-**Only forbidden**: fabricating random hashes, inventing title IDs, or using placeholder domains. Prefer null over invention.
+1. **Search tools available** (\`web_search\` / \`web_fetch\` / browser / shell curl):
+   search \`<title> poster\`; if the localized title fails, retry with the **English / original title**.
+   With TMDB API access, build \`https://image.tmdb.org/t/p/w342/<poster_path>.jpg\` directly.
+   Confirm the link belongs to **this** title.
+2. **No search tool**: only use a TMDB \`poster_path\` (27 alphanumerics) or Wikimedia link you are **highly confident** about.
+   Better to include one fewer title than to invent a hash.
+3. **No reliable link**: \`src: null\` + \`fallback.hue\`. At most **1/3** of a batch may be null,
+   and you must state at the end: N of these are gradient placeholders because ...
 
-## 2 - Facts
+## 4 - Forbidden
 
-Rating / year / director / cast / runtime: search when you can; otherwise soften the wording. One missing field beats one fake number.
+- Fabricated hashes / TMDB ids / \`example.com\` placeholder domains.
+- \`img*.doubanio.com\` (measured 418, effectively no image).
+- Presenting a gradient fallback as "intentional design"; it is degradation.
+- Mismatching a poster with a different title.
+- Delivering an all-null batch as if it were fine.
 
-## 3 - Output protocol
+## 5 - Facts
 
-One \`vis-json\` document per title; commentary outside.
+- Ratings **must cite a source** (IMDb / Rotten Tomatoes / Douban); without one, say "well reviewed".
+- Year / episode count / credits: only what you are sure of. Omit otherwise.
+- \`body\` <= 400 chars: why it is worth watching, not a plot synopsis.
+- Default bar: IMDb >= 7.0 unless the user asks otherwise.
+
+## 6 - Output protocol
+
+One \`vis-json\` document per title; 1-2 sentences of commentary outside. **At most 10 per answer.**
 
 \`\`\`vis-json
 {"v":1,"root":{"type":"Row","children":[
-  {"type":"Image","src":"https://image.tmdb.org/t/p/w342/9O7gLzmreU0nGkIB6K3BsJbzvNv.jpg","alt":"The Shawshank Redemption poster","ratio":"2/3","fallback":{"hue":208}},
+  {"type":"Image","src":"https://image.tmdb.org/t/p/w342/9O7gLzmreU0nGkIB6K3BsJbzvNv.jpg","alt":"Title poster","ratio":"2/3","fallback":{"hue":208}},
   {"type":"Column","children":[
-    {"type":"Text","text":"The Shawshank Redemption","variant":"title"},
-    {"type":"Text","text":"1994 - Drama - 142 min","variant":"subtitle"},
-    {"type":"Text","text":"A story about hope and time.","variant":"body"},
-    {"type":"Text","text":"Director: Frank Darabont - Cast: Tim Robbins / Morgan Freeman","variant":"meta"}
+    {"type":"Text","text":"Title (original title)","variant":"title"},
+    {"type":"Text","text":"1994 - Drama - 142 min - 9.3/10 IMDb","variant":"subtitle"},
+    {"type":"Text","text":"Why it is worth watching (<=400 chars)","variant":"body"},
+    {"type":"Text","text":"Director: ... - Cast: ...","variant":"meta"}
   ]}
 ]}}
 \`\`\`
 
 Fields: \`v\`(=1) / \`root\`; containers \`Column\`/\`Row\` take only \`children\`;
-\`Text\`: \`text\` (<=400 chars) + \`variant\` in title|subtitle|body|meta;
-\`Image\`: \`src\` (https direct link or null) + \`alt\` + \`ratio\` in "2/3"|"16/9" + \`fallback.hue\` 0-360.
+\`Text\`: \`text\` (<=400) + \`variant\` in title|subtitle|body|meta;
+\`Image\`: \`src\` (https or null) + \`alt\` + \`ratio\` in "2/3"|"16/9" + \`fallback.hue\` 0-360.
 
-Layout \`Row[Image, Column[title, subtitle, body, meta]]\`; at most 3 cards; depth <=8; single-line JSON.`,
+Layout \`Row[Image, Column[title, subtitle, body, meta]]\`; depth <=8; single-line JSON.`,
   },
   shell: {
     description: 'Local command-line assistant: run shell commands on the user machine through Native Messaging. Use for file operations, script execution, system inspection, and any task that requires a terminal.',
