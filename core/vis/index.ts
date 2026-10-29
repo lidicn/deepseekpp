@@ -46,3 +46,6 @@ export type { VisRenderOptions, VisRenderResult } from './render';
 
 export { buildVisCss, VIS_THEME_TOKENS } from './theme';
 export type { VisThemeName, VisThemeTokens } from './theme';
+
+export { createVisInjector } from './inject';
+export type { VisInjector, VisInjectorOptions } from './inject';
