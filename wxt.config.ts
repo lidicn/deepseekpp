@@ -73,8 +73,16 @@ export function createManifest(env: ConfigEnv): UserManifest {
     permissions: isChromiumTarget
       ? [...chromiumPermissions, 'sidePanel']
       : isFirefox ? firefoxPermissions : basePermissions,
-    optional_host_permissions: ['http://*/*', 'https://*/*'],
+    // 图片通路（vis 卡片）：模型给的封面可能来自任意图床，且不少图床按 Referer/CORS
+    // 挡直连，只有后台带 host 权限 fetch 才拿得到。**不设运行时授权**——dpp 的 content
+    // script 本来就匹配 <all_urls>，安装警告里那条"读取所有网站数据"早已存在，
+    // 因此这里不新增用户可见的安装提示。
+    optional_host_permissions: [],
     host_permissions: [
+        // 任意图床的封面图（vis 卡片后台抓取 → data URL）。不新增安装警告：
+        // content_scripts 早已匹配 <all_urls>，那条"读取所有网站数据"提示本就存在。
+        'http://*/*',
+        'https://*/*',
       // DeepSeek + Bing: core extension hosts.
       '*://chat.deepseek.com/*',
       'https://api.deepseek.com/*',

@@ -8,8 +8,27 @@
  * 便于真机验证（在控制台执行 `localStorage.dpp_vis_poc='1'` 后刷新）且不影响任何用户。
  */
 import { createVisInjector } from '../core/vis/inject';
+import type { RemoteImagePort } from '../core/vis/remote-image';
 
 const POC_FLAG_KEY = 'dpp_vis_poc';
+/**
+ * 远程图片端口：转给后台抓（content script 直连会被 CORS/防盗链挡住）。
+ * host 权限已在 manifest 一次性声明，**没有运行时授权**。
+ */
+function createChromeRemoteImagePort(): RemoteImagePort {
+  return {
+    async fetchAsDataUrl(url) {
+      try {
+        const reply = (await chrome.runtime.sendMessage({ type: 'VIS_IMAGE_FETCH', url })) as
+          | { dataUrl?: string | null }
+          | undefined;
+        return reply?.dataUrl ?? null;
+      } catch {
+        return null;
+      }
+    },
+  };
+}
 
 export default defineContentScript({
   matches: ['*://chat.deepseek.com/*'],
@@ -23,9 +42,12 @@ export default defineContentScript({
     }
     if (!enabled) return;
 
+    const remoteImagePort = createChromeRemoteImagePort();
+
     const injector = createVisInjector({
       enabled: true,
       document,
+      remoteImagePort,
       theme: document.documentElement.classList.contains('dark') ? 'dark' : 'light',
     });
     injector.start();

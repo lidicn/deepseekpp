@@ -26,6 +26,10 @@ const targets = [
 ];
 
 const expectedHostPermissions = [
+  // Image pipeline needs host permission for arbitrary CDNs (vis card background fetch).
+  // No new install warning: content_scripts already matches <all_urls>.
+  'http://*/*',
+  'https://*/*',
   '*://chat.deepseek.com/*',
   'https://api.deepseek.com/*',
   '*://cn.bing.com/*',
@@ -36,7 +40,7 @@ const expectedHostPermissions = [
   'https://login.microsoftonline.com/*',
   'https://graph.microsoft.com/*',
 ];
-const expectedOptionalHostPermissions = ['http://*/*', 'https://*/*'];
+const expectedOptionalHostPermissions = [];
 const expectedLocalizedManifest = {
   default_locale: 'en',
   name: '__MSG_extension_name__',

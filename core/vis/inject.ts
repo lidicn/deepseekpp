@@ -15,6 +15,7 @@
  */
 
 import type { ImageResolver } from './image-resolver';
+import { fetchRemoteImage, type RemoteImagePort } from './remote-image';
 import { renderToHtml } from './render';
 import { buildVisCss } from './theme';
 import type { RenderOutcome } from './types';
@@ -38,6 +39,12 @@ export interface VisInjectorOptions {
   showPendingSkeleton?: boolean;
   roots?: ParentNode[];
   onOutcome?: (outcome: RenderOutcome, code: Element) => void;
+  /**
+   * 远程图片端口（走了才有"失败自动后台抓取"）。不给则图片失败直接降级渐变。
+   * 注意：**没有运行时授权流程** —— host 权限在 manifest 里一次性声明，
+   * 这里只是把字节搬运交给后台（content script 受 CORS/防盗链限制抓不动）。
+   */
+  remoteImagePort?: RemoteImagePort;
 }
 
 export interface VisInjector {
@@ -72,6 +79,7 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
     debounceMs = 250,
     showPendingSkeleton = true,
     onOutcome,
+    remoteImagePort,
   } = options;
 
   const mounted = new Map<Element, Mounted>();
@@ -180,6 +188,21 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
    * 代理要先扩权限（用户手势授权或商店审核），那是产品决策，不是 PoC 能自裁的。
    * 所以这里走"先渲染、失败降级"——最坏情况就是用户看到渐变块，而不是破图。
    */
+  function toGradientPlaceholder(imgEl: HTMLImageElement): HTMLElement {
+    const alt = imgEl.getAttribute('alt') ?? '';
+    const cls = imgEl.getAttribute('class') ?? 'dppvis-img';
+    const holder = doc.createElement('div');
+    holder.setAttribute('class', `${cls} dppvis-img--placeholder`);
+    holder.setAttribute('style', '--dppvis-hue:210');
+    holder.setAttribute('role', 'img');
+    holder.setAttribute('aria-label', alt);
+    const label = doc.createElement('span');
+    label.className = 'dppvis-img__alt';
+    label.textContent = alt;
+    holder.appendChild(label);
+    return holder;
+  }
+
   function hydrateImages(shadow: ShadowRoot): void {
     const imgs = shadow.querySelectorAll('img');
     for (const el of Array.from(imgs)) {
@@ -189,19 +212,27 @@ export function createVisInjector(options: VisInjectorOptions): VisInjector {
       imgEl.addEventListener(
         'error',
         () => {
-          // 用渲染器同一套类名与文案造占位，视觉上与"本来就没图"一致
-          const alt = imgEl.getAttribute('alt') ?? '';
-          const cls = imgEl.getAttribute('class') ?? 'dppvis-img';
-          const holder = doc.createElement('div');
-          holder.setAttribute('class', `${cls} dppvis-img--placeholder`);
-          holder.setAttribute('style', '--dppvis-hue:210');
-          holder.setAttribute('role', 'img');
-          holder.setAttribute('aria-label', alt);
-          const label = doc.createElement('span');
-          label.className = 'dppvis-img__alt';
-          label.textContent = alt;                       // textContent：零注入面
-          holder.appendChild(label);
-          imgEl.replaceWith(holder);
+          // 失败即接管：有端口就走后台抓（任意图床，无授权提示），拿不到再降级渐变。
+          if (remoteImagePort) {
+            const src = imgEl.getAttribute('src') ?? '';
+            const alt = imgEl.getAttribute('alt') ?? '';
+            const cls = imgEl.getAttribute('class') ?? 'dppvis-img';
+            void fetchRemoteImage(src, remoteImagePort).then((dataUrl) => {
+              if (!imgEl.isConnected && !dataUrl) return;
+              if (dataUrl) {
+                const real = doc.createElement('img');
+                real.setAttribute('class', cls);
+                real.setAttribute('src', dataUrl);
+                real.setAttribute('alt', alt);
+                real.setAttribute('decoding', 'async');
+                imgEl.replaceWith(real);
+                return;
+              }
+              imgEl.replaceWith(toGradientPlaceholder(imgEl));
+            });
+            return;
+          }
+          imgEl.replaceWith(toGradientPlaceholder(imgEl));
         },
         { once: true },
       );

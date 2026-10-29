@@ -163,6 +163,25 @@ ${scope} .dppvis-skeleton__bar--short { width: 44%; }
   from { background-position: 140% 0; }
   to { background-position: -40% 0; }
 }
+${scope} .dppvis-img--needpermission {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 8px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.94);
+  background: linear-gradient(145deg, rgba(43,55,72,.92), rgba(24,30,42,.96));
+  text-align: center;
+}
+${scope} .dppvis-img--needpermission:hover { filter: brightness(1.12); }
+${scope} .dppvis-img--needpermission:focus-visible { outline: 2px solid var(--dppvis-accent); outline-offset: 2px; }
+${scope} .dppvis-img__hint {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.66);
+  overflow-wrap: anywhere;
+}
 ${scope} .dppvis-img__alt {
   padding: 8px 12px;
   color: rgba(255, 255, 255, 0.92);

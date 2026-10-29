@@ -1,3 +1,4 @@
+import { registerVisImageMessageHandlers } from './background/vis-image-handlers';
 import {
   getAllMemories,
   getMemoryById,
@@ -877,6 +878,8 @@ type ActionApi = {
 };
 
 export default defineBackground(() => {
+  // vis 卡片的可选权限图片通路（PoC-2b）：只加自己的 onMessage 监听，不碰既有 handler。
+  registerVisImageMessageHandlers();
   const BOOT_T0 = performance.now();
   console.log('[DeepSeek++] background service worker starting');
   void syncLocalRecoveryBarrier.ensureReady().catch(acknowledgeReportedSyncRecoveryFailure);
