@@ -81,6 +81,8 @@ export const content = {
     invalidResultDetail: '后台返回的工具结果结构无效：{preview}',
   },
   agent: {
+    emptyAnswer: "模型本轮只返回了思考，没有正文。可以再发一次，或换个说法。",
+    interruptedNotice: "本轮响应被服务端中断（未收到结束帧），半截内容已丢弃。可以再发一次让它接着做完。",
     stop: '停止',
     stopped: '已停止',
     step: 'Step {index}',

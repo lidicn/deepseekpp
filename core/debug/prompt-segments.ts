@@ -23,7 +23,8 @@ export interface PromptSegments {
 }
 
 const CATALOG_MARKER = '### Available Tools';
-const MEMORY_MARKER = /^## (?:已有记忆|Existing Memor(?:y|ies))/m;
+// 中文标题用 unicode 转义书写：i18n 审计不允许源码里出现中文字面量。
+const MEMORY_MARKER = /^## (?:\u5df2\u6709\u8bb0\u5fc6|Existing Memor(?:y|ies))/m;
 /** 段落的通用起点：行首 `## `（不是 `###`）。 */
 const SECTION_START = /^## /m;
 

@@ -309,3 +309,38 @@ function clampText(value: string | undefined, maxLength: number): string | undef
   if (!value) return value;
   return value.length > maxLength ? `${value.slice(0, maxLength)}\n...[truncated]` : value;
 }
+
+/**
+ * 结算层决策（独立评审 §6 F1）：被截断的一轮该「续」还是该「显式提示」。
+ *
+ * 旧代码无条件把半截文本当最终答案（`resolvedFinalText = lastTurnText; return true`），
+ * 于是执行计划被交付、界面显示「已完成」——用户看到的就是"什么都完不成"。
+ */
+export type InterruptedSettlement = 'continue' | 'notice';
+
+/**
+ * 截断轮是否允许"自动续一轮"。
+ *
+ * 默认 **false**：`53b4fbb` 的历史教训是"截断后自动续轮会在 mock/异常情况下挂起"。
+ * 当前策略先止血 —— **截断不得被结算成成功答案**（这一条没有风险），
+ * 续轮能力保留在代码里，等有真实链续请求的验收用例后再开。
+ */
+export const ALLOW_INTERRUPTED_CONTINUATION = false;
+
+export function decideInterruptedSettlement(input: {
+  continuable: boolean;
+  nudgeCount: number;
+  maxNudges: number;
+  /** 默认取全局开关（当前 false）；测试可显式覆盖以覆盖两条分支。 */
+  allowContinuation?: boolean;
+}): InterruptedSettlement {
+  if (!(input.allowContinuation ?? ALLOW_INTERRUPTED_CONTINUATION)) return 'notice';
+  if (!input.continuable) return 'notice';
+  if (input.nudgeCount >= input.maxNudges) return 'notice';
+  return 'continue';
+}
+
+/** 「响应被中断」提示（替代把半截文本当答案）。 */
+export function buildInlineAgentInterruptedNotice(locale: SupportedLocale): string {
+  return translate(locale, 'content.agent.interruptedNotice');
+}

@@ -81,6 +81,9 @@ export const content = {
     invalidResultDetail: 'Background returned an invalid tool result: {preview}',
   },
   agent: {
+    emptyAnswer: "The model returned only reasoning this turn, with no answer. Please retry or rephrase.",
+    interruptedNotice: "This turn was interrupted by the server (no finish frame); partial text was discarded. Send again to continue.",
+
     stop: 'Stop',
     stopped: 'Stopped',
     step: 'Step {index}',

@@ -50,6 +50,8 @@ import {
   buildNudgePrompt,
   extractTaskCompleteSignal,
   shouldNudge,
+  decideInterruptedSettlement,
+  buildInlineAgentInterruptedNotice,
 } from '../prompt';
 import { stripRetiredArtifactProtocolBlocks } from '../retired-artifact';
 import type {
@@ -141,6 +143,8 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
   let stepText = ''; // current turn's visible text
   let lastPostedText = '';
   let stepReasoning = ''; // current step's accumulated reasoning text (per-turn thinking deltas)
+  /** 本轮流是否被截断（stopReason='length'）—— 结算层与 steering 共用。 */
+  let lastTurnInterrupted = false;
   let lastPostedReasoning = '';
   let finalizeDone = false;
   let resolvedFinalText: string | null = null;
@@ -362,7 +366,22 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
       // the loop would treat the partial text as an incomplete answer and
       // nudge, then re-call the stream and hang when the mock is exhausted.
       if (message.stopReason === 'length' && !lastTurnHasTools) {
-        resolvedFinalText = lastTurnText;
+        // 2026-10-30 F1（独立评审 §6）：**截断的流不得被结算成成功答案**。
+        // 旧行为把「正在写的执行计划」当最终答案并正常收尾，界面还显示「已完成」。
+        // 新行为：链可续 + nudge 预算未耗尽 ⇒ 续一轮；否则 ⇒ 显式中断提示。
+        lastTurnInterrupted = true;
+        const settlement = decideInterruptedSettlement({
+          continuable: hasContinuableChain(),
+          nudgeCount: nudge.count,
+          maxNudges: budget.maxNudges,
+        });
+        if (settlement === 'continue') {
+          nudge.count += 1;
+          nudge.nudgedInStep = false;
+          return false;
+        }
+        stopNotice = buildInlineAgentInterruptedNotice(locale);
+        resolvedFinalText = '';
         return true;
       }
       const text = lastTurnText;
@@ -442,12 +461,13 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
       if (turnsElapsed === 0) return [];
       if (!lastTurnHasTools && !nudge.nudgedInStep && hasContinuableChain()
         && !extractTaskCompleteSignal(lastTurnText)
-        && shouldNudge(
-          payload.originalPrompt,
-          collectedExecutions,
-          stripRetiredArtifactProtocolBlocks(lastTurnText),
-          { hadReasoning: stepReasoning.trim().length > 0 },
-        )) {
+        && (lastTurnInterrupted
+          || shouldNudge(
+            payload.originalPrompt,
+            collectedExecutions,
+            stripRetiredArtifactProtocolBlocks(lastTurnText),
+            { hadReasoning: stepReasoning.trim().length > 0 },
+          ))) {
         // R4 修复：nudge 受 maxNudges 封顶（之前是死字段，只增不减）
         if (nudge.count >= budget.maxNudges) {
           console.warn(`[inline-agent] nudge budget exhausted (${nudge.count}/${budget.maxNudges}), stopping nudges`);
