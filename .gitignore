@@ -44,3 +44,5 @@ docs/archives/*
 
 # build/editor backups — never commit
 *.bak
+# 构建指纹（自动重载用，每次构建变化）
+public/build-stamp.txt

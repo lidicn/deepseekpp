@@ -880,6 +880,28 @@ type ActionApi = {
 export default defineBackground(() => {
   // vis 卡片的可选权限图片通路（PoC-2b）：只加自己的 onMessage 监听，不碰既有 handler。
   registerVisImageMessageHandlers();
+
+  // 自动重载（2026-10-30）：构建指纹变化 ⇒ 扩展自己重载，**不需要用户点按钮**。
+  // 放在 SW：从页面调 chrome.runtime.reload() 会把页面搞成无响应（实测），SW 无页面上下文。
+  // 代价：重载后已打开页面的 content script 失效，需刷新页面（dpp 已有 context-invalidated 提示）。
+  try {
+    const stampUrl = chrome.runtime.getURL('build-stamp.txt');
+    let lastStamp: string | null = null;
+    const pollBuildStamp = async (): Promise<void> => {
+      try {
+        const res = await fetch(stampUrl, { cache: 'no-store' });
+        if (!res.ok) return; // 生产构建没有该文件 ⇒ 静默
+        const text = (await res.text()).trim();
+        if (lastStamp === null) { lastStamp = text; return; }
+        if (text !== lastStamp) {
+          console.log('[DeepSeek++] build stamp changed, reloading extension');
+          chrome.runtime.reload();
+        }
+      } catch { /* 文件缺失/网络错误：静默 */ }
+    };
+    void pollBuildStamp();
+    setInterval(() => void pollBuildStamp(), 3000);
+  } catch { /* 环境不支持：忽略 */ }
   const BOOT_T0 = performance.now();
   console.log('[DeepSeek++] background service worker starting');
   void syncLocalRecoveryBarrier.ensureReady().catch(acknowledgeReportedSyncRecoveryFailure);

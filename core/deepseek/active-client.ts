@@ -811,6 +811,15 @@ async function readCompletionStreamWithCallbacks(
     // a clean completion. Log it so it is visible in diagnostics instead of
     // being silently treated as normal.
     const streamEndClass = classifyStreamEnd(streamDiagnostics);
+    // 观测（2026-10-30）：把**每一次流的结束形态**都打到 console ——
+    // 之前只在 warn 分支打印，tool-turn-close 被降级成 info 后，脚本"数不到截断"，
+    // 等于把用户看到的"第一步就停"遮住了。
+    console.info(
+      `[DPP-stream] end class=${streamEndClass} finished=${summary.finished} `
+      + `endedBy=${streamDiagnostics.endedBy} status=${streamDiagnostics.lastFrameStatus ?? 'n/a'} `
+      + `fragments=${streamDiagnostics.fragmentTypes.join('|') || 'none'} `
+      + `msgId=${streamDiagnostics.responseMessageId ?? 'n/a'} frames=${streamDiagnostics.frameCount}`,
+    );
 
     // P0-2：工具轮正常收尾（见过 TOOL fragment + 拿到正 id + 没 FINISHED）不算截断，
     // 只记 info 级诊断，不刷 warn —— 否则每个纯工具轮都报一次"疑似截断"，真截断被淹没。
