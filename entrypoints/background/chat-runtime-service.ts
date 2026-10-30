@@ -12,6 +12,7 @@ import {
 import { createResumeGate, normalizeFlags, RESUME_FLAGS_STORAGE_KEY } from '../../core/chat/resume-gate';
 import { waitForWakeReconcile } from '../../core/chat/wake-reconcile-timeout';
 import { diagnosticLogBuffer } from '../../core/diagnostics/log-buffer';
+import { withPowRetry } from '../../core/deepseek/pow-retry';
 import {
   runResumeToolLoop,
   type ResumeToolLoopDeps,
@@ -324,9 +325,21 @@ export function createChatRuntimeService(
       // One model request = one W29 turn (same semantics as content inline agent).
       webTrace.beginTurn(`web-chat:${step}`);
       const powStartedAt = Date.now();
-      const powHeaders = await dependencies.createPowHeaders(
-        currentInput.clientHeaders,
-        turn.controller.signal,
+      // 审计 P2-4：对话流原先 PoW **零重试**（工具流是 3 次 + backoff）。
+      // abort / AbortError 不算 PoW 失败，立刻放弃（P3-5）。
+      const powHeaders = await withPowRetry(
+        () => dependencies.createPowHeaders(currentInput.clientHeaders, turn.controller.signal),
+        {
+          signal: turn.controller.signal,
+          onRetry: ({ attempt, delayMs, error }) => {
+            diagnosticLogBuffer.record({
+              level: 'warn',
+              source: 'chat-runtime',
+              message: 'pow_retry',
+              details: `attempt=${attempt} delay=${delayMs} err=${String((error as Error)?.message ?? error).slice(0, 60)}`,
+            });
+          },
+        },
       );
       const powMs = Date.now() - powStartedAt;
       assertTurnActive(turn);
