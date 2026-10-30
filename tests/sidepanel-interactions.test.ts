@@ -580,7 +580,7 @@ describe('sidepanel interactions', () => {
 
   it('persists web model mode from sidepanel chat controls', async () => {
     const sendMessage = vi.fn(async (message: { type: string; payload?: unknown }) => {
-      if (message.type === 'GET_AUTH_STATUS') return { available: true, provider: 'deepseek-web' };
+      if (message.type === 'GET_AUTH_STATUS') return { available: true, provider: 'deepseek-web', hasToken: true, hasApiKey: false };
       if (message.type === 'GET_OFFICIAL_API_CHAT_CONFIG') return {};
       if (message.type === 'GET_MODEL_TYPE') return null;
       if (message.type === 'GET_VOICE_SETTINGS') return {};
@@ -601,7 +601,7 @@ describe('sidepanel interactions', () => {
 
   it('scrolls to the updated message height after the lazy rich renderer commits', async () => {
     const sendMessage = vi.fn(async (message: { type: string }) => {
-      if (message.type === 'GET_AUTH_STATUS') return { available: true, provider: 'deepseek-web' };
+      if (message.type === 'GET_AUTH_STATUS') return { available: true, provider: 'deepseek-web', hasToken: true, hasApiKey: false };
       if (message.type === 'GET_OFFICIAL_API_CHAT_CONFIG') return {};
       if (message.type === 'GET_MODEL_TYPE') return null;
       if (message.type === 'GET_VOICE_SETTINGS') return {};
@@ -651,7 +651,7 @@ describe('sidepanel interactions', () => {
 
   it('uploads a vision image attachment and submits its file reference', async () => {
     const sendMessage = vi.fn(async (message: { type: string; payload?: unknown }) => {
-      if (message.type === 'GET_AUTH_STATUS') return { available: true, provider: 'deepseek-web' };
+      if (message.type === 'GET_AUTH_STATUS') return { available: true, provider: 'deepseek-web', hasToken: true, hasApiKey: false };
       if (message.type === 'GET_OFFICIAL_API_CHAT_CONFIG') return {};
       if (message.type === 'GET_MODEL_TYPE') return 'vision';
       if (message.type === 'GET_VOICE_SETTINGS') return {};
@@ -714,7 +714,7 @@ describe('sidepanel interactions', () => {
       resolveReset = resolve;
     });
     const sendMessage = vi.fn(async (message: { type: string; payload?: unknown }) => {
-      if (message.type === 'GET_AUTH_STATUS') return { available: true, provider: 'deepseek-web' };
+      if (message.type === 'GET_AUTH_STATUS') return { available: true, provider: 'deepseek-web', hasToken: true, hasApiKey: false };
       if (message.type === 'GET_OFFICIAL_API_CHAT_CONFIG') return {};
       if (message.type === 'GET_MODEL_TYPE') return 'vision';
       if (message.type === 'GET_VOICE_SETTINGS') return {};
@@ -766,7 +766,7 @@ describe('trusted-directory @ file references', () => {
 
   function stubWebChat() {
     const sendMessage = vi.fn(async (message: { type: string; payload?: unknown }) => {
-      if (message.type === 'GET_AUTH_STATUS') return { available: true, provider: 'deepseek-web' };
+      if (message.type === 'GET_AUTH_STATUS') return { available: true, provider: 'deepseek-web', hasToken: true, hasApiKey: false };
       if (message.type === 'GET_OFFICIAL_API_CHAT_CONFIG') return {};
       if (message.type === 'GET_MODEL_TYPE') return 'vision';
       if (message.type === 'GET_VOICE_SETTINGS') return {};
