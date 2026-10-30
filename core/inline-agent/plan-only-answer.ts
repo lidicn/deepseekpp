@@ -55,7 +55,7 @@ export interface PlanOnlyAnswerInput {
 
 export const PLAN_ONLY_MAX_CHARS = 1500;
 /** 极短答案阈值：低于它且无交付证据，视为"这一轮没做完"。 */
-export const SHORT_ANSWER_MAX_CHARS = 120;
+export const SHORT_ANSWER_MAX_CHARS = 300;
 
 /** 是否出现了"交付证据"（结论/证据/file:line/代码块/表格/建议）。 */
 export function hasDeliverableEvidence(text: string): boolean {

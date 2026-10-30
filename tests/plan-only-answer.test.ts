@@ -140,10 +140,14 @@ describe('极短答案（真机 50 字 FINISHED 样本）', () => {
     expect(isSuspiciouslyShortAnswer({ answerText: '好，我来审计一下这个仓库，先看看结构，然后找 bug。', hadToolExecutions: false })).toBe(true);
   });
 
+  it('★ 186 字（真机 run1 样本，无交付证据）也算', () => {
+    expect(isSuspiciouslyShortAnswer({ answerText: 'x'.repeat(186), hadToolExecutions: false })).toBe(true);
+  });
+
   it('负控：有交付证据 / 有工具执行 / 长文 / 空文 ⇒ 不算', () => {
     expect(isSuspiciouslyShortAnswer({ answerText: '发现一个 bug：core/a.ts:12 拼写错误。', hadToolExecutions: false })).toBe(false);
     expect(isSuspiciouslyShortAnswer({ answerText: '好，我来审计。', hadToolExecutions: true })).toBe(false);
-    expect(isSuspiciouslyShortAnswer({ answerText: 'x'.repeat(200), hadToolExecutions: false })).toBe(false);
+    expect(isSuspiciouslyShortAnswer({ answerText: 'x'.repeat(400), hadToolExecutions: false })).toBe(false);
     expect(isSuspiciouslyShortAnswer({ answerText: '', hadToolExecutions: false })).toBe(false);
   });
 
