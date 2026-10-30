@@ -54,6 +54,32 @@ export interface PlanOnlyAnswerInput {
 }
 
 export const PLAN_ONLY_MAX_CHARS = 1500;
+/** 极短答案阈值：低于它且无交付证据，视为"这一轮没做完"。 */
+export const SHORT_ANSWER_MAX_CHARS = 120;
+
+/** 是否出现了"交付证据"（结论/证据/file:line/代码块/表格/建议）。 */
+export function hasDeliverableEvidence(text: string): boolean {
+  const value = (text ?? '').trim();
+  if (!value) return false;
+  return DELIVERABLE_MARKERS.some((re) => re.test(value));
+}
+
+/**
+ * 极短答案判定（2026-10-30 真机新增）。
+ * 真机样本：正文 50 字、`cls=clean / FINISHED`、无任何计划标记、无工具执行 ——
+ * 既不是"空"也不是"计划型"，但用户看到的就是"刚开头就停"。
+ */
+export function isSuspiciouslyShortAnswer(input: {
+  answerText: string;
+  hadToolExecutions?: boolean;
+}): boolean {
+  const value = (input.answerText ?? '').trim();
+  if (value.length === 0) return false;
+  if (value.length >= SHORT_ANSWER_MAX_CHARS) return false;
+  if (input.hadToolExecutions) return false;
+  return !hasDeliverableEvidence(value);
+}
+
 /** 短文本阈值：低于它时，命中 1 个计划语即判计划型。 */
 export const SHORT_PLAN_ONLY_CHARS = 200;
 

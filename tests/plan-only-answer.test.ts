@@ -11,6 +11,8 @@ import {
   decidePlanOnlySettlement,
   decideChatLayerContinuation,
   looksLikePlanOnlyAnswer,
+  hasDeliverableEvidence,
+  isSuspiciouslyShortAnswer,
 } from '../core/inline-agent/plan-only-answer';
 
 const REAL_PLAN = '先检索记忆了解项目背景。已有记忆 #107、#108 是之前的审计。'
@@ -129,5 +131,24 @@ describe('英文计划型（真机 2026-10-30：990 字，FINISHED 但明显没�
         enabled: true,
       }),
     ).toBe(true);
+  });
+});
+
+describe('极短答案（真机 50 字 FINISHED 样本）', () => {
+  it('★★ 50 字、无计划标记、无工具 ⇒ 判为可疑极短', () => {
+    expect(isSuspiciouslyShortAnswer({ answerText: '好，我来审计一下这个仓库，先看看结构，然后找 bug。', hadToolExecutions: false })).toBe(true);
+  });
+
+  it('负控：有交付证据 / 有工具执行 / 长文 / 空文 ⇒ 不算', () => {
+    expect(isSuspiciouslyShortAnswer({ answerText: '发现一个 bug：core/a.ts:12 拼写错误。', hadToolExecutions: false })).toBe(false);
+    expect(isSuspiciouslyShortAnswer({ answerText: '好，我来审计。', hadToolExecutions: true })).toBe(false);
+    expect(isSuspiciouslyShortAnswer({ answerText: 'x'.repeat(200), hadToolExecutions: false })).toBe(false);
+    expect(isSuspiciouslyShortAnswer({ answerText: '', hadToolExecutions: false })).toBe(false);
+  });
+
+  it('★ hasDeliverableEvidence 认 file:line 与结论', () => {
+    expect(hasDeliverableEvidence('见 core/a.ts:12')).toBe(true);
+    expect(hasDeliverableEvidence('结论：没问题')).toBe(true);
+    expect(hasDeliverableEvidence('我先看看')).toBe(false);
   });
 });

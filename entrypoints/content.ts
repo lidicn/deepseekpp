@@ -126,7 +126,7 @@ import {
   findInlineAgentRestoreTarget,
 } from "../core/inline-agent/message-anchor";
 import { classifyEmptyAnswer, hasAssistantMessage, readLastAssistantAnswerText, shouldWarnEmptyAnswer } from "../core/inline-agent/empty-answer";
-import { decideChatLayerContinuation } from "../core/inline-agent/plan-only-answer";
+import { decideChatLayerContinuation, isSuspiciouslyShortAnswer } from "../core/inline-agent/plan-only-answer";
 import { resolveTerminalHeader } from "../core/inline-agent/terminal-header";
 import { diagnosticLogBuffer } from "../core/diagnostics/log-buffer";
 import { decideRestoreStepAction, routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
@@ -1566,7 +1566,11 @@ async function dispatchMainWorldMessage(
         // 2026-10-30 真机：页面轮次由 content script 驱动（request-interceptor），
         // 服务端以 INCOMPLETE 收尾时正文常为 0 字 ⇒ 用户看到"第一步就停"。
         // 空回答不是"没有答案"，而是"这一轮没产出" ⇒ 自动续一次（与计划型共用上限）。
-        if (emptyAnswerVerdict === "empty" && completedExecutions.length === 0) {
+        const shortAnswerContinuation = isSuspiciouslyShortAnswer({
+          answerText: domAnswerText,
+          hadToolExecutions: completedExecutions.length > 0,
+        });
+        if ((emptyAnswerVerdict === "empty" || shortAnswerContinuation) && completedExecutions.length === 0) {
           const requestKey = complete.requestId ?? "";
           if (requestKey && planOnlyContinuedRequestId !== requestKey) {
             planOnlyContinuedRequestId = requestKey;
