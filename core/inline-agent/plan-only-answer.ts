@@ -69,3 +69,21 @@ export function decidePlanOnlySettlement(input: {
   if (input.continuedAlready) return 'settle';
   return 'continue';
 }
+/**
+ * 聊天层决策（2026-10-30 真机）：**第一轮**模型只给计划、且没调用任何工具时，
+ * 自动把"继续"发出去一次。
+ *
+ * 为什么必须在聊天层：此时 agent loop 根本没启动（没有工具调用），
+ * `loop-adapter` 里的计划型守卫永远不会被走到 —— 用户看到的就是"第一步就停"。
+ */
+export function decideChatLayerContinuation(input: {
+  answerText: string;
+  hadToolExecutions: boolean;
+  alreadyContinued: boolean;
+  enabled: boolean;
+}): boolean {
+  if (!input.enabled) return false;
+  if (input.alreadyContinued) return false;
+  if (input.hadToolExecutions) return false;
+  return looksLikePlanOnlyAnswer({ answerText: input.answerText });
+}

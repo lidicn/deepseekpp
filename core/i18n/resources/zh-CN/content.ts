@@ -84,6 +84,8 @@ export const content = {
     emptyAnswer: "模型本轮只返回了思考，没有正文。可以再发一次，或换个说法。",
     interruptedNotice: "本轮响应被服务端中断（未收到结束帧），半截内容已丢弃。可以再发一次让它接着做完。",
     interruptedLabel: "响应被中断",
+    planOnlyContinue: '模型只给了执行计划，已自动继续一次',
+    planOnlyContinuePrompt: '继续：直接开始执行（该调工具就调），不要复述计划。',
     stop: '停止',
     stopped: '已停止',
     step: 'Step {index}',

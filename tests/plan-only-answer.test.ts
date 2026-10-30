@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   decidePlanOnlySettlement,
+  decideChatLayerContinuation,
   looksLikePlanOnlyAnswer,
 } from '../core/inline-agent/plan-only-answer';
 
@@ -70,5 +71,24 @@ describe('decidePlanOnlySettlement', () => {
     expect(
       decidePlanOnlySettlement({ planOnly: false, continuable: true, continuedAlready: false }),
     ).toBe('settle');
+  });
+});
+describe('decideChatLayerContinuation（聊天层自动续一次）', () => {
+  it('★★ 计划型 + 无工具 + 未续过 ⇒ 自动续（这就是"第一步就停"的修法）', () => {
+    expect(
+      decideChatLayerContinuation({ answerText: REAL_PLAN, hadToolExecutions: false, alreadyContinued: false, enabled: true }),
+    ).toBe(true);
+  });
+
+  it('★ 已续过 ⇒ 不再续（封顶 1 次，避免自激）', () => {
+    expect(
+      decideChatLayerContinuation({ answerText: REAL_PLAN, hadToolExecutions: false, alreadyContinued: true, enabled: true }),
+    ).toBe(false);
+  });
+
+  it('负控：有工具执行 / 开关关闭 / 非计划型 ⇒ 不续', () => {
+    expect(decideChatLayerContinuation({ answerText: REAL_PLAN, hadToolExecutions: true, alreadyContinued: false, enabled: true })).toBe(false);
+    expect(decideChatLayerContinuation({ answerText: REAL_PLAN, hadToolExecutions: false, alreadyContinued: false, enabled: false })).toBe(false);
+    expect(decideChatLayerContinuation({ answerText: '答案：这里有一处 bug，证据 core/a.ts:12。', hadToolExecutions: false, alreadyContinued: false, enabled: true })).toBe(false);
   });
 });

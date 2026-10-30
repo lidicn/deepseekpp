@@ -126,6 +126,7 @@ import {
   findInlineAgentRestoreTarget,
 } from "../core/inline-agent/message-anchor";
 import { classifyEmptyAnswer, hasAssistantMessage, readLastAssistantAnswerText, shouldWarnEmptyAnswer } from "../core/inline-agent/empty-answer";
+import { decideChatLayerContinuation } from "../core/inline-agent/plan-only-answer";
 import { resolveTerminalHeader } from "../core/inline-agent/terminal-header";
 import { diagnosticLogBuffer } from "../core/diagnostics/log-buffer";
 import { decideRestoreStepAction, routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
@@ -1523,6 +1524,31 @@ async function dispatchMainWorldMessage(
         const domAnswerText = hasAssistantMessage(document)
           ? readLastAssistantAnswerText(document)
           : (complete.text ?? "");
+        // 聊天层：模型只给计划、没调工具时自动续一次（等价于用户手打"继续完成"）。
+        // 必须在这一层做 —— 此时 agent loop 根本没启动，loop 层的计划型守卫走不到。
+        const domAnswerForPlanCheck = hasAssistantMessage(document)
+          ? readLastAssistantAnswerText(document)
+          : (complete.text ?? "");
+        if (decideChatLayerContinuation({
+          answerText: domAnswerForPlanCheck,
+          hadToolExecutions: completedExecutions.length > 0,
+          alreadyContinued: planOnlyContinuedRequestId === (complete.requestId ?? ""),
+          enabled: true,
+        })) {
+          planOnlyContinuedRequestId = complete.requestId ?? "";
+          diagnosticLogBuffer.record({
+            level: "warn",
+            source: "chat",
+            message: "plan_only_auto_continue",
+            details: `len=${domAnswerForPlanCheck.length}`
+          });
+          showContentToast(contentT("content.agent.planOnlyContinue"), "info");
+          const insertedPlanContinuation = insertTextIntoPromptTextarea(
+            contentT("content.agent.planOnlyContinuePrompt"),
+          );
+          if (insertedPlanContinuation.ok) submitComposerFromContent();
+        }
+
         const emptyAnswerVerdict = classifyEmptyAnswer({
           answerText: domAnswerText,
           hasToolExecutions: completedExecutions.length > 0,
@@ -4468,6 +4494,23 @@ const CONTENT_TOAST_VISIBLE_MS = 6000;
  * agent concurrency guard in issue #298). Distinct from the export toast so
  * the two never overwrite each other.
  */
+// 计划型短答案的自动续次上限：按 requestId 只续一次，避免自激。
+let planOnlyContinuedRequestId = "";
+
+/** 点一次页面自己的发送按钮（不伪造事件，使用真实按钮）。 */
+function submitComposerFromContent(): void {
+  const box = document.querySelector<HTMLTextAreaElement>("textarea");
+  if (!box) return;
+  let container: HTMLElement = box;
+  for (let i = 0; i < 6 && container.parentElement; i += 1) {
+    container = container.parentElement;
+    if (container.querySelectorAll(".ds-button").length >= 2) break;
+  }
+  const button = container.querySelector<HTMLElement>(".ds-button--primary.ds-button--filled")
+    ?? [...container.querySelectorAll<HTMLElement>(".ds-button")].pop();
+  button?.click();
+}
+
 function showContentToast(
   message: string,
   tone: "info" | "warning" = "info",
