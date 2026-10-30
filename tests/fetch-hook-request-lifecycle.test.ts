@@ -219,7 +219,10 @@ describe('fetch hook request lifecycle', () => {
     const wrapped = await interceptFetchResponse(Promise.resolve(response), context);
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(pullCount).toBeLessThanOrEqual(1);
+    // 2026-10-31（独立评审 §3.4）：highWaterMark 0 → 1，允许**一格读前**，
+    // 目的是解开"页面不拉 ⇒ dpp 不读上游"的反压耦合。因此这里允许 2（一格在飞 + 一格读前），
+    // 但仍必须**有界**：绝不允许无限制读前把上游一次性拉空。
+    expect(pullCount).toBeLessThanOrEqual(2);
     expect(onResponseTokenSpeed).not.toHaveBeenCalled();
     await wrapped.body!.cancel();
     expect(onRequestTerminal).toHaveBeenCalledOnce();
