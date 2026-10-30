@@ -8,6 +8,7 @@ import {
   isStreamFinishedFromParsed,
   type SSEEvent,
 } from './stream-codec';
+import { formatConcurrentRequest, requestActivity, type RequestSource } from './request-activity';
 import {
   classifyStreamEnd,
   createStreamDiagnostics,
@@ -636,6 +637,22 @@ async function readCompletionStreamWithCallbacks(
   response: Response,
   callbacks: StreamCallbacks,
 ): Promise<ModelTurn> {
+  // 2.3 观测（先观测后修）：登记本次出站请求，检查同一会话上是否已有请求在飞。
+  // 假设待验：页面请求与 agent/记忆请求重叠 ⇒ 服务端抢占 ⇒ 页面弹「服务器问题」。
+  const requestSource: RequestSource = callbacks.retainAssistantText === false ? 'agent' : 'page';
+  const activity = requestActivity.begin({
+    requestId: `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    source: requestSource,
+  });
+  if (activity.concurrent.length > 0) {
+    diagnosticLogBuffer.record({
+      level: 'warn',
+      source: 'deepseek-request',
+      message: 'concurrent_request',
+      details: formatConcurrentRequest(activity.entry, activity.concurrent),
+    });
+  }
+
   const reader = response.body!.getReader();
   const decoder = createDeepSeekSseByteDecoder();
   const summary = createDeepSeekStreamSummary();
@@ -793,6 +810,7 @@ async function readCompletionStreamWithCallbacks(
     }
   } finally {
     clearInterval(stallTimer);
+    requestActivity.end(activity.entry.requestId);
     speedTracker?.finish();
     if (streamAbortedMidResponse) {
       try { await reader.cancel(); } catch { /* ignore cleanup errors */ }
