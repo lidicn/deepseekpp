@@ -19,6 +19,12 @@ export interface PowAnswer {
 const SUPPORTED_ALGORITHM = 'DeepSeekHashV1';
 export const DEEPSEEK_POW_WASM_PATH = 'deepseek/sha3_wasm_bg.wasm';
 
+/**
+ * WASM 冷加载超时（审计 P2-3：此前**完全没有超时**，实测可挂起 28s 以上直到永久）。
+ * 超时后 abort 共享加载并清掉缓存，让下一次调用重新开始。
+ */
+export const POW_WASM_LOAD_TIMEOUT_MS = 20_000;
+
 interface DeepSeekPowWasmExports {
   memory: WebAssembly.Memory;
   wasm_solve(
@@ -146,12 +152,28 @@ function startDeepSeekPowWasmLoad(wasmUrl?: string): PowWasmLoad {
     promise: Promise.resolve(null as unknown as DeepSeekPowWasmExports),
     waiters: 0,
   };
-  load.promise = instantiateDeepSeekPowWasm(wasmUrl, load.controller.signal)
+  // P2-3：冷加载必须有上限。`fetch` 挂住时 signal 只影响 fetch，
+  // `response.arrayBuffer()` 仍可能永久 pending，所以用 race 兜底。
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeoutGuard = new Promise<never>((_resolve, reject) => {
+    timeoutHandle = setTimeout(() => {
+      load.controller.abort(
+        new DOMException('DeepSeek PoW WASM load timed out.', 'TimeoutError'),
+      );
+      reject(new Error('pow_wasm_load_timeout'));
+    }, POW_WASM_LOAD_TIMEOUT_MS);
+  });
+
+  load.promise = Promise.race([
+    instantiateDeepSeekPowWasm(wasmUrl, load.controller.signal),
+    timeoutGuard,
+  ])
     .then((loaded) => {
       powWasm = loaded;
       return loaded;
     })
     .finally(() => {
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
       if (powWasmLoad === load) powWasmLoad = null;
     });
   powWasmLoad = load;
