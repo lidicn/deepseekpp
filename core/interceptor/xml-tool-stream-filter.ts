@@ -65,6 +65,15 @@ export class XmlToolStreamFilter {
     );
   }
 
+  /**
+   * 是否正在"扣帧"（工具块开了没闭合，一个字节都不往页面写）。
+   *
+   * 见 stream-keepalive.ts：扣帧期间页面会被饿死，需要外部按节奏写保活块。
+   */
+  isSuppressing(): boolean {
+    return this.state === "SUPPRESSING";
+  }
+
   processFrames(
     frames: readonly DeepSeekSseFrame[],
     controller: ReadableStreamDefaultController<Uint8Array>,

@@ -1,3 +1,5 @@
+import { STREAM_KEEPALIVE_MS, shouldEmitKeepAlive } from "./stream-keepalive";
+import { diagnosticLogBuffer } from "../diagnostics/log-buffer";
 import type {
   ToolCall,
   ToolCallRestoreRecord,
@@ -181,6 +183,8 @@ export interface PassiveDeepSeekStreamState {
     controller: ReadableStreamDefaultController<Uint8Array>,
   ): ResponseCompletePayload | null;
   cancel(): void;
+  /** 是否正在扣帧（见 stream-keepalive.ts）。 */
+  isSuppressing(): boolean;
 }
 
 function createPassiveDeepSeekStreamState(
@@ -263,6 +267,9 @@ function createPassiveDeepSeekStreamState(
         promptOptions: requestContext.promptOptions,
       };
     },
+    isSuppressing() {
+      return filter.isSuppressing();
+    },
     cancel() {
       if (cancelled || completed) return;
       speedTracker.finish();
@@ -304,13 +311,43 @@ export async function interceptFetchResponse(
   };
   let cancelled = false;
   let finished = false;
+  // 保活竞速用：上游读取结果先落到这里，避免"定时器赢了就把数据丢了"。
+  let bufferedRead: ReadableStreamReadResult<Uint8Array> | null = null;
+  let inflightRead: Promise<void> | null = null;
+  const pumpUpstream = () => {
+    inflightRead ??= reader.read().then(
+      (result) => { bufferedRead = result; inflightRead = null; },
+      () => { inflightRead = null; },
+    );
+    return inflightRead;
+  };
 
   const stream = new ReadableStream(
     {
       async pull(controller) {
         if (cancelled || finished) return;
         try {
-          const { done, value } = await reader.read();
+          // 2026-10-31（A/B 实证）：抑制工具块期间页面收不到任何字节，
+          // 页面自己的空闲判定会报「服务器暂时不可用」并关流 → 断流。
+          // 这里让"读上游"与"保活定时器"竞速：定时器先到就写一个零长度块。
+          // 保活：抑制工具块期间页面收不到任何字节，会被自己的空闲判定判成"服务器暂时不可用"。
+          // 读上游与保活定时器竞速；定时器先到就写零长度块，**上游结果留在 bufferedRead 不丢**。
+          const inflight = pumpUpstream();
+          const idleTimer = new Promise<"idle">((resolve) => {
+            setTimeout(() => resolve("idle"), STREAM_KEEPALIVE_MS);
+          });
+          const raced = await Promise.race([inflight, idleTimer]);
+          if (raced === "idle") {
+            const suppressing = streamState ? streamState.isSuppressing() : false;
+            if (shouldEmitKeepAlive({ suppressing, idleMs: STREAM_KEEPALIVE_MS, finished })) {
+              try {
+                controller.enqueue(new Uint8Array(0));
+              } catch { /* 页面已关流 */ }
+            }
+            return;
+          }
+          const { done, value } = bufferedRead ?? { done: false, value: undefined };
+          bufferedRead = null;
           if (cancelled) return;
           if (!done) {
             getStreamState().append(
@@ -334,7 +371,17 @@ export async function interceptFetchResponse(
             await reader.cancel(error);
           } finally {
             try {
-              controller.error(error);
+              // 2026-10-31（A/B 实证）：把 dpp 侧的异常 controller.error() 灌给页面，
+              // 页面会渲染成「服务器暂时不可用」。这里改为**优雅关闭**：页面看到的是正常结束。
+              diagnosticLogBuffer.record({
+                level: 'warn',
+                source: 'stream',
+                message: 'page_stream_error_swallowed',
+                details: String((error as Error)?.message ?? error).slice(0, 80),
+              });
+              try {
+                controller.close();
+              } catch { /* 页面已关流 */ }
             } finally {
               notifyTerminal();
             }
@@ -352,7 +399,8 @@ export async function interceptFetchResponse(
         }
       },
     },
-    { highWaterMark: 0 },
+    // 0 会导致"页面不拉 ⇒ dpp 也不读上游"，与保活配合改为 1。
+      { highWaterMark: 1 },
   );
 
   // The filtered body no longer matches the upstream byte length, and fetch
