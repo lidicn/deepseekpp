@@ -53,6 +53,7 @@ import {
   decideInterruptedSettlement,
   buildInlineAgentInterruptedNotice,
 } from '../prompt';
+import { decidePlanOnlySettlement, looksLikePlanOnlyAnswer } from '../plan-only-answer';
 import { stripRetiredArtifactProtocolBlocks } from '../retired-artifact';
 import type {
   InlineAgentStartPayload,
@@ -145,6 +146,10 @@ export async function runPiInlineAgentLoop(deps: PiLoopAdapterDeps): Promise<voi
   let stepReasoning = ''; // current step's accumulated reasoning text (per-turn thinking deltas)
   /** 本轮流是否被截断（stopReason='length'）—— 结算层与 steering 共用。 */
   let lastTurnInterrupted = false;
+
+  /** 计划型短答案是否已经续过一次（每 loop 最多 1 次）。 */
+
+  let planOnlyContinued = false;
   /** 本轮起点时的 chain id（M3：用于识别"陈旧正值"）。 */
   let parentIdAtTurnStart: number | null = session.parentMessageId;
   let lastPostedReasoning = '';
@@ -420,6 +425,23 @@ post('AGENT_STEP_COMPLETE', {
       if (extractTaskCompleteSignal(text)) {
         resolvedFinalText = text;
         return true;
+      }
+
+      // 计划型短答案（真机目标第 5 轮）：正常收尾，但正文只是"我打算怎么做"。
+      // 用户看到的是"什么都没做" ⇒ 续一轮把事做完（每 loop 最多 1 次）。
+      const planOnly = looksLikePlanOnlyAnswer({
+        answerText: text,
+        hadToolExecutions: lastTurnHasTools,
+      });
+      if (decidePlanOnlySettlement({
+        planOnly,
+        continuable: hasContinuableChain(),
+        continuedAlready: planOnlyContinued,
+      }) === 'continue') {
+        planOnlyContinued = true;
+        nudge.count += 1;
+        nudge.nudgedInStep = false;
+        return false;
       }
       // Nudge decisions run on the USER-VISIBLE text: retired artifact XML
       // (an internal control protocol the loop cannot execute) is stripped
