@@ -126,6 +126,7 @@ import {
   findInlineAgentRestoreTarget,
 } from "../core/inline-agent/message-anchor";
 import { classifyEmptyAnswer, hasAssistantMessage, readLastAssistantAnswerText, shouldWarnEmptyAnswer } from "../core/inline-agent/empty-answer";
+import { readLastAnswerLength } from "../core/inline-agent/stall-watchdog";
 import { decideAutoContinueBudget, decideChatLayerContinuation, decideStallRecovery, isSuspiciouslyShortAnswer } from "../core/inline-agent/plan-only-answer";
 import { resolveTerminalHeader } from "../core/inline-agent/terminal-header";
 import { diagnosticLogBuffer } from "../core/diagnostics/log-buffer";
@@ -4554,10 +4555,7 @@ function startStallWatchdog(): void {
     try {
       // 必须取**最后一条** .ds-message 的正文：`:last-of-type` 按标签类型匹配，
       // 兄弟里还有别 div 时会匹配不到；退化成取第一条会让 len 恒定 ⇒ 看门狗误杀正常生成。
-      const allMessages = document.querySelectorAll(".ds-message");
-      const lastMessage = allMessages.length ? allMessages[allMessages.length - 1] : null;
-      const last = lastMessage?.querySelector(".ds-markdown") ?? null;
-      const len = (last?.textContent ?? "").trim().length;
+        const len = readLastAnswerLength(document);
       if (len !== stallLastLen) { stallLastLen = len; stallLastChangeAt = Date.now(); return; }
       if (len === 0) return;
       const generating = Boolean(document.querySelector("[class*=\"stop\"]"));
