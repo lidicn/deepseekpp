@@ -16,6 +16,7 @@ import {
   shouldShowStallNotice,
   looksLikeServerErrorAnswer,
   decideContinuationProgress,
+  looksLikeMetaReasoning,
 } from '../core/inline-agent/plan-only-answer';
 
 const REAL_PLAN = '先检索记忆了解项目背景。已有记忆 #107、#108 是之前的审计。'
@@ -221,5 +222,19 @@ describe('续跑无进展即停（指标 4）', () => {
 
   it('★ 首次（previousLen<0）⇒ 视为有进展', () => {
     expect(decideContinuationProgress({ previousLen: -1, currentLen: 50 })).toBe('progress');
+  });
+});
+
+
+describe('元推理泄漏识别（真机 274 字样本）', () => {
+  it('★★ 英文/中文自述开头 ⇒ 判为元推理', () => {
+    expect(looksLikeMetaReasoning('The user wants me to audit E:\\NAS\\deepseek-pp')).toBe(true);
+    expect(looksLikeMetaReasoning('用户说在 E:\\NAS\\deepseek-pp 找到一个 bug。需要先了解代码库')).toBe(true);
+    expect(looksLikeMetaReasoning('I need to inspect the repo first.')).toBe(true);
+  });
+
+  it('负控：正常结论 / 空串 ⇒ 不算', () => {
+    expect(looksLikeMetaReasoning('这个 bug 出在 content.ts 的清理逻辑里。')).toBe(false);
+    expect(looksLikeMetaReasoning('')).toBe(false);
   });
 });

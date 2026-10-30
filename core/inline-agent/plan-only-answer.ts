@@ -217,3 +217,22 @@ export function decideContinuationProgress(input: {
   const minGain = input.minGain ?? CONTINUATION_MIN_GAIN_CHARS;
   return input.currentLen - input.previousLen >= minGain ? "progress" : "no-progress";
 }
+
+/**
+ * 元推理泄漏的开头（模型把内部独白写进正文）。
+ *
+ * 真机（2026-10-30）：审计提示词下正文长期停在 274 字，开头是
+ * 「The user wants me to audit E:\...」/「用户说在 … 需要先了解代码库」。
+ * 这类文本**不是答案**，继续续跑只会让模型再独白一遍 —— 必须停。
+ */
+const META_REASONING_PREFIXES: readonly RegExp[] = [
+  /^\s*(The user|The task|I need to|I should|I will|Let me)\b/i,
+  /^\s*(\u7528\u6237|\u7528\u6237\u8bf4|\u7528\u6237\u8981\u6c42|\u6211\u9700\u8981|\u6211\u5e94\u8be5|\u6211\u5148|\u5ba1\u8ba1\u4efb\u52a1\u8981\u6c42)/,
+];
+
+/** 这段正文是不是"元推理"（模型的自言自语），而非给用户的答案。 */
+export function looksLikeMetaReasoning(text: string): boolean {
+  const head = (text ?? "").trim().slice(0, 120);
+  if (head.length === 0) return false;
+  return META_REASONING_PREFIXES.some((re) => re.test(head));
+}

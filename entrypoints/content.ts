@@ -127,7 +127,7 @@ import {
 } from "../core/inline-agent/message-anchor";
 import { classifyEmptyAnswer, hasAssistantMessage, readLastAssistantAnswerText, shouldWarnEmptyAnswer } from "../core/inline-agent/empty-answer";
 import { readLastAnswerLength } from "../core/inline-agent/stall-watchdog";
-import { decideAutoContinueBudget, decideChatLayerContinuation, decideContinuationProgress, decideStallRecovery, looksLikeServerErrorAnswer, shouldShowStallNotice } from "../core/inline-agent/plan-only-answer";
+import { decideAutoContinueBudget, decideChatLayerContinuation, decideContinuationProgress, decideStallRecovery, looksLikeMetaReasoning, looksLikeServerErrorAnswer, shouldShowStallNotice } from "../core/inline-agent/plan-only-answer";
 import { resolveTerminalHeader } from "../core/inline-agent/terminal-header";
 import { diagnosticLogBuffer } from "../core/diagnostics/log-buffer";
 import { decideRestoreStepAction, routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
@@ -1560,7 +1560,17 @@ async function dispatchMainWorldMessage(
             details: `prev=${lastContinuationAnswerLen} cur=${domAnswerForPlanCheck.length}`
           });
         }
-        if (!planCheckBlockedByServerError && !planCheckBlockedByNoProgress && decideChatLayerContinuation({
+        // 元推理泄漏：正文是模型的自言自语（"The user wants me to…"），不是答案。续跑只会再独白一遍。
+        const planCheckBlockedByMetaReasoning = looksLikeMetaReasoning(domAnswerForPlanCheck);
+        if (planCheckBlockedByMetaReasoning) {
+          diagnosticLogBuffer.record({
+            level: "warn",
+            source: "chat",
+            message: "auto_continue_skipped_meta_reasoning",
+            details: `len=${domAnswerForPlanCheck.length}`,
+          });
+        }
+        if (!planCheckBlockedByServerError && !planCheckBlockedByNoProgress && !planCheckBlockedByMetaReasoning && decideChatLayerContinuation({
           answerText: domAnswerForPlanCheck,
           hadToolExecutions: completedExecutions.length > 0,
           alreadyContinued: !autoContinueBudgetDecision.allow,
