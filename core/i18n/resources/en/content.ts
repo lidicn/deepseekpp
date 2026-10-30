@@ -86,7 +86,7 @@ export const content = {
     interruptedLabel: "Response interrupted",
     stallWaiting: 'No response from the server yet — still waiting… (you can stop and retry)',
     planOnlyContinue: 'The model only produced a plan; continuing automatically once',
-    planOnlyContinuePrompt: 'Execute only, do not explain. No plan, no step list, no restating. Immediately call the first tool you need (e.g. shell_status / shell_exec) and continue after it returns.',
+    planOnlyContinuePrompt: 'If the task is not finished, continue (call tools only if needed); if it is already finished, give the final conclusion directly without repeating what you wrote.',
 
     stop: 'Stop',
     stopped: 'Stopped',

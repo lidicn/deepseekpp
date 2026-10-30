@@ -86,7 +86,7 @@ export const content = {
     interruptedLabel: "响应被中断",
     stallWaiting: '服务端暂无响应，仍在等待…（可点停止后重试）',
     planOnlyContinue: '模型只给了执行计划，已自动继续一次',
-    planOnlyContinuePrompt: '只执行，不解释。本轮禁止输出任何计划、步骤说明或复述；必须立刻调用你需要的第一个工具（如 shell_status / shell_exec）并在工具返回后再继续。',
+    planOnlyContinuePrompt: '如果任务还没完成，请继续执行（需要时再调用工具）；如果已经完成，请直接给出最终结论，不要重复已经写过的内容。',
     stop: '停止',
     stopped: '已停止',
     step: 'Step {index}',
