@@ -141,6 +141,8 @@ export interface ResponseCompletePayload {
   chatSessionId: string | null;
   parentMessageId: number | null;
   assistantMessageId: number | null;
+  /** 流是否以非 FINISHED 收尾（真截断）。2026-10-30 新增。 */
+  truncated?: boolean;
   promptOptions: {
     modelType: string | null;
     searchEnabled: boolean;

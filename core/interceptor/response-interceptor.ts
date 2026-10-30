@@ -258,6 +258,8 @@ function createPassiveDeepSeekStreamState(
         chatSessionId: requestContext.chatSessionId,
         parentMessageId: requestContext.parentMessageId,
         assistantMessageId: summary.responseMessageId,
+        // 2026-10-30：把"是否真截断"带给页面侧 —— 文本形状判定会漏（实测 458 字仍被截）。
+        truncated: !summary.finished,
         promptOptions: requestContext.promptOptions,
       };
     },

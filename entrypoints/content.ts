@@ -1575,7 +1575,7 @@ async function dispatchMainWorldMessage(
           answerText: domAnswerText,
           hadToolExecutions: completedExecutions.length > 0,
         });
-        if ((emptyAnswerVerdict === "empty" || shortAnswerContinuation) && completedExecutions.length === 0) {
+        if ((emptyAnswerVerdict === "empty" || shortAnswerContinuation || complete.truncated === true) && completedExecutions.length === 0) {
           const requestKey = complete.requestId ?? "";
           if (autoContinueBudgetDecision.allow) {
             autoContinueBudget = autoContinueBudgetDecision.next;
@@ -1584,7 +1584,7 @@ async function dispatchMainWorldMessage(
               level: "warn",
               source: "chat",
               message: "empty_answer_auto_continue",
-              details: `verdict=empty requestId=${requestKey}`,
+              details: `verdict=empty truncated=${complete.truncated === true} requestId=${requestKey}`,
             });
             showContentToast(contentT("content.agent.planOnlyContinue"), "info");
             const insertedEmptyContinuation = insertTextIntoPromptTextarea(
@@ -7205,6 +7205,7 @@ function normalizeResponseCompletePayload(
       typeof value.assistantMessageId === "number"
         ? value.assistantMessageId
         : null,
+      truncated: value.truncated === true,
     promptOptions: {
       modelType:
         typeof value.promptOptions?.modelType === "string"
