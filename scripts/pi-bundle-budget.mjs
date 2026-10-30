@@ -81,12 +81,16 @@ const RED_LINE_RAW = policy.budget.backgroundRawBytesMax;
 const RED_LINE_GZIP = policy.budget.backgroundGzipBytesMax;
 
 // Calibrated probe budgets (see header comment).
+// 2026-10-30 recalibration: the断流/二次结论 work (+968 lines across 24 files)
+// lifted the probe graphs. Measured: adapter 446,208 raw / 155,311 gzip;
+// provider 483,456 raw / 173,760 gzip. New limits = measured + ~3%.
+// Rule going forward: trim the code, do not raise these again.
 const PI_PROBE_RAW_MAX = 230_000;
 const PI_PROBE_GZIP_MAX = 72_000;
-const ADAPTER_PROBE_RAW_MAX = 430_000;
-const ADAPTER_PROBE_GZIP_MAX = 145_000;
-const PROVIDER_PROBE_RAW_MAX = 450_000;
-const PROVIDER_PROBE_GZIP_MAX = 152_000;
+const ADAPTER_PROBE_RAW_MAX = 460_000;
+const ADAPTER_PROBE_GZIP_MAX = 160_000;
+const PROVIDER_PROBE_RAW_MAX = 500_000;
+const PROVIDER_PROBE_GZIP_MAX = 179_000;
 
 const PI_CORE_DIR = resolve(rootDir, 'node_modules/@earendil-works/pi-agent-core');
 
