@@ -161,7 +161,7 @@ describe('极短答案（真机 50 字 FINISHED 样本）', () => {
 
 
 describe('自动续轮预算（修 requestId 为空导致永不触发）', () => {
-  it('★★ 首次允许，用满 2 次后不再允许', () => {
+  it('★★ 首次允许，用满默认次数后不再允许', () => {
     let budget = { windowStart: 1000, count: 0 };
     const a = decideAutoContinueBudget({ budget, now: 2000 });
     expect(a.allow).toBe(true);
@@ -170,7 +170,10 @@ describe('自动续轮预算（修 requestId 为空导致永不触发）', () =>
     expect(b.allow).toBe(true);
     budget = b.next;
     const c = decideAutoContinueBudget({ budget, now: 4000 });
-    expect(c.allow).toBe(false);
+    expect(c.allow).toBe(true);
+    budget = c.next;
+    const d = decideAutoContinueBudget({ budget, now: 5000 });
+    expect(d.allow).toBe(false);
   });
 
   it('★ 超过时间窗 ⇒ 重置', () => {

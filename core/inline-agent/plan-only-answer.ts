@@ -137,7 +137,7 @@ export interface AutoContinueBudget {
 }
 
 export const AUTO_CONTINUE_WINDOW_MS = 5 * 60_000;
-export const AUTO_CONTINUE_MAX = 2;
+export const AUTO_CONTINUE_MAX = 3;
 
 /**
  * 是否允许再自动续一次。

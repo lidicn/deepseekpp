@@ -1,3 +1,12 @@
+type SubmitWebPromptInput = Parameters<typeof submitPromptStreaming>[0];
+type SubmitWebPromptCallbacks = Parameters<typeof submitPromptStreaming>[1];
+type SubmitWebPromptResult = Awaited<ReturnType<typeof submitPromptStreaming>>;
+type SubmitWebPromptFn = (
+  input: SubmitWebPromptInput,
+  callbacks: SubmitWebPromptCallbacks,
+  signal?: AbortSignal,
+) => Promise<SubmitWebPromptResult>;
+import { FIRST_TURN_MAX_ATTEMPTS, FIRST_TURN_RETRY_BACKOFF_MS, shouldRetryFirstTurn } from "../core/deepseek/first-turn-retry";
 import { registerVisImageMessageHandlers } from './background/vis-image-handlers';
 import {
   getAllMemories,
@@ -355,7 +364,10 @@ const chatRuntimeService = createChatRuntimeService({
     undefined,
     signal,
   ),
-  submitWebPrompt: submitPromptStreaming,
+  // 审计 P2-1：首发 completion 原为裸注入（调用 1 次，服务端文案直透用户）。
+  // 这里只加"未收到任何 chunk 才可重试"的安全重试（收到过增量绝不重发，避免分叉会话链）。
+  submitWebPrompt: (input, callbacks, signal) =>
+    submitWebPromptWithFirstTurnRetry(submitPromptStreaming as SubmitWebPromptFn, input, callbacks, signal),
   submitOfficialPrompt: submitOfficialDeepSeekStreaming,
   uploadFile: uploadDeepSeekFile,
   markChatLoopStarted,
@@ -877,7 +889,43 @@ type ActionApi = {
   setBadgeBackgroundColor?: (details: { color: string }) => Promise<void> | void;
 };
 
-export default defineBackground(() => {
+/** 首轮 completion 的安全重试包装（见 core/deepseek/first-turn-retry.ts）。 */
+async function submitWebPromptWithFirstTurnRetry(
+  submit: SubmitWebPromptFn,
+  input: SubmitWebPromptInput,
+  callbacks: SubmitWebPromptCallbacks,
+  signal?: AbortSignal,
+): Promise<SubmitWebPromptResult> {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= FIRST_TURN_MAX_ATTEMPTS; attempt += 1) {
+    let receivedAnyChunk = false;
+    const wrapped = {
+      ...callbacks,
+      onTextChunk: (newText: string, fullText: string) => {
+        receivedAnyChunk = true;
+        callbacks.onTextChunk?.(newText, fullText);
+      },
+      onReasoningChunk: (newText: string, fullReasoning: string) => {
+        receivedAnyChunk = true;
+        callbacks.onReasoningChunk?.(newText, fullReasoning);
+      },
+    };
+    try {
+      return await submit(input, wrapped, signal);
+    } catch (error) {
+      lastError = error;
+      const decision = shouldRetryFirstTurn({
+        receivedAnyChunk,
+        attemptsLeft: FIRST_TURN_MAX_ATTEMPTS - attempt,
+        aborted: signal?.aborted === true,
+      });
+      if (!decision.retry) throw error;
+      console.warn(`[chat] first-turn retry (${decision.reason}) attempt=${attempt}`);
+      await new Promise((resolve) => setTimeout(resolve, FIRST_TURN_RETRY_BACKOFF_MS));
+    }
+  }
+  throw lastError ?? new Error("first turn retry exhausted");
+}export default defineBackground(() => {
   // vis 卡片的可选权限图片通路（PoC-2b）：只加自己的 onMessage 监听，不碰既有 handler。
   registerVisImageMessageHandlers();
 

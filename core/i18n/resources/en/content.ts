@@ -85,7 +85,7 @@ export const content = {
     interruptedNotice: "This turn was interrupted by the server (no finish frame); partial text was discarded. Send again to continue.",
     interruptedLabel: "Response interrupted",
     planOnlyContinue: 'The model only produced a plan; continuing automatically once',
-    planOnlyContinuePrompt: 'Continue: start executing now (call tools if needed); do not restate the plan.',
+    planOnlyContinuePrompt: 'Execute only, do not explain. No plan, no step list, no restating. Immediately call the first tool you need (e.g. shell_status / shell_exec) and continue after it returns.',
 
     stop: 'Stop',
     stopped: 'Stopped',

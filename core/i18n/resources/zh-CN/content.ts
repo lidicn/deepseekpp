@@ -85,7 +85,7 @@ export const content = {
     interruptedNotice: "本轮响应被服务端中断（未收到结束帧），半截内容已丢弃。可以再发一次让它接着做完。",
     interruptedLabel: "响应被中断",
     planOnlyContinue: '模型只给了执行计划，已自动继续一次',
-    planOnlyContinuePrompt: '继续：直接开始执行（该调工具就调），不要复述计划。',
+    planOnlyContinuePrompt: '只执行，不解释。本轮禁止输出任何计划、步骤说明或复述；必须立刻调用你需要的第一个工具（如 shell_status / shell_exec）并在工具返回后再继续。',
     stop: '停止',
     stopped: '已停止',
     step: 'Step {index}',
