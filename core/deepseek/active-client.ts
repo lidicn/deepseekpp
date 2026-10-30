@@ -9,6 +9,7 @@ import {
   type SSEEvent,
 } from './stream-codec';
 import { formatConcurrentRequest, requestActivity, type RequestSource } from './request-activity';
+import { awaitRequestSlot } from './request-serializer';
 import {
   classifyStreamEnd,
   createStreamDiagnostics,
@@ -517,6 +518,30 @@ export async function submitPromptStreaming(
   callbacks: StreamCallbacks,
   signal?: AbortSignal,
 ): Promise<ModelTurn> {
+  // 2.3 串行化（务必在 fetch 之前）：agent/记忆请求在同会话有页面请求在飞时等待，
+  // 有界（默认 5s，绝不卡死）；页面请求一律不等待。
+  const requestSource: RequestSource = callbacks.retainAssistantText === false ? 'agent' : 'page';
+  const slotActivity = requestActivity.begin({
+    requestId: `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    chatSessionId: input.chatSessionId ?? null,
+    source: requestSource,
+  });
+  const slot = await awaitRequestSlot({
+    selfSource: requestSource,
+    activeOnSameSession: () =>
+      requestActivity.snapshot().filter((entry) =>
+        entry.requestId !== slotActivity.entry.requestId
+        && (entry.chatSessionId ?? null) === (slotActivity.entry.chatSessionId ?? null)),
+  });
+  if (slot.timedOut) {
+    diagnosticLogBuffer.record({
+      level: 'warn',
+      source: 'deepseek-request',
+      message: 'serializer_timeout',
+      details: `waited=${slot.waitedMs}ms source=${requestSource}`,
+    });
+  }
+  requestActivity.end(slotActivity.entry.requestId);
   const response = await requestCompletion(input, { signal });
 
   if (!response.ok) {
