@@ -4552,8 +4552,11 @@ let stallLastChangeAt = Date.now();
 function startStallWatchdog(): void {
   setInterval(() => {
     try {
-      const last = document.querySelector(".ds-message:last-of-type .ds-markdown")
-        ?? document.querySelector(".ds-message .ds-markdown");
+      // 必须取**最后一条** .ds-message 的正文：`:last-of-type` 按标签类型匹配，
+      // 兄弟里还有别 div 时会匹配不到；退化成取第一条会让 len 恒定 ⇒ 看门狗误杀正常生成。
+      const allMessages = document.querySelectorAll(".ds-message");
+      const lastMessage = allMessages.length ? allMessages[allMessages.length - 1] : null;
+      const last = lastMessage?.querySelector(".ds-markdown") ?? null;
       const len = (last?.textContent ?? "").trim().length;
       if (len !== stallLastLen) { stallLastLen = len; stallLastChangeAt = Date.now(); return; }
       if (len === 0) return;
