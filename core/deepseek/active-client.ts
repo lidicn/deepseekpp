@@ -818,8 +818,31 @@ async function readCompletionStreamWithCallbacks(
       `[DPP-stream] end class=${streamEndClass} finished=${summary.finished} `
       + `endedBy=${streamDiagnostics.endedBy} status=${streamDiagnostics.lastFrameStatus ?? 'n/a'} `
       + `fragments=${streamDiagnostics.fragmentTypes.join('|') || 'none'} `
-      + `msgId=${streamDiagnostics.responseMessageId ?? 'n/a'} frames=${streamDiagnostics.frameCount}`,
++ `msgId=${streamDiagnostics.responseMessageId ?? 'n/a'} frames=${streamDiagnostics.frameCount}`,
     );
+    // 同一行**落盘**：SW 的 console 用户在页面里看不到，验收脚本也读不到，
+    // 于是"截断次数"长期是盲的（读的是页面 console）。写进 storage 才能取证。
+    void (async () => {
+      try {
+        const key = 'dpp_stream_ends';
+        const prev = (await chrome.storage.local.get(key))[key];
+        const list = Array.isArray(prev) ? prev : [];
+        list.push({
+          at: Date.now(),
+          cls: streamEndClass,
+          finished: summary.finished,
+          endedBy: streamDiagnostics.endedBy,
+          status: streamDiagnostics.lastFrameStatus ?? null,
+          fragments: streamDiagnostics.fragmentTypes.join('|'),
+          msgId: streamDiagnostics.responseMessageId ?? null,
+          frames: streamDiagnostics.frameCount,
+          textLen: typeof (summary as { text?: string }).text === 'string' ? (summary as { text?: string }).text!.length : null,
+        });
+        await chrome.storage.local.set({ [key]: list.slice(-20) });
+      } catch {
+        // 存储不可用：忽略
+      }
+    })();
 
     // P0-2：工具轮正常收尾（见过 TOOL fragment + 拿到正 id + 没 FINISHED）不算截断，
     // 只记 info 级诊断，不刷 warn —— 否则每个纯工具轮都报一次"疑似截断"，真截断被淹没。
