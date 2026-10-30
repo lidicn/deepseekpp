@@ -25,8 +25,13 @@ describe('looksLikePlanOnlyAnswer', () => {
     expect(looksLikePlanOnlyAnswer({ answerText: REAL_PLAN, hadToolExecutions: true })).toBe(false);
   });
 
-  it('★ 只有单个计划语 ⇒ 不算（保守，避免误判正常短答案）', () => {
-    expect(looksLikePlanOnlyAnswer({ answerText: '接下来我会处理。' })).toBe(false);
+  it('★ 短文本单个计划语也算计划型（真机 127 字样本只命中 1 个）', () => {
+    expect(looksLikePlanOnlyAnswer({ answerText: '接下来我会处理。' })).toBe(true);
+  });
+
+  it('★ 负控：短且无计划语、或带 file:line 的短答案 ⇒ 不算', () => {
+    expect(looksLikePlanOnlyAnswer({ answerText: '好的。' })).toBe(false);
+    expect(looksLikePlanOnlyAnswer({ answerText: '已完成，见 core/a.ts:12。' })).toBe(false);
   });
 
   it('★ 含交付证据（file:line / 结论）⇒ 不算', () => {

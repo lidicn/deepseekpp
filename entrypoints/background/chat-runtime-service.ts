@@ -423,6 +423,29 @@ export function createChatRuntimeService(
           };
           continue;
         }
+        // 观测（2026-10-30）：普通对话**不走 active-client**，这里是唯一的流结束点。
+        // 之前只在活跃客户端落盘 ⇒ 普通对话的结束形态一直是盲的（验收脚本读不到）。
+        void (async () => {
+          try {
+            const key = 'dpp_stream_ends';
+            const prev = (await chrome.storage.local.get(key))[key];
+            const list = Array.isArray(prev) ? prev : [];
+            list.push({
+              at: Date.now(),
+              src: 'chat',
+              cls: result.finished ? 'chat-clean' : 'chat-truncated',
+              finished: result.finished,
+              endedBy: 'chat-runtime',
+              status: null,
+              fragments: null,
+              msgId: chatParentMessageId,
+              frames: null,
+              textLen: (fullText ?? "").length,
+              tail: (fullText ?? "").slice(-60),
+            });
+            await chrome.storage.local.set({ [key]: list.slice(-20) });
+          } catch { /* 存储不可用：忽略 */ }
+        })();
         webTrace.endTurn(result.finished ? 'finalized' : 'partial', true);
         persistWebTrace('complete');
         emitChunk(turn, {

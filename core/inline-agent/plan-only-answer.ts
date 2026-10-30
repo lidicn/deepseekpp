@@ -54,6 +54,8 @@ export interface PlanOnlyAnswerInput {
 }
 
 export const PLAN_ONLY_MAX_CHARS = 1500;
+/** 短文本阈值：低于它时，命中 1 个计划语即判计划型。 */
+export const SHORT_PLAN_ONLY_CHARS = 200;
 
 export function looksLikePlanOnlyAnswer(input: PlanOnlyAnswerInput): boolean {
   const text = (input.answerText ?? '').trim();
@@ -62,7 +64,10 @@ export function looksLikePlanOnlyAnswer(input: PlanOnlyAnswerInput): boolean {
   if (input.hadToolExecutions) return false;
   if (DELIVERABLE_MARKERS.some((re) => re.test(text))) return false;
   const hits = PLAN_MARKERS.filter((re) => re.test(text)).length;
-  return hits >= 2;
+  // 真机（2026-10-30）：127 字的中文计划只命中 1 个标记（"先看…"），阈值 ≥2 会漏。
+  // 短文本单独放宽到 ≥1：短 + 带计划语 + 无交付证据，几乎一定是"打算怎么做"。
+  if (hits >= 2) return true;
+  return hits >= 1 && text.length <= SHORT_PLAN_ONLY_CHARS;
 }
 
 export type PlanOnlySettlement = 'continue' | 'settle';
