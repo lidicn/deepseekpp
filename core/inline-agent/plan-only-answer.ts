@@ -173,3 +173,47 @@ export function shouldShowStallNotice(input: {
   const threshold = input.thresholdMs ?? STALL_NOTICE_MS;
   return input.now - input.lastChangeAt >= threshold;
 }
+
+/** 服务端故障文案（页面会原样透出这几句）。 */
+const SERVER_ERROR_MARKERS: readonly RegExp[] = [
+  /\u670d\u52a1\u5668\u6682\u65f6\u4e0d\u53ef\u7528/,
+  /\u670d\u52a1\u5668\u7e41\u5fd9/,
+  /\u670d\u52a1\u5668\u5f02\u5e38/,
+  /Service Unavailable/i,
+  /server error/i,
+  /502\s*Bad\s*Gateway/i,
+  /503\s*Service/i,
+  /504\s*Gateway/i,
+];
+
+/**
+ * 这条回答是不是"服务端故障"的透出文案。
+ *
+ * 真机事故（2026-10-30）：首轮反复出现「服务器暂时不可用」，
+ * 而自动续跑照常触发 ⇒ 每轮都撞同一个故障 + 续跑文案堆叠 ⇒ 模型不断从头再来。
+ * 服务端错误时**必须停手**：不续跑、给用户可读提示。
+ */
+export function looksLikeServerErrorAnswer(text: string): boolean {
+  const t = (text ?? "").trim();
+  if (t.length === 0 || t.length > 400) return false;
+  return SERVER_ERROR_MARKERS.some((re) => re.test(t));
+}
+
+/** 续跑后至少要有这么多新增正文，否则算"没进展"。 */
+export const CONTINUATION_MIN_GAIN_CHARS = 30;
+
+/**
+ * 续跑有没有进展（方案指标 4：**无进展即停**）。
+ *
+ * 真机（2026-10-30）：连续 3 次续跑后正文仍停在 81 字，全是"用户要求…需要执行"
+ * 这类元叙述 ⇒ 再续只是重复烧 token，必须停。
+ */
+export function decideContinuationProgress(input: {
+  previousLen: number;
+  currentLen: number;
+  minGain?: number;
+}): "progress" | "no-progress" {
+  if (input.previousLen < 0) return "progress";
+  const minGain = input.minGain ?? CONTINUATION_MIN_GAIN_CHARS;
+  return input.currentLen - input.previousLen >= minGain ? "progress" : "no-progress";
+}

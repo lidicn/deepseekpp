@@ -127,7 +127,7 @@ import {
 } from "../core/inline-agent/message-anchor";
 import { classifyEmptyAnswer, hasAssistantMessage, readLastAssistantAnswerText, shouldWarnEmptyAnswer } from "../core/inline-agent/empty-answer";
 import { readLastAnswerLength } from "../core/inline-agent/stall-watchdog";
-import { decideAutoContinueBudget, decideChatLayerContinuation, decideStallRecovery, shouldShowStallNotice } from "../core/inline-agent/plan-only-answer";
+import { decideAutoContinueBudget, decideChatLayerContinuation, decideContinuationProgress, decideStallRecovery, looksLikeServerErrorAnswer, shouldShowStallNotice } from "../core/inline-agent/plan-only-answer";
 import { resolveTerminalHeader } from "../core/inline-agent/terminal-header";
 import { diagnosticLogBuffer } from "../core/diagnostics/log-buffer";
 import { decideRestoreStepAction, routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
@@ -191,6 +191,7 @@ import { injectInjectedThemeStyles } from "../core/ui/injected-theme";
 import {
   findPromptTextarea,
   insertTextIntoPromptTextarea,
+  replaceTextInPromptTextarea,
 } from "../core/ui/prompt-text-insertion";
 import {
   normalizeRestoredToolExecution,
@@ -1535,7 +1536,31 @@ async function dispatchMainWorldMessage(
           budget: autoContinueBudget,
           now: Date.now(),
         });
-        if (decideChatLayerContinuation({
+        // 服务端故障时**不续跑**：真机事故里「服务器暂时不可用」+ 续跑叠加，
+        // 变成无限重试且续跑文案堆叠（模型只能从头再来）。
+        const planCheckBlockedByServerError = looksLikeServerErrorAnswer(domAnswerForPlanCheck);
+        if (planCheckBlockedByServerError) {
+          diagnosticLogBuffer.record({
+            level: "warn",
+            source: "chat",
+            message: "auto_continue_skipped_server_error",
+            details: `len=${domAnswerForPlanCheck.length}`
+          });
+        }
+        // 无进展即停：续跑后正文没变长 ⇒ 再续只是重复烧 token。
+        const planCheckBlockedByNoProgress = decideContinuationProgress({
+          previousLen: lastContinuationAnswerLen,
+          currentLen: domAnswerForPlanCheck.length,
+        }) === "no-progress";
+        if (planCheckBlockedByNoProgress) {
+          diagnosticLogBuffer.record({
+            level: "warn",
+            source: "chat",
+            message: "auto_continue_no_progress",
+            details: `prev=${lastContinuationAnswerLen} cur=${domAnswerForPlanCheck.length}`
+          });
+        }
+        if (!planCheckBlockedByServerError && !planCheckBlockedByNoProgress && decideChatLayerContinuation({
           answerText: domAnswerForPlanCheck,
           hadToolExecutions: completedExecutions.length > 0,
           alreadyContinued: !autoContinueBudgetDecision.allow,
@@ -1543,6 +1568,7 @@ async function dispatchMainWorldMessage(
         })) {
           planOnlyContinuedRequestId = complete.requestId ?? "";
           autoContinueBudget = autoContinueBudgetDecision.next;
+          lastContinuationAnswerLen = domAnswerForPlanCheck.length;
           diagnosticLogBuffer.record({
             level: "warn",
             source: "chat",
@@ -1550,7 +1576,7 @@ async function dispatchMainWorldMessage(
             details: `len=${domAnswerForPlanCheck.length}`
           });
           showContentToast(contentT("content.agent.planOnlyContinue"), "info");
-          const insertedPlanContinuation = insertTextIntoPromptTextarea(
+          const insertedPlanContinuation = replaceTextInPromptTextarea(
             contentT("content.agent.planOnlyContinuePrompt"),
           );
           if (insertedPlanContinuation.ok) submitComposerFromContent();
@@ -1573,7 +1599,7 @@ async function dispatchMainWorldMessage(
         // 2026-10-30 真机：页面轮次由 content script 驱动（request-interceptor），
         // 服务端以 INCOMPLETE 收尾时正文常为 0 字 ⇒ 用户看到"第一步就停"。
         // 空回答不是"没有答案"，而是"这一轮没产出" ⇒ 自动续一次（与计划型共用上限）。
-        if ((emptyAnswerVerdict === "empty" || complete.truncated === true) && completedExecutions.length === 0) {
+        if (!planCheckBlockedByServerError && (emptyAnswerVerdict === "empty" || complete.truncated === true) && completedExecutions.length === 0) {
           const requestKey = complete.requestId ?? "";
           if (autoContinueBudgetDecision.allow) {
             autoContinueBudget = autoContinueBudgetDecision.next;
@@ -1585,7 +1611,7 @@ async function dispatchMainWorldMessage(
               details: `verdict=empty truncated=${complete.truncated === true} requestId=${requestKey}`,
             });
             showContentToast(contentT("content.agent.planOnlyContinue"), "info");
-            const insertedEmptyContinuation = insertTextIntoPromptTextarea(
+            const insertedEmptyContinuation = replaceTextInPromptTextarea(
               contentT("content.agent.planOnlyContinuePrompt"),
             );
             if (insertedEmptyContinuation.ok) submitComposerFromContent();
@@ -4528,6 +4554,8 @@ let planOnlyContinuedRequestId = "";
 // 自动续轮预算（时间窗 + 次数）。为什么不用 requestId 做闸：真机上
 // complete.requestId 可能为空，"" === "" 会让「已续过」恒为 true ⇒ 续轮从不触发（实测 plan=0）。
 let autoContinueBudget: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
+// 上一次续跑时的正文长度；用于"无进展即停"（指标 4）。-1 表示还没续过。
+let lastContinuationAnswerLen = -1;
 
 /** 点一次页面自己的发送按钮（不伪造事件，使用真实按钮）。 */
 function submitComposerFromContent(): void {
@@ -4579,7 +4607,7 @@ function startStallWatchdog(): void {
       stopButton?.click();
       stallLastChangeAt = Date.now();
       window.setTimeout(() => {
-        const inserted = insertTextIntoPromptTextarea(contentT("content.agent.planOnlyContinuePrompt"));
+        const inserted = replaceTextInPromptTextarea(contentT("content.agent.planOnlyContinuePrompt"));
         if (inserted.ok) submitComposerFromContent();
       }, 1200);
     } catch { /* 忽略 */ }

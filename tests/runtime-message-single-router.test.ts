@@ -46,7 +46,7 @@ describe('runtime message single router', () => {
     expect(statSync(join(SRC_ROOT, 'core', 'messaging'))).toBeDefined();
   });
 
-  it('keeps every first-party source free of imports of the deleted messaging file', { retry: 1 }, () => {
+  it('keeps every first-party source free of imports of the deleted messaging file', { retry: 1, timeout: 30_000 }, () => {
     // Matches specifiers that end exactly at `messaging` (the file), never
     // `messaging/...` (the envelope directory modules).
     const messagingFileImport = /['"][^'"]*\/messaging['"]/;
@@ -57,7 +57,7 @@ describe('runtime message single router', () => {
     expect(importers).toEqual([]);
     // Reads every first-party source off disk: under 1s idle, measured 8.5s while the
     // rest of the suite held the forks (NAS-resident working tree).
-  }, 30_000);
+  });
 
   it('keeps the lossy sendToBackground/sendToContentScript helpers unreferenced', () => {
     const users = firstPartySourceFiles(SRC_ROOT).filter((file) => {

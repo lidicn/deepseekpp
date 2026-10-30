@@ -14,6 +14,8 @@ import {
   decideAutoContinueBudget,
   decideStallRecovery,
   shouldShowStallNotice,
+  looksLikeServerErrorAnswer,
+  decideContinuationProgress,
 } from '../core/inline-agent/plan-only-answer';
 
 const REAL_PLAN = '先检索记忆了解项目背景。已有记忆 #107、#108 是之前的审计。'
@@ -188,5 +190,36 @@ describe('卡顿可见化（审计 P2-2）', () => {
     expect(shouldShowStallNotice({ now: 60_000, lastChangeAt: 0, generating: true, alreadyShown: true })).toBe(false);
     expect(shouldShowStallNotice({ now: 60_000, lastChangeAt: 0, generating: false, alreadyShown: false })).toBe(false);
     expect(shouldShowStallNotice({ now: 10_000, lastChangeAt: 0, generating: true, alreadyShown: false })).toBe(false);
+  });
+});
+
+
+describe('服务端错误识别（真机「服务器暂时不可用」）', () => {
+  it('★★ 页面透出的故障文案 ⇒ 必须识别', () => {
+    expect(looksLikeServerErrorAnswer('服务器暂时不可用')).toBe(true);
+    expect(looksLikeServerErrorAnswer('服务器繁忙，请稍后再试')).toBe(true);
+    expect(looksLikeServerErrorAnswer('502 Bad Gateway')).toBe(true);
+  });
+
+  it('负控：正常回答 / 空 / 超长都不算', () => {
+    expect(looksLikeServerErrorAnswer('这是正常结论。')).toBe(false);
+    expect(looksLikeServerErrorAnswer('')).toBe(false);
+    expect(looksLikeServerErrorAnswer('x'.repeat(500))).toBe(false);
+  });
+});
+
+
+describe('续跑无进展即停（指标 4）', () => {
+  it('★★ 正文没长（81 → 81）⇒ 判定无进展', () => {
+    expect(decideContinuationProgress({ previousLen: 81, currentLen: 81 })).toBe('no-progress');
+    expect(decideContinuationProgress({ previousLen: 81, currentLen: 100 })).toBe('no-progress');
+  });
+
+  it('★ 明显变长 ⇒ 有进展，可继续', () => {
+    expect(decideContinuationProgress({ previousLen: 81, currentLen: 400 })).toBe('progress');
+  });
+
+  it('★ 首次（previousLen<0）⇒ 视为有进展', () => {
+    expect(decideContinuationProgress({ previousLen: -1, currentLen: 50 })).toBe('progress');
   });
 });
