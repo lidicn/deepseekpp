@@ -33,6 +33,8 @@ describe('bundled Skill initial path', () => {
   it('loads only the default-enabled Skill and keeps collision checks metadata-only', async () => {
     const activeSkills = await getAllSkills();
     expect(activeSkills.map(({ name }) => name)).toEqual([
+      // core/skill/builtin.ts 新增的内置技能（默认启用），期望顺序同步。
+      'movie-cards',
       'shell',
       'deep-discuss',
       'memory',
@@ -58,6 +60,8 @@ describe('bundled Skill initial path', () => {
 
     const library = await getSkillLibrary();
     expect(library.map(({ name }) => name)).toEqual([
+      // core/skill/builtin.ts 新增的内置技能（默认启用），期望顺序同步。
+      'movie-cards',
       'shell',
       'officecli',
       'officecli-docx',

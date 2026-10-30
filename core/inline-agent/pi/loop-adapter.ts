@@ -198,7 +198,11 @@ const chainAdvanced = chainId !== null && chainId !== parentIdAtTurnStart;
 post('AGENT_STEP_COMPLETE', {
       loopId,
       stepIndex,
-      responseMessageId: chainAdvanced ? chainId : null,
+      // 三分支：①本轮拿到新 id ⇒ 用它；②没拿到但**正常结束** ⇒ 保留上一轮 id（T1-4）；
+      // ③**被截断** ⇒ null（M3：不能把陈旧正值当成"已提交"）。
+      responseMessageId: chainAdvanced
+        ? chainId
+        : (lastTurnInterrupted ? null : parentIdAtTurnStart),
       toolExecutions: [...executedInStep],
     } satisfies InlineAgentStepCompleteMsg);
   };
@@ -439,7 +443,6 @@ post('AGENT_STEP_COMPLETE', {
         continuedAlready: planOnlyContinued,
       }) === 'continue') {
         planOnlyContinued = true;
-        nudge.count += 1;
         nudge.nudgedInStep = false;
         return false;
       }

@@ -140,7 +140,8 @@ describe('createPiLoopBudgetMap', () => {
   it('maps the released inline-agent budgets', () => {
     expect(createPiLoopBudgetMap()).toEqual({
       maxSteps: 25,
-      maxNudges: 8,
+      // 方案 2.2：INLINE_AGENT_MAX_NUDGES 8 → 3（无进展即停），此处期望随之更新。
+      maxNudges: 3,
       stepTimeoutMs: 300_000,
       requestDelayMinMs: 2_500,
       requestDelayMaxMs: 6_500,
