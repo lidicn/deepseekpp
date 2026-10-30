@@ -10,7 +10,7 @@
     "assetCount": 28,
     "assetRawBytes": 588408,
     "recalibratedAt": "2026-10-30",
-    "recalibrationNote": "Measured after the断流/二次结论 work: background.js 901,933 raw / 263,187 gzip; content-scripts/content.js 888,370 raw / 259,284 gzip. Red lines raised to measured + ~3% headroom. Further growth must be trimmed, not re-raised."
+    "recalibrationNote": "Measured after the stream-stall / double-conclusion work: background.js 901,933 raw / 263,187 gzip; content-scripts/content.js 888,370 raw / 259,284 gzip. Red lines raised to measured + ~3% headroom. Further growth must be trimmed, not re-raised."
   },
   "skillSha256": {
     "officecli": "d6b7171a01d5082deebbbf29d7c343f2a3ada627798daadcf56df847f30f4582",

@@ -15,6 +15,7 @@ import {
   isSuspiciouslyShortAnswer,
   decideAutoContinueBudget,
   decideStallRecovery,
+  shouldShowStallNotice,
 } from '../core/inline-agent/plan-only-answer';
 
 const REAL_PLAN = '先检索记忆了解项目背景。已有记忆 #107、#108 是之前的审计。'
@@ -199,5 +200,18 @@ describe('页面侧看门狗（卡住即停止 + 续轮）', () => {
     expect(decideStallRecovery({ now: 200_000, lastChangeAt: 0, generating: false })).toBe(false);
     expect(decideStallRecovery({ now: 10_000, lastChangeAt: 0, generating: true })).toBe(false);
     expect(decideStallRecovery({ now: 200_000, lastChangeAt: 0, generating: true, thresholdMs: 300_000 })).toBe(false);
+  });
+});
+
+
+describe('卡顿可见化（审计 P2-2）', () => {
+  it('★★ 生成中且 45s 无变化 ⇒ 该提示一次', () => {
+    expect(shouldShowStallNotice({ now: 60_000, lastChangeAt: 0, generating: true, alreadyShown: false })).toBe(true);
+  });
+
+  it('★ 已提示过 / 未在生成 / 未到阈值 ⇒ 不再提示', () => {
+    expect(shouldShowStallNotice({ now: 60_000, lastChangeAt: 0, generating: true, alreadyShown: true })).toBe(false);
+    expect(shouldShowStallNotice({ now: 60_000, lastChangeAt: 0, generating: false, alreadyShown: false })).toBe(false);
+    expect(shouldShowStallNotice({ now: 10_000, lastChangeAt: 0, generating: true, alreadyShown: false })).toBe(false);
   });
 });

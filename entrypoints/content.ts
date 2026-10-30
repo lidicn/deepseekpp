@@ -127,7 +127,7 @@ import {
 } from "../core/inline-agent/message-anchor";
 import { classifyEmptyAnswer, hasAssistantMessage, readLastAssistantAnswerText, shouldWarnEmptyAnswer } from "../core/inline-agent/empty-answer";
 import { readLastAnswerLength } from "../core/inline-agent/stall-watchdog";
-import { decideAutoContinueBudget, decideChatLayerContinuation, decideStallRecovery, isSuspiciouslyShortAnswer } from "../core/inline-agent/plan-only-answer";
+import { decideAutoContinueBudget, decideChatLayerContinuation, decideStallRecovery, isSuspiciouslyShortAnswer, shouldShowStallNotice } from "../core/inline-agent/plan-only-answer";
 import { resolveTerminalHeader } from "../core/inline-agent/terminal-header";
 import { diagnosticLogBuffer } from "../core/diagnostics/log-buffer";
 import { decideRestoreStepAction, routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
@@ -4549,6 +4549,7 @@ function submitComposerFromContent(): void {
 // 页面侧看门狗（2026-10-30 真机）：审计类提示词下页面 stop=true 持续 4 分钟、正文不再增长，
 // 流根本没结束 ⇒ RESPONSE_COMPLETE 永不触发 ⇒ 续轮逻辑永远等不到。这里兜底"挂死"。
 let stallLastLen = -1;
+let stallNoticeShown = false;
 let stallLastChangeAt = Date.now();
 function startStallWatchdog(): void {
   setInterval(() => {
@@ -4556,9 +4557,20 @@ function startStallWatchdog(): void {
       // 必须取**最后一条** .ds-message 的正文：`:last-of-type` 按标签类型匹配，
       // 兄弟里还有别 div 时会匹配不到；退化成取第一条会让 len 恒定 ⇒ 看门狗误杀正常生成。
         const len = readLastAnswerLength(document);
-      if (len !== stallLastLen) { stallLastLen = len; stallLastChangeAt = Date.now(); return; }
+      if (len !== stallLastLen) { stallLastLen = len; stallLastChangeAt = Date.now(); stallNoticeShown = false; return; }
       if (len === 0) return;
       const generating = Boolean(document.querySelector("[class*=\"stop\"]"));
+      // 审计 P2-2：stall 此前只进后台诊断，页面 300s 静默。这里给一次可见提示（不打断）。
+      if (shouldShowStallNotice({ now: Date.now(), lastChangeAt: stallLastChangeAt, generating, alreadyShown: stallNoticeShown })) {
+        stallNoticeShown = true;
+        diagnosticLogBuffer.record({
+          level: "warn",
+          source: "chat",
+          message: "stall_notice",
+          details: `idleMs=${Date.now() - stallLastChangeAt} len=${len}`,
+        });
+        showContentToast(contentT("content.agent.stallWaiting"), "info");
+      }
       if (!decideStallRecovery({ now: Date.now(), lastChangeAt: stallLastChangeAt, generating })) return;
       diagnosticLogBuffer.record({
         level: "warn",

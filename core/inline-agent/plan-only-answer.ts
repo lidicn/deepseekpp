@@ -179,3 +179,24 @@ export function decideStallRecovery(input: {
   const threshold = input.thresholdMs ?? STALL_RECOVER_MS;
   return input.now - input.lastChangeAt >= threshold;
 }
+
+/** 卡顿可见化：无文本变化多久后给用户一条提示（不动作、不打断）。 */
+export const STALL_NOTICE_MS = 45_000;
+
+/**
+ * 是否该弹"服务端暂无响应"的提示。
+ *
+ * 审计 P2-2：stall 信号只进后台诊断（30s 一次），**页面完全无感**，
+ * 用户面对的是最长 300s 的静默等待。这里在不打断生成的前提下给一次可见反馈。
+ */
+export function shouldShowStallNotice(input: {
+  now: number;
+  lastChangeAt: number;
+  generating: boolean;
+  alreadyShown: boolean;
+  thresholdMs?: number;
+}): boolean {
+  if (!input.generating || input.alreadyShown) return false;
+  const threshold = input.thresholdMs ?? STALL_NOTICE_MS;
+  return input.now - input.lastChangeAt >= threshold;
+}
