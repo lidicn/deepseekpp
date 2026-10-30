@@ -20,6 +20,16 @@ const PLAN_MARKERS: readonly RegExp[] = [
   /(\u9700\u8981|\u5e94\u8be5)(\u5148|\u53bb|\u67e5\u770b|\u8bfb)/, // (需要|应该)(先|去|查看|读)
   /\u8ba1\u5212/, // 计划
   /\u5f00\u59cb(\u63a2\u7d22|\u5ba1\u8ba1|\u68c0\u67e5|\u770b)/, // 开始(探索|审计|检查|看)
+  // 英文计划语（2026-10-30 真机：模型用英文写计划后直接 FINISHED）
+  /\bLet me\b/i,
+  /\bLet's\b/i,
+  /\bI'll\b/i,
+  /\bI will\b/i,
+  /\bFirst,?\s/i,
+  /\bNext,?\s/i,
+  /\bThen I\b/i,
+  /\bPlan:/i,
+  /\bStep \d/i,
 ];
 
 /** 出现这些说明**已经交付了东西**，不该判成"只给了计划"。 */
@@ -33,6 +43,8 @@ const DELIVERABLE_MARKERS: readonly RegExp[] = [
   /```/,
   /\|.*\|/, // 表格
   /(\u5efa\u8bae|\u65b9\u6848|\u6b65\u9aa4)\s*[:：]/, // (建议|方案|步骤):
+  // 英文交付证据
+  /\b(the bug|root cause|I found|found that|the issue is)\b/i,
 ];
 
 export interface PlanOnlyAnswerInput {
@@ -41,7 +53,7 @@ export interface PlanOnlyAnswerInput {
   hadToolExecutions?: boolean;
 }
 
-export const PLAN_ONLY_MAX_CHARS = 400;
+export const PLAN_ONLY_MAX_CHARS = 1500;
 
 export function looksLikePlanOnlyAnswer(input: PlanOnlyAnswerInput): boolean {
   const text = (input.answerText ?? '').trim();

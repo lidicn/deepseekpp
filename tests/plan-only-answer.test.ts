@@ -40,9 +40,9 @@ describe('looksLikePlanOnlyAnswer', () => {
     ).toBe(false);
   });
 
-  it('负控：长文（>400 字）不算计划型', () => {
-    const long = `${REAL_PLAN}${'补充说明。'.repeat(120)}`;
-    expect(long.length).toBeGreaterThan(400);
+  it('负控：长文（>1500 字）不算计划型', () => {
+    const long = `${REAL_PLAN}${'补充说明。'.repeat(400)}`;
+    expect(long.length).toBeGreaterThan(1500);
     expect(looksLikePlanOnlyAnswer({ answerText: long })).toBe(false);
   });
 
@@ -90,5 +90,39 @@ describe('decideChatLayerContinuation（聊天层自动续一次）', () => {
     expect(decideChatLayerContinuation({ answerText: REAL_PLAN, hadToolExecutions: true, alreadyContinued: false, enabled: true })).toBe(false);
     expect(decideChatLayerContinuation({ answerText: REAL_PLAN, hadToolExecutions: false, alreadyContinued: false, enabled: false })).toBe(false);
     expect(decideChatLayerContinuation({ answerText: '答案：这里有一处 bug，证据 core/a.ts:12。', hadToolExecutions: false, alreadyContinued: false, enabled: true })).toBe(false);
+  });
+});
+describe('英文计划型（真机 2026-10-30：990 字，FINISHED 但明显没做完）', () => {
+  const EN_PLAN = [
+    'Let me plan:',
+    '',
+    'memory_search for "deepseek-pp audit" to recall what is already found.',
+    '',
+    'shell_exec: check repo, git log, file listing (break, indexOf, dedupe keys, Date.now() etc.',
+    '',
+    'Then I dig into code areas not yet covered.',
+    '',
+    'Start.',
+  ].join('\n');
+
+  it('★★ 英文计划 + 无工具 + 无交付证据 ⇒ 判为计划型（中文标记时代这条会漏）', () => {
+    expect(looksLikePlanOnlyAnswer({ answerText: EN_PLAN })).toBe(true);
+  });
+
+  it('★ 同样长度但含 file:line ⇒ 不算', () => {
+    expect(
+      looksLikePlanOnlyAnswer({ answerText: `${EN_PLAN}\n\nevidence: core/tool/runtime.ts:733` }),
+    ).toBe(false);
+  });
+
+  it('★ 聊天层也会因此自动续一次', () => {
+    expect(
+      decideChatLayerContinuation({
+        answerText: EN_PLAN,
+        hadToolExecutions: false,
+        alreadyContinued: false,
+        enabled: true,
+      }),
+    ).toBe(true);
   });
 });
