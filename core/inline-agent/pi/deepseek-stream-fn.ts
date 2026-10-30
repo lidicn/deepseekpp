@@ -308,6 +308,16 @@ export function createDeepSeekStreamFn(deps: DeepSeekStreamFnDeps): StreamFn {
         // with null would break the chain and cause "empty agent continuation"
         // errors on the next turn. Only update when we actually captured an id.
         if (result.responseMessageId !== null) {
+          // 2.5 观测：本轮 id 与上轮相同 ⇒ 说明 chain 没推进（陈旧 id 会污染归属判定）。
+          const previousParentId = session.parentMessageId;
+          if (previousParentId !== null && result.responseMessageId === previousParentId) {
+            diagnosticLogBuffer.record({
+              level: 'warn',
+              source: 'inline-agent-stream',
+              message: 'response_id_reused',
+              details: `id=${result.responseMessageId}`,
+            });
+          }
           session.setParentMessageId(result.responseMessageId);
         } else if (session.parentMessageId !== null) {
           // M3 观测（不改行为）：截断轮没拿到新 id，parentMessageId 沿用上一轮。

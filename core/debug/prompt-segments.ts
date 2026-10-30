@@ -76,3 +76,26 @@ export function formatPromptSegments(segments: PromptSegments): string {
     `memory ${segments.memory} + tail ${segments.tail}`
   );
 }
+/** 目录里"完整块"与"只给名字"各有多少（2.5 观测项）。 */
+export interface CatalogToolCounts {
+  /** `### Tool <name>` 的个数（完整参数块）。 */
+  full: number;
+  /** `### Other tools (name only)` 段里的 `- name: title` 行数。 */
+  indexOnly: number;
+}
+
+export const CATALOG_INDEX_HEADER = '### Other tools (name only)';
+
+export function countCatalogTools(prompt: string): CatalogToolCounts {
+  const full = (prompt.match(/^### Tool /gm) ?? []).length;
+  let indexOnly = 0;
+  const at = prompt.indexOf(CATALOG_INDEX_HEADER);
+  if (at >= 0) {
+    const rest = prompt.slice(at + CATALOG_INDEX_HEADER.length);
+    // 索引段到下一个 `### ` 或 `## ` 或文末为止
+    const endMatch = /^(?:###|##) /m.exec(rest);
+    const block = endMatch ? rest.slice(0, endMatch.index) : rest;
+    indexOnly = (block.match(/^- /gm) ?? []).length;
+  }
+  return { full, indexOnly };
+}

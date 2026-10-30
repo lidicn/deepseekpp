@@ -21,7 +21,7 @@
  */
 
 import { isTelemetryCaptureEnabled } from "./telemetry-gate";
-import { formatPromptSegments, measurePromptSegments } from './prompt-segments';
+import { countCatalogTools, formatPromptSegments, measurePromptSegments } from './prompt-segments';
 import {
   buildLastTurnSummary,
   g2UserInterventionRate,
@@ -568,6 +568,7 @@ export function recordRequestFromBody(
     const toolMatches = promptText.match(/### Tool /g);
     const toolCountInPrompt = toolMatches ? toolMatches.length : 0;
     const promptSegments = measurePromptSegments(promptText);
+    const catalogTools = countCatalogTools(promptText);
     const catalogStart = promptText.indexOf('### Available Tools');
     const toolCatalogBytes = catalogStart >= 0
       ? new TextEncoder().encode(promptText.substring(catalogStart)).length
@@ -594,7 +595,7 @@ export function recordRequestFromBody(
       console.log(
         `[DPP-DEBUG] prompt: ${promptBytes}B = ${formatPromptSegments(promptSegments)}, ` +
         `tools in prompt: ${toolCountInPrompt}, ` +
-        `catalog section: ${toolCatalogBytes}B${catalogStart < 0 ? ' (no Available Tools marker)' : ''}`,
+        `catalog tools: full ${catalogTools.full} / indexOnly ${catalogTools.indexOnly}, catalog section: ${toolCatalogBytes}B${catalogStart < 0 ? ' (no Available Tools marker)' : ''}`,
       );
     }
 

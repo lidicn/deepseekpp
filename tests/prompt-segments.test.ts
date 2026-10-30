@@ -6,7 +6,7 @@
  *   - 记忆标记正则去掉英文分支 ⇒ 用例 4 红
  */
 import { describe, expect, it } from 'vitest';
-import { formatPromptSegments, measurePromptSegments } from '../core/debug/prompt-segments';
+import { countCatalogTools, formatPromptSegments, measurePromptSegments } from '../core/debug/prompt-segments';
 
 const bytes = (s: string) => new TextEncoder().encode(s).byteLength;
 
@@ -78,5 +78,38 @@ describe('measurePromptSegments', () => {
   it('★ 一行格式含全部四个键（供 [DPP-DEBUG] 直接拼）', () => {
     const line = formatPromptSegments(measurePromptSegments(ZH_PROMPT));
     for (const key of ['base ', 'catalog ', 'memory ', 'tail ']) expect(line).toContain(key);
+  });
+});
+describe('countCatalogTools（2.5 观测）', () => {
+  it('★ 分别数出完整块与只给名字的工具', () => {
+    const prompt = [
+      '## Tools',
+      '### Available Tools',
+      '### Tool shell_exec',
+      'Title: Run shell',
+      '### Tool web_search',
+      'Title: Search',
+      '### Other tools (name only)',
+      '- docx_write: Write a Word document',
+      '- xlsx_write: Write a spreadsheet',
+      '## 已有记忆',
+      '- 某条记忆',
+    ].join('\n');
+    expect(countCatalogTools(prompt)).toEqual({ full: 2, indexOnly: 2 });
+  });
+
+  it('负控：没有索引段 ⇒ indexOnly=0；没有目录 ⇒ 全 0', () => {
+    expect(countCatalogTools('### Available Tools\n### Tool a\n')).toEqual({ full: 1, indexOnly: 0 });
+    expect(countCatalogTools('plain text')).toEqual({ full: 0, indexOnly: 0 });
+  });
+
+  it('负控：索引段遇到下一个 ## 标题即停止（不把记忆条目算进去）', () => {
+    const prompt = [
+      '### Other tools (name only)',
+      '- a: A',
+      '## 记忆',
+      '- b: B',
+    ].join('\n');
+    expect(countCatalogTools(prompt)).toEqual({ full: 0, indexOnly: 1 });
   });
 });
