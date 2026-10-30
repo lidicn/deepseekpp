@@ -1562,6 +1562,27 @@ async function dispatchMainWorldMessage(
           });
           showContentToast(contentT("content.agent.emptyAnswer"), "warning");
         }
+
+        // 2026-10-30 真机：页面轮次由 content script 驱动（request-interceptor），
+        // 服务端以 INCOMPLETE 收尾时正文常为 0 字 ⇒ 用户看到"第一步就停"。
+        // 空回答不是"没有答案"，而是"这一轮没产出" ⇒ 自动续一次（与计划型共用上限）。
+        if (emptyAnswerVerdict === "empty" && completedExecutions.length === 0) {
+          const requestKey = complete.requestId ?? "";
+          if (requestKey && planOnlyContinuedRequestId !== requestKey) {
+            planOnlyContinuedRequestId = requestKey;
+            diagnosticLogBuffer.record({
+              level: "warn",
+              source: "chat",
+              message: "empty_answer_auto_continue",
+              details: `verdict=empty requestId=${requestKey}`,
+            });
+            showContentToast(contentT("content.agent.planOnlyContinue"), "info");
+            const insertedEmptyContinuation = insertTextIntoPromptTextarea(
+              contentT("content.agent.planOnlyContinuePrompt"),
+            );
+            if (insertedEmptyContinuation.ok) submitComposerFromContent();
+          }
+        }
         if (session && session.executions.length > 0) {
           await persistToolBlockSession(session, complete.text, complete);
           const renderedBlock =
