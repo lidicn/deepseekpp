@@ -14,6 +14,7 @@ import {
   hasDeliverableEvidence,
   isSuspiciouslyShortAnswer,
   decideAutoContinueBudget,
+  decideStallRecovery,
 } from '../core/inline-agent/plan-only-answer';
 
 const REAL_PLAN = '先检索记忆了解项目背景。已有记忆 #107、#108 是之前的审计。'
@@ -182,5 +183,18 @@ describe('自动续轮预算（修 requestId 为空导致永不触发）', () =>
   it('负控：窗口内未满 ⇒ 允许', () => {
     const r = decideAutoContinueBudget({ budget: { windowStart: 0, count: 1 }, now: 1000 });
     expect(r.allow).toBe(true);
+  });
+});
+
+
+describe('页面侧看门狗（卡住即停止 + 续轮）', () => {
+  it('★★ 生成中且 120s 无变化 ⇒ 该动手', () => {
+    expect(decideStallRecovery({ now: 200_000, lastChangeAt: 0, generating: true })).toBe(true);
+  });
+
+  it('负控：未在生成 / 刚有变化 / 未到阈值 ⇒ 不动手', () => {
+    expect(decideStallRecovery({ now: 200_000, lastChangeAt: 0, generating: false })).toBe(false);
+    expect(decideStallRecovery({ now: 10_000, lastChangeAt: 0, generating: true })).toBe(false);
+    expect(decideStallRecovery({ now: 200_000, lastChangeAt: 0, generating: true, thresholdMs: 300_000 })).toBe(false);
   });
 });

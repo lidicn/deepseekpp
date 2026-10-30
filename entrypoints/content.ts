@@ -126,7 +126,7 @@ import {
   findInlineAgentRestoreTarget,
 } from "../core/inline-agent/message-anchor";
 import { classifyEmptyAnswer, hasAssistantMessage, readLastAssistantAnswerText, shouldWarnEmptyAnswer } from "../core/inline-agent/empty-answer";
-import { decideAutoContinueBudget, decideChatLayerContinuation, isSuspiciouslyShortAnswer } from "../core/inline-agent/plan-only-answer";
+import { decideAutoContinueBudget, decideChatLayerContinuation, decideStallRecovery, isSuspiciouslyShortAnswer } from "../core/inline-agent/plan-only-answer";
 import { resolveTerminalHeader } from "../core/inline-agent/terminal-header";
 import { diagnosticLogBuffer } from "../core/diagnostics/log-buffer";
 import { decideRestoreStepAction, routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
@@ -4544,6 +4544,38 @@ function submitComposerFromContent(): void {
     ?? [...container.querySelectorAll<HTMLElement>(".ds-button")].pop();
   button?.click();
 }
+
+// 页面侧看门狗（2026-10-30 真机）：审计类提示词下页面 stop=true 持续 4 分钟、正文不再增长，
+// 流根本没结束 ⇒ RESPONSE_COMPLETE 永不触发 ⇒ 续轮逻辑永远等不到。这里兜底"挂死"。
+let stallLastLen = -1;
+let stallLastChangeAt = Date.now();
+function startStallWatchdog(): void {
+  setInterval(() => {
+    try {
+      const last = document.querySelector(".ds-message:last-of-type .ds-markdown")
+        ?? document.querySelector(".ds-message .ds-markdown");
+      const len = (last?.textContent ?? "").trim().length;
+      if (len !== stallLastLen) { stallLastLen = len; stallLastChangeAt = Date.now(); return; }
+      if (len === 0) return;
+      const generating = Boolean(document.querySelector("[class*=\"stop\"]"));
+      if (!decideStallRecovery({ now: Date.now(), lastChangeAt: stallLastChangeAt, generating })) return;
+      diagnosticLogBuffer.record({
+        level: "warn",
+        source: "chat",
+        message: "stall_recovery",
+        details: `len=${len} idleMs=${Date.now() - stallLastChangeAt}`,
+      });
+      const stopButton = document.querySelector<HTMLElement>("[class*=\"stop\"]");
+      stopButton?.click();
+      stallLastChangeAt = Date.now();
+      window.setTimeout(() => {
+        const inserted = insertTextIntoPromptTextarea(contentT("content.agent.planOnlyContinuePrompt"));
+        if (inserted.ok) submitComposerFromContent();
+      }, 1200);
+    } catch { /* 忽略 */ }
+  }, 15000);
+}
+startStallWatchdog();
 
 function showContentToast(
   message: string,

@@ -158,3 +158,24 @@ export function decideAutoContinueBudget(input: {
   if (base.count >= max) return { allow: false, next: base };
   return { allow: true, next: { windowStart: base.windowStart, count: base.count + 1 } };
 }
+
+/** 页面侧看门狗：答案文字多久没变就算"卡住"。 */
+export const STALL_RECOVER_MS = 180_000;
+
+/**
+ * 是否该对"卡住的生成"动手（点停止 + 自动续）。
+ *
+ * 真机（2026-10-30）：审计类提示词下页面 `stop=true` 持续 4 分钟以上、正文不再增长，
+ * 因为流根本没结束 ⇒ `RESPONSE_COMPLETE` 永不触发 ⇒ 续轮逻辑永远等不到。
+ * 这类"挂死"只能由页面侧看门狗处理。
+ */
+export function decideStallRecovery(input: {
+  now: number;
+  lastChangeAt: number;
+  generating: boolean;
+  thresholdMs?: number;
+}): boolean {
+  if (!input.generating) return false;
+  const threshold = input.thresholdMs ?? STALL_RECOVER_MS;
+  return input.now - input.lastChangeAt >= threshold;
+}
