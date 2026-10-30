@@ -18,6 +18,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  decideRestoreStepAction,
   routeFinalAnswer,
   traceOwnsFinalTurn,
   type FinalAnswerAction,
@@ -269,5 +270,19 @@ describe('DOM 不变量：答案只出现一次，且工具记录不丢', () => 
     const consoleRoot = makeConsole(false);
     apply(consoleRoot, routeFinalAnswer({ ...base, ownsFinalTurn: false }), false);
     expect(visibleOccurrences(document.body, ANSWER)).toBe(1);
+  });
+});
+describe('restore 侧单步动作（2.4 对齐）', () => {
+  it('★ 原生拥有 + 末步 + 无工具 ⇒ skip', () => {
+    expect(decideRestoreStepAction({ ownsFinalTurn: true, isLastStep: true, hasToolEntries: false })).toBe('skip');
+  });
+
+  it('★★ 原生拥有 + 末步 + **有工具** ⇒ 只去答案、保留工具记录', () => {
+    expect(decideRestoreStepAction({ ownsFinalTurn: true, isLastStep: true, hasToolEntries: true })).toBe('render-without-answer');
+  });
+
+  it('负控：非末步 / 扩展拥有 ⇒ 正常渲染', () => {
+    expect(decideRestoreStepAction({ ownsFinalTurn: true, isLastStep: false, hasToolEntries: true })).toBe('render');
+    expect(decideRestoreStepAction({ ownsFinalTurn: false, isLastStep: true, hasToolEntries: false })).toBe('render');
   });
 });

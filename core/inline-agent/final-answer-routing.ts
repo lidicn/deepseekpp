@@ -100,3 +100,23 @@ export function routeFinalAnswer(input: FinalAnswerRoutingInput): FinalAnswerAct
   if (hasFinalText) return { kind: 'append', text: input.finalText };
   return { kind: 'none' };
 }
+/**
+ * restore 侧的单步动作（2.4 对齐）。
+ *
+ * 恢复循环原来只处理了「末步是纯答案 ⇒ 跳过」，
+ * 但末步**带工具**且同时是答案时，它会把答案再渲染一遍 ⇒ 与原生重复。
+ * 这里把三种动作显式化：
+ *   - 原生拥有 + 末步 + 无工具 ⇒ `skip`（整步不渲染，本来就没东西可留）
+ *   - 原生拥有 + 末步 + 有工具 ⇒ `render-without-answer`（保留工具记录，去掉答案正文）
+ *   - 其余 ⇒ `render`
+ */
+export type RestoreStepAction = 'skip' | 'render-without-answer' | 'render';
+
+export function decideRestoreStepAction(input: {
+  ownsFinalTurn: boolean;
+  isLastStep: boolean;
+  hasToolEntries: boolean;
+}): RestoreStepAction {
+  if (!input.ownsFinalTurn || !input.isLastStep) return 'render';
+  return input.hasToolEntries ? 'render-without-answer' : 'skip';
+}

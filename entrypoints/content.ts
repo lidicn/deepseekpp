@@ -128,7 +128,7 @@ import {
 import { classifyEmptyAnswer, hasAssistantMessage, readLastAssistantAnswerText, shouldWarnEmptyAnswer } from "../core/inline-agent/empty-answer";
 import { resolveTerminalHeader } from "../core/inline-agent/terminal-header";
 import { diagnosticLogBuffer } from "../core/diagnostics/log-buffer";
-import { routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
+import { decideRestoreStepAction, routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
 import { probePageRenderState } from "../core/inline-agent/page-render-state";
 import { createSerializedQueue } from "../core/persistence/serialized-queue";
 import type {
@@ -9701,17 +9701,21 @@ function createRestoredInlineAgentContainer(
     resolveAgentToolEntry(consoleBody, -1, exec, getAgentRendererLabels());
   }
   for (const step of sortedSteps) {
-    if (
-      nativeHistoryOwnsFinalTurn &&
-      step.index === lastStepIndex &&
-      step.toolExecutions.length === 0
-    ) {
-      continue;
-    }
+    // 2.4 对齐：restore 侧也用三态动作 —— 末步带工具时**保留工具记录、只去掉答案正文**，
+// 不再整步跳过（整步跳过会把工具历史一起丢掉）。
+const restoreAction = decideRestoreStepAction({
+  ownsFinalTurn: nativeHistoryOwnsFinalTurn,
+  isLastStep: step.index === lastStepIndex,
+  hasToolEntries: step.toolExecutions.length > 0,
+});
+if (restoreAction === 'skip') {
+  continue;
+}
     const stepEl = createAgentStepElement(step.index);
     const stepText = getInlineAgentRestoredStepText(step.text) || step.text;
-    const renderStepText =
-      clampText(stepText, INLINE_AGENT_STEP_RENDER_MAX_CHARS) ?? "";
+    const renderStepText = restoreAction === 'render-without-answer'
+  ? ""
+  : (clampText(stepText, INLINE_AGENT_STEP_RENDER_MAX_CHARS) ?? "");
     const stepIsFinalAnswer = step.index === lastStepIndex && lastStepIsAnswer;
     if (renderStepText) {
       updateStepStreamText(
