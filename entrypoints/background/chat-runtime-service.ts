@@ -379,6 +379,12 @@ export function createChatRuntimeService(
       // M1-2: 写 parentMessageId 到 marker
       void updateMarker({ parentMessageId: chatParentMessageId }).catch(() => {});
       const fullText = accumulated || result.assistantText;
+      diagnosticLogBuffer.record({
+        level: 'info',
+        source: 'chat-runtime',
+        message: 'chat_web_result',
+        details: `finished=${result.finished} parent=${result.responseMessageId ?? 'none'} accumulated=${(accumulated ?? "").length} assistant=${(result.assistantText ?? "").length} full=${(fullText ?? "").length} msgId=${result.responseMessageId ?? 'none'}`,
+      });
       lastFullText = fullText || lastFullText;
       if (!fullText) {
         // 2026-10-30 真机：截断时正文常为 0 字（只有 THINK 片段），页面仍显示那段思考，

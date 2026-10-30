@@ -892,7 +892,7 @@ export default defineBackground(() => {
         const res = await fetch(stampUrl, { cache: 'no-store' });
         if (!res.ok) return; // 生产构建没有该文件 ⇒ 静默
         const text = (await res.text()).trim();
-        if (lastStamp === null) { lastStamp = text; return; }
+        if (lastStamp === null) { lastStamp = text; void chrome.storage.local.set({ dpp_boot_stamp: text }); return; }
         if (text !== lastStamp) {
           console.log('[DeepSeek++] build stamp changed, reloading extension');
           chrome.runtime.reload();
