@@ -13,6 +13,7 @@ import {
   looksLikePlanOnlyAnswer,
   hasDeliverableEvidence,
   isSuspiciouslyShortAnswer,
+  decideAutoContinueBudget,
 } from '../core/inline-agent/plan-only-answer';
 
 const REAL_PLAN = '先检索记忆了解项目背景。已有记忆 #107、#108 是之前的审计。'
@@ -150,5 +151,32 @@ describe('极短答案（真机 50 字 FINISHED 样本）', () => {
     expect(hasDeliverableEvidence('见 core/a.ts:12')).toBe(true);
     expect(hasDeliverableEvidence('结论：没问题')).toBe(true);
     expect(hasDeliverableEvidence('我先看看')).toBe(false);
+  });
+});
+
+
+describe('自动续轮预算（修 requestId 为空导致永不触发）', () => {
+  it('★★ 首次允许，用满 2 次后不再允许', () => {
+    let budget = { windowStart: 1000, count: 0 };
+    const a = decideAutoContinueBudget({ budget, now: 2000 });
+    expect(a.allow).toBe(true);
+    budget = a.next;
+    const b = decideAutoContinueBudget({ budget, now: 3000 });
+    expect(b.allow).toBe(true);
+    budget = b.next;
+    const c = decideAutoContinueBudget({ budget, now: 4000 });
+    expect(c.allow).toBe(false);
+  });
+
+  it('★ 超过时间窗 ⇒ 重置', () => {
+    const budget = { windowStart: 0, count: 2 };
+    const r = decideAutoContinueBudget({ budget, now: 5 * 60_000 + 1 });
+    expect(r.allow).toBe(true);
+    expect(r.next).toEqual({ windowStart: 5 * 60_000 + 1, count: 1 });
+  });
+
+  it('负控：窗口内未满 ⇒ 允许', () => {
+    const r = decideAutoContinueBudget({ budget: { windowStart: 0, count: 1 }, now: 1000 });
+    expect(r.allow).toBe(true);
   });
 });

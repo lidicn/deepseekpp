@@ -126,7 +126,7 @@ import {
   findInlineAgentRestoreTarget,
 } from "../core/inline-agent/message-anchor";
 import { classifyEmptyAnswer, hasAssistantMessage, readLastAssistantAnswerText, shouldWarnEmptyAnswer } from "../core/inline-agent/empty-answer";
-import { decideChatLayerContinuation, isSuspiciouslyShortAnswer } from "../core/inline-agent/plan-only-answer";
+import { decideAutoContinueBudget, decideChatLayerContinuation, isSuspiciouslyShortAnswer } from "../core/inline-agent/plan-only-answer";
 import { resolveTerminalHeader } from "../core/inline-agent/terminal-header";
 import { diagnosticLogBuffer } from "../core/diagnostics/log-buffer";
 import { decideRestoreStepAction, routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
@@ -1529,13 +1529,18 @@ async function dispatchMainWorldMessage(
         const domAnswerForPlanCheck = hasAssistantMessage(document)
           ? readLastAssistantAnswerText(document)
           : (complete.text ?? "");
+        const autoContinueBudgetDecision = decideAutoContinueBudget({
+          budget: autoContinueBudget,
+          now: Date.now(),
+        });
         if (decideChatLayerContinuation({
           answerText: domAnswerForPlanCheck,
           hadToolExecutions: completedExecutions.length > 0,
-          alreadyContinued: planOnlyContinuedRequestId === (complete.requestId ?? ""),
+          alreadyContinued: !autoContinueBudgetDecision.allow,
           enabled: true,
         })) {
           planOnlyContinuedRequestId = complete.requestId ?? "";
+          autoContinueBudget = autoContinueBudgetDecision.next;
           diagnosticLogBuffer.record({
             level: "warn",
             source: "chat",
@@ -1572,7 +1577,8 @@ async function dispatchMainWorldMessage(
         });
         if ((emptyAnswerVerdict === "empty" || shortAnswerContinuation) && completedExecutions.length === 0) {
           const requestKey = complete.requestId ?? "";
-          if (requestKey && planOnlyContinuedRequestId !== requestKey) {
+          if (autoContinueBudgetDecision.allow) {
+            autoContinueBudget = autoContinueBudgetDecision.next;
             planOnlyContinuedRequestId = requestKey;
             diagnosticLogBuffer.record({
               level: "warn",
@@ -4521,6 +4527,9 @@ const CONTENT_TOAST_VISIBLE_MS = 6000;
  */
 // 计划型短答案的自动续次上限：按 requestId 只续一次，避免自激。
 let planOnlyContinuedRequestId = "";
+// 自动续轮预算（时间窗 + 次数）。为什么不用 requestId 做闸：真机上
+// complete.requestId 可能为空，"" === "" 会让「已续过」恒为 true ⇒ 续轮从不触发（实测 plan=0）。
+let autoContinueBudget: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
 
 /** 点一次页面自己的发送按钮（不伪造事件，使用真实按钮）。 */
 function submitComposerFromContent(): void {

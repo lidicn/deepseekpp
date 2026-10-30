@@ -130,3 +130,31 @@ export function decideChatLayerContinuation(input: {
   if (input.hadToolExecutions) return false;
   return looksLikePlanOnlyAnswer({ answerText: input.answerText });
 }
+/** 自动续轮预算：时间窗内最多 N 次。 */
+export interface AutoContinueBudget {
+  windowStart: number;
+  count: number;
+}
+
+export const AUTO_CONTINUE_WINDOW_MS = 5 * 60_000;
+export const AUTO_CONTINUE_MAX = 2;
+
+/**
+ * 是否允许再自动续一次。
+ *
+ * 为什么不用 requestId 做闸：真机上 `complete.requestId` 可能为空，
+ * 而 `"" === ""` 会让"是否已续过"恒为 true ⇒ 续轮从第一次就被自己挡住（实测 plan=0）。
+ */
+export function decideAutoContinueBudget(input: {
+  budget: AutoContinueBudget;
+  now: number;
+  max?: number;
+  windowMs?: number;
+}): { allow: boolean; next: AutoContinueBudget } {
+  const max = input.max ?? AUTO_CONTINUE_MAX;
+  const windowMs = input.windowMs ?? AUTO_CONTINUE_WINDOW_MS;
+  const expired = input.now - input.budget.windowStart > windowMs;
+  const base = expired ? { windowStart: input.now, count: 0 } : input.budget;
+  if (base.count >= max) return { allow: false, next: base };
+  return { allow: true, next: { windowStart: base.windowStart, count: base.count + 1 } };
+}
