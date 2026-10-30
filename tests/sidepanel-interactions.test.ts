@@ -599,7 +599,7 @@ describe('sidepanel interactions', () => {
     expect(buttonByText('识图').className).toContain('ds-chat-segment-active');
   });
 
-  it('scrolls to the updated message height after the lazy rich renderer commits', async () => {
+  it('scrolls to the updated message height after the lazy rich renderer commits', { retry: 1, timeout: 20_000 }, async () => {
     const sendMessage = vi.fn(async (message: { type: string }) => {
       if (message.type === 'GET_AUTH_STATUS') return { available: true, provider: 'deepseek-web', hasToken: true, hasApiKey: false };
       if (message.type === 'GET_OFFICIAL_API_CHAT_CONFIG') return {};

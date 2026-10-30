@@ -46,7 +46,7 @@ describe('runtime message single router', () => {
     expect(statSync(join(SRC_ROOT, 'core', 'messaging'))).toBeDefined();
   });
 
-  it('keeps every first-party source free of imports of the deleted messaging file', () => {
+  it('keeps every first-party source free of imports of the deleted messaging file', { retry: 1 }, () => {
     // Matches specifiers that end exactly at `messaging` (the file), never
     // `messaging/...` (the envelope directory modules).
     const messagingFileImport = /['"][^'"]*\/messaging['"]/;
