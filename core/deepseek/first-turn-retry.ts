@@ -36,3 +36,47 @@ export function shouldRetryFirstTurn(input: FirstTurnRetryInput): FirstTurnRetry
   if (input.receivedAnyChunk) return { retry: false, reason: 'chunk-received' };
   return { retry: true, reason: 'safe-to-retry' };
 }
+
+export interface FirstTurnResultRetryInput {
+  /** 本次尝试是否收到过任何增量。 */
+  receivedAnyChunk: boolean;
+  /** 服务端是否给出"完成"信号（FINISHED）。 */
+  finished: boolean;
+  /** 本次尝试最终拿到的可见正文长度。 */
+  textLength: number;
+  attemptsLeft: number;
+  /** 结果里是否已带上服务端故障文案（页面会原样透出）。 */
+  serverErrorText: boolean;
+}
+
+export type FirstTurnResultRetryReason =
+  | "retry-server-error"
+  | "retry-empty-unfinished"
+  | "chunk-received"
+  | "finished"
+  | "exhausted";
+
+/**
+ * **结果**层面的首轮重试判据（2026-10-30 真机补充）。
+ *
+ * 之前的判据只看"抛没抛异常"。但「服务器暂时不可用」这种情况里，
+ * 请求往往**正常返回**（HTTP 200 + 错误文案），异常没抛 ⇒ 重试门没命中 ⇒
+ * 用户照样看到「服务器问题」。所以要补两条结果判据：
+ *
+ *   1. 结果里带着服务端故障文案 ⇒ 重试
+ *   2. 一个字都没收到、且没有 FINISHED ⇒ 重试
+ *
+ * 仍然保留铁律：**收到过任何增量就不重试**（服务端可能已提交，重发会分叉会话链）。
+ */
+export function shouldRetryFirstTurnResult(input: FirstTurnResultRetryInput): {
+  retry: boolean;
+  reason: FirstTurnResultRetryReason;
+} {
+  if (input.attemptsLeft <= 0) return { retry: false, reason: "exhausted" };
+  if (input.receivedAnyChunk) return { retry: false, reason: "chunk-received" };
+  if (input.serverErrorText) return { retry: true, reason: "retry-server-error" };
+  if (!input.finished && input.textLength === 0) {
+    return { retry: true, reason: "retry-empty-unfinished" };
+  }
+  return { retry: false, reason: "finished" };
+}

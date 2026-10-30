@@ -11,6 +11,7 @@ import {
   FIRST_TURN_MAX_ATTEMPTS,
   shouldRetryFirstTurn,
   type FirstTurnRetryInput,
+  shouldRetryFirstTurnResult,
 } from '../core/deepseek/first-turn-retry';
 
 const base: FirstTurnRetryInput = { receivedAnyChunk: false, attemptsLeft: 1, aborted: false };
@@ -43,5 +44,27 @@ describe('shouldRetryFirstTurn', () => {
 
   it('负控：默认上限是 2 次（首发 + 1 次重试）', () => {
     expect(FIRST_TURN_MAX_ATTEMPTS).toBe(2);
+  });
+});
+
+
+describe('结果层判据（真机「服务器暂时不可用」）', () => {
+  const base = { receivedAnyChunk: false, finished: false, textLength: 0, attemptsLeft: 1, serverErrorText: false };
+
+  it('★★ 结果带服务端故障文案 ⇒ 重试', () => {
+    expect(shouldRetryFirstTurnResult({ ...base, serverErrorText: true })).toEqual({ retry: true, reason: 'retry-server-error' });
+  });
+
+  it('★★ 零文本且未 FINISHED ⇒ 重试', () => {
+    expect(shouldRetryFirstTurnResult(base)).toEqual({ retry: true, reason: 'retry-empty-unfinished' });
+  });
+
+  it('★ 收到过增量 ⇒ 绝不重试（即使服务器报错）', () => {
+    expect(shouldRetryFirstTurnResult({ ...base, receivedAnyChunk: true, serverErrorText: true })).toEqual({ retry: false, reason: 'chunk-received' });
+  });
+
+  it('★ 正常完成 ⇒ 不重试；次数用尽 ⇒ 不重试', () => {
+    expect(shouldRetryFirstTurnResult({ ...base, finished: true, textLength: 200 })).toEqual({ retry: false, reason: 'finished' });
+    expect(shouldRetryFirstTurnResult({ ...base, attemptsLeft: 0, serverErrorText: true })).toEqual({ retry: false, reason: 'exhausted' });
   });
 });

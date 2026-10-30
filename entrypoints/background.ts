@@ -6,7 +6,8 @@ type SubmitWebPromptFn = (
   callbacks: SubmitWebPromptCallbacks,
   signal?: AbortSignal,
 ) => Promise<SubmitWebPromptResult>;
-import { FIRST_TURN_MAX_ATTEMPTS, FIRST_TURN_RETRY_BACKOFF_MS, shouldRetryFirstTurn } from "../core/deepseek/first-turn-retry";
+import { FIRST_TURN_MAX_ATTEMPTS, FIRST_TURN_RETRY_BACKOFF_MS, shouldRetryFirstTurn, shouldRetryFirstTurnResult } from "../core/deepseek/first-turn-retry";
+import { looksLikeServerErrorAnswer } from "../core/inline-agent/plan-only-answer";
 import { registerVisImageMessageHandlers } from './background/vis-image-handlers';
 import {
   getAllMemories,
@@ -897,12 +898,15 @@ async function submitWebPromptWithFirstTurnRetry(
   signal?: AbortSignal,
 ): Promise<SubmitWebPromptResult> {
   let lastError: unknown = null;
+  let lastResult: SubmitWebPromptResult | null = null;
   for (let attempt = 1; attempt <= FIRST_TURN_MAX_ATTEMPTS; attempt += 1) {
     let receivedAnyChunk = false;
+    let lastFullText = "";
     const wrapped = {
       ...callbacks,
       onTextChunk: (newText: string, fullText: string) => {
         receivedAnyChunk = true;
+        lastFullText = fullText;
         callbacks.onTextChunk?.(newText, fullText);
       },
       onReasoningChunk: (newText: string, fullReasoning: string) => {
@@ -911,7 +915,20 @@ async function submitWebPromptWithFirstTurnRetry(
       },
     };
     try {
-      return await submit(input, wrapped, signal);
+      const result = await submit(input, wrapped, signal);
+      lastResult = result;
+      // 结果层判据（真机补充）：请求**正常返回**但带服务端故障文案 / 零文本未 FINISHED，
+      // 异常没抛 ⇒ 原来的异常门命中不了。
+      const resultDecision = shouldRetryFirstTurnResult({
+        receivedAnyChunk,
+        finished: (result as { finished?: boolean } | null)?.finished === true,
+        textLength: lastFullText.length,
+        attemptsLeft: FIRST_TURN_MAX_ATTEMPTS - attempt,
+        serverErrorText: looksLikeServerErrorAnswer(lastFullText || String((result as { assistantText?: string } | null)?.assistantText ?? "")),
+      });
+      if (!resultDecision.retry) return result;
+      console.warn(`[chat] first-turn retry (${resultDecision.reason}) attempt=${attempt}`);
+      await new Promise((resolve) => setTimeout(resolve, FIRST_TURN_RETRY_BACKOFF_MS));
     } catch (error) {
       lastError = error;
       const decision = shouldRetryFirstTurn({
@@ -924,6 +941,7 @@ async function submitWebPromptWithFirstTurnRetry(
       await new Promise((resolve) => setTimeout(resolve, FIRST_TURN_RETRY_BACKOFF_MS));
     }
   }
+  if (lastResult) return lastResult;
   throw lastError ?? new Error("first turn retry exhausted");
 }export default defineBackground(() => {
   // vis 卡片的可选权限图片通路（PoC-2b）：只加自己的 onMessage 监听，不碰既有 handler。
