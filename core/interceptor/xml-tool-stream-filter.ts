@@ -1,3 +1,4 @@
+import { diagnosticLogBuffer } from "../diagnostics/log-buffer";
 import type { ToolCall, ToolDescriptor } from "../types";
 import {
   findFirstXmlToolTag,
@@ -22,6 +23,8 @@ export class XmlToolStreamFilter {
   private visiblePrompt: string;
   private state: "NORMAL" | "SUPPRESSING" = "NORMAL";
   private currentTool: string | null = null;
+  // 评审 E3：抑制窗口的起止时间戳（这是判定"扣帧是否与报错相关"最缺的观测点）。
+  private suppressStartedAt: number | null = null;
   private pendingText = "";
   private pendingBlocks: Array<{
     block: string;
@@ -107,6 +110,15 @@ export class XmlToolStreamFilter {
         // #37: SUPPRESSING 但 currentTool 意外为 null（状态错乱）→ 回 NORMAL 避免 crash。
         if (!this.currentTool) {
           this.state = "NORMAL";
+          if (this.suppressStartedAt !== null) {
+            diagnosticLogBuffer.record({
+              level: 'info',
+              source: 'stream',
+              message: 'suppress_exit',
+              details: `t=${Date.now()} durationMs=${Date.now() - this.suppressStartedAt}`,
+            });
+            this.suppressStartedAt = null;
+          }
           this.pendingText = "";
           // 不 emit 这帧（它本应是 tool body 的一部分，丢了就丢了）。
           continue;
@@ -253,6 +265,13 @@ export class XmlToolStreamFilter {
 
       if (!closeTag) {
         this.state = "SUPPRESSING";
+        this.suppressStartedAt = Date.now();
+        diagnosticLogBuffer.record({
+          level: 'info',
+          source: 'stream',
+          message: 'suppress_enter',
+          details: `t=${this.suppressStartedAt} tool=${this.currentTool ?? ""}`,
+        });
         this.currentTool = found.tool;
         this.pendingText = this.getCloseSearchTail(
           this.pendingText.slice(found.idx),

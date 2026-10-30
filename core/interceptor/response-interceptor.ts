@@ -1,4 +1,4 @@
-import { STREAM_KEEPALIVE_MS, shouldEmitKeepAlive } from "./stream-keepalive";
+import { STREAM_KEEPALIVE_MS, decidePageKeepAlive, pageIdleMs } from "./stream-keepalive";
 import { diagnosticLogBuffer } from "../diagnostics/log-buffer";
 import type {
   ToolCall,
@@ -312,6 +312,8 @@ export async function interceptFetchResponse(
   let cancelled = false;
   let finished = false;
   // 保活竞速用：上游读取结果先落到这里，避免"定时器赢了就把数据丢了"。
+  // 评审 §3.4：保活必须基于"上一次真实写入页面流的时间"，不能拿常量冒充。
+  let lastPageWriteAt = Date.now();
   let bufferedRead: ReadableStreamReadResult<Uint8Array> | null = null;
   let inflightRead: Promise<void> | null = null;
   const pumpUpstream = () => {
@@ -339,9 +341,18 @@ export async function interceptFetchResponse(
           const raced = await Promise.race([inflight, idleTimer]);
           if (raced === "idle") {
             const suppressing = streamState ? streamState.isSuppressing() : false;
-            if (shouldEmitKeepAlive({ suppressing, idleMs: STREAM_KEEPALIVE_MS, finished })) {
+            const now = Date.now();
+            if (decidePageKeepAlive({ suppressing, lastWriteAt: lastPageWriteAt, now, finished })) {
+              diagnosticLogBuffer.record({
+                level: 'warn',
+                source: 'stream',
+                message: 'page_stream_keepalive',
+                details: `idle=${pageIdleMs(lastPageWriteAt, now)}ms`,
+              });
               try {
+                // 零长度块：不产生任何 SSE 行，只让页面的 reader 收到一次数据。
                 controller.enqueue(new Uint8Array(0));
+                lastPageWriteAt = Date.now();
               } catch { /* 页面已关流 */ }
             }
             return;
@@ -360,6 +371,7 @@ export async function interceptFetchResponse(
           const finalText = decoder.decode();
           if (finalText) getStreamState().append(finalText, controller);
           const complete = getStreamState().finish(controller);
+          lastPageWriteAt = Date.now();
           if (complete) readHookState().onResponseComplete(complete);
           finished = true;
           controller.close();
