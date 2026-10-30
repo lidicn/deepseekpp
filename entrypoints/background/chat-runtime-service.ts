@@ -381,6 +381,41 @@ export function createChatRuntimeService(
       const fullText = accumulated || result.assistantText;
       lastFullText = fullText || lastFullText;
       if (!fullText) {
+        // 2026-10-30 真机：截断时正文常为 0 字（只有 THINK 片段），页面仍显示那段思考，
+        // 用户看到的就是"第一步就停"。原逻辑把它当"空回答"直接 endTurn 返回，
+        // **永远走不到下面的续轮分支** —— 这就是"对话开头必停"的总闸。
+        if (!result.finished && chatParentMessageId != null) {
+          if (autoContinues >= MAX_AUTO_CONTINUE) {
+            diagnosticLogBuffer.record({
+              level: 'warn',
+              source: 'chat-runtime',
+              message: 'chat_auto_continue_exhausted',
+              details: `path=web-empty step=${step} tries=${autoContinues}`,
+            });
+            webTrace.endTurn('auto_continue_exhausted', false);
+            persistWebTrace('error');
+            emitChunk(turn, {
+              text: '',
+              done: true,
+              error: 'auto_continue_exhausted',
+            }, excludeTabId);
+            return;
+          }
+          autoContinues++;
+          diagnosticLogBuffer.record({
+            level: 'warn',
+            source: 'chat-runtime',
+            message: 'chat_auto_continue',
+            details: `path=web-empty step=${step} tries=${autoContinues} parent=${chatParentMessageId} status=truncated`,
+          });
+          webTrace.endTurn('auto_continue', false);
+          currentInput = {
+            ...currentInput,
+            prompt: dependencies.continueWithToolResults('(stream interrupted before any answer text — retry the same request)'),
+            parentMessageId: chatParentMessageId,
+          };
+          continue;
+        }
         webTrace.endTurn('empty', false);
         persistWebTrace('error');
         emitChunk(turn, {
@@ -403,6 +438,13 @@ export function createChatRuntimeService(
         if (!result.finished && chatParentMessageId != null) {
           // R07: 续轮次数超限 → 明确广播 exhausted，不再空转。
           if (autoContinues >= MAX_AUTO_CONTINUE) {
+
+          diagnosticLogBuffer.record({
+            level: 'warn',
+            source: 'chat-runtime',
+            message: 'chat_auto_continue_exhausted',
+            details: `path=web step=${step} tries=${autoContinues} len=${(fullText ?? "").length}`,
+          });
             console.log('[chat-runtime] auto-continue exhausted', { step, autoContinues });
             webTrace.endTurn('auto_continue_exhausted', false);
             persistWebTrace('error');
@@ -414,6 +456,14 @@ export function createChatRuntimeService(
             return;
           }
           autoContinues++;
+
+          // 观测（2026-10-30）：续轮原只 console ⇒ 验收脚本看不到，等于黑箱。
+          diagnosticLogBuffer.record({
+            level: 'warn',
+            source: 'chat-runtime',
+            message: 'chat_auto_continue',
+            details: `path=web step=${step} finished=${result.finished} parent=${chatParentMessageId ?? 'none'} len=${(fullText ?? "").length}`,
+          });
           console.log('[chat-runtime] truncated stream without tool calls, auto-continuing', { step, autoContinues });
           webTrace.endTurn('auto_continue', false);
           currentInput = {
@@ -604,6 +654,13 @@ export function createChatRuntimeService(
         // R07：续轮次数超限 → 明确广播 exhausted，不再空转。
         if (!result.finished) {
           if (autoContinues >= MAX_AUTO_CONTINUE) {
+
+          diagnosticLogBuffer.record({
+            level: 'warn',
+            source: 'chat-runtime',
+            message: 'chat_auto_continue_exhausted',
+            details: `path=official step=${step} tries=${autoContinues}`,
+          });
             console.log('[chat-runtime] official auto-continue exhausted', { step, autoContinues });
             emitChunk(turn, {
               text: '',
@@ -613,6 +670,13 @@ export function createChatRuntimeService(
             return currentMessages;
           }
           autoContinues++;
+
+          diagnosticLogBuffer.record({
+            level: 'warn',
+            source: 'chat-runtime',
+            message: 'chat_auto_continue',
+            details: `path=official step=${step} tries=${autoContinues}`,
+          });
           console.log('[chat-runtime] official-api truncated stream without tool calls, auto-continuing', { step, autoContinues });
           currentMessages = [
             ...currentMessages,
