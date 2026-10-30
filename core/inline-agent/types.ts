@@ -134,6 +134,8 @@ export interface InlineAgentStepCompleteMsg {
 export interface InlineAgentLoopCompleteMsg {
   /** 本轮流是否被服务端中断（截断）—— UI 据此不得显示「已完成」。 */
   interrupted?: boolean;
+  /** 本轮最终答案是否来自 nudge 续轮（渲染时优先合并进已有 step）。 */
+  isNudge?: boolean;
   loopId: string;
   totalSteps: number;
   totalTools: number;

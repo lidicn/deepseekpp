@@ -6704,6 +6704,7 @@ async function handleAgentLoopComplete(
     //    原实现只做 skip，屏上那份永远留着 ⇒ 原生一份 + 扩展一份。
     const finalAnswerAction = routeFinalAnswer({
       ownsFinalTurn,
+      isNudgeTurn: msg.isNudge === true,
       finalText,
       resolvedAnswer,
       lastStepText: lastCompletedStepText,

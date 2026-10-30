@@ -20,6 +20,7 @@ export const prompt = {
     failureRecovery: '至少一个工具执行失败。不要因为可恢复错误就停止；先阅读 summary/detail/error，并修正参数或改用合适的下一步继续完成任务。',
     nudgeNoTools: '上一轮回复没有包含任何可执行工具 XML，因此自动化续跑无法继续执行。',
     nudgeChoice: '请根据原始任务和工具结果二选一：',
+    nudgeNoRestate: '不要重复上一轮已经写过的结论或计划；只补缺失的部分，或直接给出可交付的结果。',
     nudgeNextTool: '1. 如果任务仍未完成，本轮必须直接输出下一步可执行工具 XML。',
     nudgeComplete: '2. 如果任务已经完成，输出 <task_complete>{"summary":"..."}</task_complete>。文件、HTML 页面与图表等交付物用 Markdown 围栏代码块输出（如 ```html、```xychart-beta），不要使用 artifact XML 标签。',
     nudgeCount: '这是第 {count} 次无工具调用纠偏。',

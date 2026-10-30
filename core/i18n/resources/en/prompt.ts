@@ -20,6 +20,7 @@ export const prompt = {
     failureRecovery: 'At least one tool failed. Do not stop because of a recoverable error; read summary/detail/error, fix the parameters or choose a suitable next step, and continue completing the task.',
     nudgeNoTools: 'The previous reply did not include executable tool XML, so the automated continuation cannot proceed.',
     nudgeChoice: 'Choose exactly one path based on the original task and tool results:',
+    nudgeNoRestate: 'Do not repeat conclusions or plans you already wrote last turn; only add what is missing, or deliver the final result directly.',
     nudgeNextTool: '1. If the task is still incomplete, this turn MUST directly output the next executable tool XML.',
     nudgeComplete: '2. If the task is complete, output <task_complete>{"summary":"..."}</task_complete>. Deliver files, HTML pages, and charts as Markdown fenced code blocks (e.g. ```html, ```xychart-beta); never use artifact XML tags.',
     nudgeCount: 'This is no-tool-call correction attempt {count}.',

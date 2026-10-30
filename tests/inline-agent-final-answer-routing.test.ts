@@ -286,3 +286,24 @@ describe('restore 侧单步动作（2.4 对齐）', () => {
     expect(decideRestoreStepAction({ ownsFinalTurn: false, isLastStep: true, hasToolEntries: false })).toBe('render');
   });
 });
+describe('nudge 续轮不重述（2.4 第三项）', () => {
+  it('★★ nudge 轮即使不构成前缀关系也合并进同一 step（否则同一次工作出现两份）', () => {
+    const action = routeFinalAnswer({
+      ...base,
+      ownsFinalTurn: false,
+      isNudgeTurn: true,
+      lastStepText: '完全不同的上一轮文本，不构成前缀。',
+    });
+    expect(action).toEqual({ kind: 'replace', text: ANSWER });
+  });
+
+  it('负控：非 nudge 轮仍走 append（保持原行为）', () => {
+    const action = routeFinalAnswer({
+      ...base,
+      ownsFinalTurn: false,
+      isNudgeTurn: false,
+      lastStepText: '完全不同的上一轮文本，不构成前缀。',
+    });
+    expect(action).toEqual({ kind: 'append', text: ANSWER });
+  });
+});

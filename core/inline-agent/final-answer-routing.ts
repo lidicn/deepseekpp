@@ -63,6 +63,8 @@ export interface FinalAnswerRoutingInput {
   lastStepHasToolEntries: boolean;
   /** 判断"最后一步是否就是最终答案"的谓词（content.ts 注入，避免本模块依赖 DOM）。 */
   isFinalStepText: (lastStepText: string, finalText: string) => boolean;
+  /** 本轮是否 nudge 续轮：续写同一件事，优先合并而不是追加。 */
+  isNudgeTurn?: boolean;
 }
 
 /**
@@ -95,7 +97,9 @@ export function routeFinalAnswer(input: FinalAnswerRoutingInput): FinalAnswerAct
     const isAnswerStep =
       input.resolvedAnswer.fromStep ||
       input.isFinalStepText(input.lastStepText, input.finalText);
-    if (isAnswerStep) return { kind: 'replace', text: input.finalText };
+    if (isAnswerStep || input.isNudgeTurn === true) {
+      return { kind: 'replace', text: input.finalText };
+    }
   }
   if (hasFinalText) return { kind: 'append', text: input.finalText };
   return { kind: 'none' };

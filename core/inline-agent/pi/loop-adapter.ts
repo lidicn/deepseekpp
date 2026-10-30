@@ -697,6 +697,7 @@ post('AGENT_STEP_COMPLETE', {
     if (signal.aborted) {
       post('AGENT_LOOP_COMPLETE', {
         interrupted: lastTurnInterrupted,
+        isNudge: nudge.currentTurnIsNudge,
         loopId,
         totalSteps: stepIndex,
         totalTools: collectedExecutions.length,

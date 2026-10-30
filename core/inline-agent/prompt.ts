@@ -237,6 +237,8 @@ export function buildNudgePrompt(
   return [
     translate(locale, 'prompt.inlineAgent.nudgeNoTools'),
     translate(locale, 'prompt.inlineAgent.nudgeChoice'),
+    // 2.4: a nudge turn tends to restate the previous conclusion; forbid it explicitly.
+    translate(locale, 'prompt.inlineAgent.nudgeNoRestate'),
     translate(locale, 'prompt.inlineAgent.nudgeNextTool'),
     translate(locale, 'prompt.inlineAgent.nudgeComplete'),
     translate(locale, 'prompt.inlineAgent.nativeChartSyntax'),
