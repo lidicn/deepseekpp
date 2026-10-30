@@ -84,6 +84,7 @@ export function augmentRequestBody(
   bodyStr: string,
   state: RequestAugmentationState,
 ): RequestBodyAugmentationResult | null {
+
   const body = decodeAugmentableDeepSeekRequestBody(bodyStr);
   if (!body) return null;
   return augmentDecodedRequestBody(body, state);
@@ -169,6 +170,18 @@ export function augmentDecodedRequestBody(
   decodedBody: Readonly<DeepSeekRequestBody>,
   state: RequestAugmentationState,
 ): RequestBodyAugmentationResult {
+  // 实验开关（2026-10-31）：原样透传，判定「首轮服务器问题」是否由 prompt 注入触发。
+  // 注意：生产路径走的是本函数（content.ts 的 handleAugmentRequestBody），
+  // 不是 augmentRequestBody —— 放错位置会被 tree-shaking 整个删掉。
+  if (isPromptAugmentationDisabled()) {
+    return {
+      body: JSON.stringify(decodedBody),
+      agentTaskPrompt: "",
+      usedMemoryIds: [],
+      messageCount: state.messageCount,
+    };
+  }
+
   const body: DeepSeekRequestBody = { ...decodedBody };
 
   // 提取原始用户输入，避免重复注入系统提示（DeepSeek 请求会把历史消息都带过来，
@@ -450,4 +463,14 @@ function wrapUserInput(
   locale: SupportedLocale,
 ): string {
   return translate(locale, 'prompt.skillUserInputWrapper', { instructions, userInput });
+}
+
+
+function isPromptAugmentationDisabled(): boolean {
+  try {
+    const scope = globalThis as { localStorage?: { getItem(k: string): string | null } };
+    return scope.localStorage?.getItem("dpp:skipAugmentation") === "1";
+  } catch {
+    return false;
+  }
 }
