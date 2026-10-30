@@ -131,6 +131,7 @@ import { decideAutoContinueBudget, decideChatLayerContinuation, decideStallRecov
 import { resolveTerminalHeader } from "../core/inline-agent/terminal-header";
 import { diagnosticLogBuffer } from "../core/diagnostics/log-buffer";
 import { decideRestoreStepAction, routeFinalAnswer, traceOwnsFinalTurn } from "../core/inline-agent/final-answer-routing";
+import { applyFinalAnswerAction } from "../core/inline-agent/apply-final-answer";
 import { probePageRenderState } from "../core/inline-agent/page-render-state";
 import { createSerializedQueue } from "../core/persistence/serialized-queue";
 import type {
@@ -6836,18 +6837,18 @@ async function handleAgentLoopComplete(
       ),
       isFinalStepText: isInlineAgentStepTextTheFinalAnswer,
     });
-    if (finalAnswerAction.kind === "clear-step") {
-      if (lastCompletedStep) updateStepStreamText(lastCompletedStep, "");
-    } else if (finalAnswerAction.kind === "clear-text") {
-      if (lastCompletedStep) clearStepBodyText(lastCompletedStep);
-    } else if (finalAnswerAction.kind === "replace") {
-      if (lastCompletedStep) {
-        updateStepStreamText(lastCompletedStep, finalAnswerAction.text);
-        refreshAgentStepCodeRunners(lastCompletedStep);
-      }
-    } else if (finalAnswerAction.kind === "append") {
-      appendInlineAgentNarration(inlineAgentContainer, finalAnswerAction.text, msg.loopId);
-    }
+    // 审计 P3-12：五种 action → 五种 DOM 操作收敛到 applyFinalAnswerAction，
+    // 该调度有独立用例（含"clear-text 不得整步清空"），堵住 live 接线无人区。
+    applyFinalAnswerAction(finalAnswerAction, {
+      step: lastCompletedStep ?? null,
+      container: inlineAgentContainer,
+      loopId: msg.loopId,
+      clearStep: (step) => updateStepStreamText(step, ""),
+      clearText: (step) => clearStepBodyText(step),
+      replaceText: (step, text) => updateStepStreamText(step, text),
+      appendText: (container, text, loopId) => appendInlineAgentNarration(container, text, loopId),
+      refreshCodeRunners: (step) => refreshAgentStepCodeRunners(step),
+    });
     // F2（独立评审 §6）：截断轮不得显示「已完成」—— 统一由 resolveTerminalHeader 决策。
     const terminalHeader = resolveTerminalHeader({
       interrupted: msg.interrupted === true,
