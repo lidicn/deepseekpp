@@ -928,6 +928,12 @@ async function submitWebPromptWithFirstTurnRetry(
       });
       if (!resultDecision.retry) return result;
       console.warn(`[chat] first-turn retry (${resultDecision.reason}) attempt=${attempt}`);
+      diagnosticLogBuffer.record({
+        level: 'warn',
+        source: 'chat-runtime',
+        message: 'first_turn_retry',
+        details: `reason=${resultDecision.reason} attempt=${attempt}`,
+      });
       await new Promise((resolve) => setTimeout(resolve, FIRST_TURN_RETRY_BACKOFF_MS));
     } catch (error) {
       lastError = error;
@@ -938,6 +944,12 @@ async function submitWebPromptWithFirstTurnRetry(
       });
       if (!decision.retry) throw error;
       console.warn(`[chat] first-turn retry (${decision.reason}) attempt=${attempt}`);
+      diagnosticLogBuffer.record({
+        level: 'warn',
+        source: 'chat-runtime',
+        message: 'first_turn_retry',
+        details: `reason=${decision.reason} attempt=${attempt}`,
+      });
       await new Promise((resolve) => setTimeout(resolve, FIRST_TURN_RETRY_BACKOFF_MS));
     }
   }
