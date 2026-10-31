@@ -25,6 +25,10 @@ export class XmlToolStreamFilter {
   private currentTool: string | null = null;
   // 评审 E3：抑制窗口的起止时间戳（这是判定"扣帧是否与报错相关"最缺的观测点）。
   private suppressStartedAt: number | null = null;
+  // 真正向页面写入（controller.enqueue）的时刻。
+  // 缺陷（2026-10-31 审计）：append() 在 SUPPRESSING 期间一个字节都不写，
+  // 调用方若在 append 之后无条件刷新"上次写入时间"，保活判据就永远为假。
+  private lastEmitAt = 0;
   private pendingText = "";
   private pendingBlocks: Array<{
     block: string;
@@ -75,6 +79,11 @@ export class XmlToolStreamFilter {
    */
   isSuppressing(): boolean {
     return this.state === "SUPPRESSING";
+  }
+
+  /** 上一次**真正向页面写入**的单调时间（0 = 还没写过）。 */
+  getLastEmitAt(): number {
+    return this.lastEmitAt;
   }
 
   processFrames(
@@ -411,6 +420,7 @@ export class XmlToolStreamFilter {
     // Released passive output always terminated a final buffered frame. Keep
     // that EOF contract while preserving an explicit LF/CRLF separator.
     controller.enqueue(this.encoder.encode(block + (separator || "\n\n")));
+    this.lastEmitAt = Date.now();
   }
 
   private findFirstToolOpen(

@@ -185,6 +185,8 @@ export interface PassiveDeepSeekStreamState {
   cancel(): void;
   /** 是否正在扣帧（见 stream-keepalive.ts）。 */
   isSuppressing(): boolean;
+  /** 上一次真正向页面写入的时间（0 = 还没写过）。 */
+  getLastEmitAt(): number;
 }
 
 function createPassiveDeepSeekStreamState(
@@ -270,6 +272,9 @@ function createPassiveDeepSeekStreamState(
     isSuppressing() {
       return filter.isSuppressing();
     },
+      getLastEmitAt() {
+        return filter.getLastEmitAt();
+      },
     cancel() {
       if (cancelled || completed) return;
       speedTracker.finish();
@@ -283,6 +288,8 @@ export async function interceptFetchResponse(
   requestContext: RequestContext,
 ): Promise<Response> {
   let terminalSent = false;
+  // 保活泵句柄（start() 创建；close/error/cancel 统一清理）。
+  let keepAlivePump: ReturnType<typeof setInterval> | null = null;
   const notifyTerminal = () => {
     if (terminalSent) return;
     terminalSent = true;
@@ -292,10 +299,12 @@ export async function interceptFetchResponse(
   try {
     response = await responsePromise;
   } catch (error) {
+    if (keepAlivePump !== null) clearInterval(keepAlivePump);
     notifyTerminal();
     throw error;
   }
   if (!response.body) {
+    if (keepAlivePump !== null) clearInterval(keepAlivePump);
     notifyTerminal();
     return response;
   }
@@ -311,6 +320,7 @@ export async function interceptFetchResponse(
   };
   let cancelled = false;
   let finished = false;
+  // 保活泵句柄（见 start()）。
   // 保活竞速用：上游读取结果先落到这里，避免"定时器赢了就把数据丢了"。
   // 评审 §3.4：保活必须基于"上一次真实写入页面流的时间"，不能拿常量冒充。
   let lastPageWriteAt = Date.now();
@@ -329,35 +339,56 @@ export async function interceptFetchResponse(
     return inflightRead;
   };
 
+    // 保活检查（评审 + 2026-10-31 审计修正）：
+    // ① append() 在 SUPPRESSING 期间**不写页面** ⇒ 只能用"真实 emit / 保活写入"的时间；
+    // ② 上游密集推送时 `raced` 永远不是 idle ⇒ 保活必须在**每次 pull** 都检查，
+    //    不能只在读超时时检查（否则最需要保活的场景永远发不出来）。
+    const realLastWriteAt = () => Math.max(lastPageWriteAt, streamState ? streamState.getLastEmitAt() : 0);
+    const maybeKeepAlive = (controller: ReadableStreamDefaultController<Uint8Array>) => {
+      const now = Date.now();
+      const suppressing = streamState ? streamState.isSuppressing() : false;
+      if (!decidePageKeepAlive({ suppressing, lastWriteAt: realLastWriteAt(), now, finished })) return;
+      diagnosticLogBuffer.record({
+        level: 'warn',
+        source: 'stream',
+        message: 'page_stream_keepalive',
+        details: `idle=${pageIdleMs(realLastWriteAt(), now)}ms`,
+      });
+      try {
+        // 零长度块：不产生任何 SSE 行，只让页面的 reader 收到一次数据。
+        controller.enqueue(new Uint8Array(0));
+        lastPageWriteAt = Date.now();
+      } catch { /* 页面已关流 */ }
+    };
+
     const stream = new ReadableStream(
       {
+        // 保活泵（2026-10-31 审计）：**不能依赖 pull 被调用**。
+        // 实测：页面一旦停拉，pull 就不再被调用（停泵），只在 pull 里检查保活等于永远不检查。
+        // 这里用独立定时器兜底，与 studio 的 start()+while(true) 同理（显式泵，而非 desiredSize 驱动）。
+        start(controller) {
+          keepAlivePump = setInterval(() => {
+            if (cancelled || finished) return;
+            maybeKeepAlive(controller);
+          }, STREAM_KEEPALIVE_MS / 4);
+        },
         async pull(controller) {
           if (cancelled || finished) return;
           try {
-            // 保活（评审 §3.4 修正版）：读上游与保活定时器竞速；定时器先到就写零长度块，
-            // 上游那次读取的结果留在 bufferedRead 里，下一次 pull 继续用 —— 不丢数据。
+            // 先看一眼：上游再密集，只要页面已经饿够久就先补一个保活块。
+            maybeKeepAlive(controller);
+
+            // 再让"读上游"与"保活定时器"竞速：覆盖上游彻底静默的情况。
             const inflight = pumpUpstream();
+            let idleTimerHandle: ReturnType<typeof setTimeout> | null = null;
             const idleTimer = new Promise<"idle">((resolve) => {
-              setTimeout(() => resolve("idle"), STREAM_KEEPALIVE_MS);
+              idleTimerHandle = setTimeout(() => resolve("idle"), STREAM_KEEPALIVE_MS);
             });
             const raced = await Promise.race([inflight, idleTimer]);
+            // 审计（2026-10-31）：上游先返回时必须清掉定时器，否则长回答会残留上千个。
+            if (idleTimerHandle !== null) clearTimeout(idleTimerHandle);
             if (raced === "idle") {
-              const suppressing = streamState ? streamState.isSuppressing() : false;
-              const now = Date.now();
-              // 空闲时间必须是**真实测量**的（旧版把常量当 idleMs，判据恒真）。
-              if (decidePageKeepAlive({ suppressing, lastWriteAt: lastPageWriteAt, now, finished })) {
-                diagnosticLogBuffer.record({
-                  level: 'warn',
-                  source: 'stream',
-                  message: 'page_stream_keepalive',
-                  details: `idle=${pageIdleMs(lastPageWriteAt, now)}ms`,
-                });
-                try {
-                  // 零长度块：不产生任何 SSE 行，只让页面的 reader 收到一次数据。
-                  controller.enqueue(new Uint8Array(0));
-                  lastPageWriteAt = Date.now();
-                } catch { /* 页面已关流 */ }
-              }
+              maybeKeepAlive(controller);
               return;
             }
             if (upstreamError) throw upstreamError;
@@ -367,7 +398,6 @@ export async function interceptFetchResponse(
             if (!done) {
               try {
                 getStreamState().append(decoder.decode(value, { stream: true }), controller);
-                lastPageWriteAt = Date.now();
               } catch (processingError) {
                 processingFailed = true;
                 throw processingError;
@@ -380,7 +410,6 @@ export async function interceptFetchResponse(
             try {
               if (finalText) getStreamState().append(finalText, controller);
               complete = getStreamState().finish(controller);
-              lastPageWriteAt = Date.now();
             } catch (processingError) {
               processingFailed = true;
               throw processingError;
@@ -388,6 +417,7 @@ export async function interceptFetchResponse(
             if (complete) readHookState().onResponseComplete(complete);
             finished = true;
             controller.close();
+            if (keepAlivePump !== null) clearInterval(keepAlivePump);
             notifyTerminal();
           } catch (error) {
             cancelled = true;
@@ -397,7 +427,7 @@ export async function interceptFetchResponse(
             } finally {
               // 评审 §3.3：区分两类错误 ——
               //   上游故障 ⇒ 页面**必须**知道（否则半截答案会被当成正常结束）；
-              //   dpp 内部处理异常 ⇒ 不外溢给页面，改为优雅关闭 + 留诊断。
+              //   dpp 内部处理异常 ⇒ 不外溢，改为优雅关闭 + 留诊断。
               if (processingFailed) {
                 diagnosticLogBuffer.record({
                   level: 'warn',
@@ -413,6 +443,7 @@ export async function interceptFetchResponse(
                   controller.error(error);
                 } catch { /* 页面已关流 */ }
               }
+              if (keepAlivePump !== null) clearInterval(keepAlivePump);
               notifyTerminal();
             }
           }
@@ -424,14 +455,12 @@ export async function interceptFetchResponse(
           try {
             await reader.cancel(reason);
           } finally {
+            if (keepAlivePump !== null) clearInterval(keepAlivePump);
             notifyTerminal();
           }
         },
       },
-      // HWM 保持 0：改成 1 会打破既有的「最多一格读前」契约
-      //（tests/fetch-hook-request-lifecycle.test.ts 里那条用例会红）。
-      // 评审建议改 1 以解开反压耦合，但需要配套重设计（显式泵而非 desiredSize 驱动），
-      // 不在凌晨随手翻 —— 已记入待办。
+      // HWM 保持 0：改成 1 会打破「最多一格读前」契约（见 fetch-hook-request-lifecycle）。
       { highWaterMark: 0 },
     );
 

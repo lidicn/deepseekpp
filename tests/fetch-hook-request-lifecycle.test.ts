@@ -774,7 +774,8 @@ function sseStream(wire: string): ReadableStream<Uint8Array> {
       controller.enqueue(new TextEncoder().encode(wire));
       controller.close();
     },
-  });
+  
+});
 }
 
 function makeDescriptor(id: string): ToolDescriptor {
@@ -789,3 +790,56 @@ function makeDescriptor(id: string): ToolDescriptor {
     execution: { mode: 'auto', enabled: true, risk: 'low' },
   };
 }
+
+
+describe('页面流保活（2026-10-31 审计回归）', () => {
+  it('★★ 上游密集推工具正文（抑制窗口 > 保活阈值）时，页面仍必须收到保活块', async () => {
+    // 缺陷 ① append() 在 SUPPRESSING 期间不写页面，却在 append 后刷新"上次写入时间"
+    //        ⇒ idle 恒 < 阈值 ⇒ 保活永不发出；
+    // 缺陷 ② 上游密集推送时 raced 永远不是 idle ⇒ 只在 idle 分支检查同样发不出。
+    const encoder = new TextEncoder();
+    const frame = (text: string) =>
+      `data: ${JSON.stringify({ p: 'response/content', o: 'APPEND', v: text })}\n\n`;
+
+    let pulls = 0;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          pulls += 1;
+          if (pulls === 1) {
+            controller.enqueue(
+              encoder.encode(frame('前文 < artifact_create >{"filename":"a.html","content":"')),
+            );
+            return;
+          }
+          if (pulls > 14) {
+            controller.close();
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          controller.enqueue(encoder.encode(frame('BODY-'.repeat(20))));
+        },
+      }),
+    );
+
+    const context = createRequestContext('{"prompt":"hello"}', {
+      requestId: 'request-keepalive-dense',
+      toolDescriptors: [makeDescriptor('artifact_create')],
+    });
+
+    const wrapped = await interceptFetchResponse(Promise.resolve(response), context);
+    const reader = wrapped.body!.getReader();
+    let sawZeroLength = false;
+    const deadline = Date.now() + 3_000;
+    while (Date.now() < deadline) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value && value.length === 0) {
+        sawZeroLength = true;
+        break;
+      }
+    }
+    await reader.cancel().catch(() => {});
+    expect(sawZeroLength).toBe(true);
+  });
+});
