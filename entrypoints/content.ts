@@ -33,6 +33,10 @@ import {
   createUserStopTracker,
   installUserStopClickListener,
 } from "../core/chat/user-stop";
+import {
+  decideChatCompletionContinuation,
+  type ChatContinuationReason,
+} from "../core/chat/truncation-continuation";
 import { normalizePetConfig } from "../core/pet/config";
 import { pickPetLine, type PetState } from "../core/pet/lines";
 import { createToolInvocationCatalog } from "../core/tool/invocation";
@@ -1614,12 +1618,16 @@ async function dispatchMainWorldMessage(
             details: `len=${domAnswerForPlanCheck.length}`,
           });
         }
+        // t5：本轮是否已经由聊天层发过一条续轮（plan / empty / truncation 三选一，绝不多发）。
+        let chatContinuationIssued = false;
         if (!planCheckBlockedByServerError && !planCheckBlockedByNoProgress && !planCheckBlockedByMetaReasoning && !userStopped && decideChatLayerContinuation({
           answerText: domAnswerForPlanCheck,
           hadToolExecutions: completedExecutions.length > 0,
           alreadyContinued: !autoContinueBudgetDecision.allow,
           enabled: true,
         })) {
+          chatContinuationIssued = true;
+          lastChatContinuationReason = 'plan';
           planOnlyContinuedRequestId = complete.requestId ?? "";
           autoContinueBudget = autoContinueBudgetDecision.next;
           lastContinuationAnswerLen = domAnswerForPlanCheck.length;
@@ -1650,29 +1658,62 @@ async function dispatchMainWorldMessage(
           showContentToast(contentT("content.agent.emptyAnswer"), "warning");
         }
 
-        // 2026-10-30 真机：页面轮次由 content script 驱动（request-interceptor），
-        // 服务端以 INCOMPLETE 收尾时正文常为 0 字 ⇒ 用户看到"第一步就停"。
-        // 空回答不是"没有答案"，而是"这一轮没产出" ⇒ 自动续一次（与计划型共用上限）。
-        // t3-C：用户主动点「停止」时**不得**续跑（现场实测：停止 ⇒ truncated=true ⇒ 旧判据
-        // 自动再发一条 completion，把追问当新问题回答）。
-        if (!planCheckBlockedByServerError && !planCheckBlockedByNoProgress && !userStopped && (emptyAnswerVerdict === "empty" || complete.truncated === true) && completedExecutions.length === 0) {
-          const requestKey = complete.requestId ?? "";
-          if (autoContinueBudgetDecision.allow) {
-            autoContinueBudget = autoContinueBudgetDecision.next;
-            lastContinuationAnswerLen = domAnswerForPlanCheck.length;
-            planOnlyContinuedRequestId = requestKey;
-            diagnosticLogBuffer.record({
-              level: "warn",
-              source: "chat",
-              message: "empty_answer_auto_continue",
-              details: `verdict=empty truncated=${complete.truncated === true} requestId=${requestKey}`,
-            });
-            showContentToast(contentT("content.agent.planOnlyContinue"), "info");
-            const insertedEmptyContinuation = replaceTextInPromptTextarea(
-              contentT("content.agent.planOnlyContinuePrompt"),
-            );
-            if (insertedEmptyContinuation.ok) submitComposerFromContent();
-          }
+        // t5-a：**截断本身就是续轮理由**（不再要求正文为空 / 没有工具记录）。
+        // 现场 B3 r4：正文 2,772 字 + `INCOMPLETE` + 有工具记录 ⇒ 旧判据被 `tools>0` 挡住，
+        // 同时 agent 侧因缺 assistantMessageId/授权静默不启动 ⇒ 两头都不动，用户看到"中途停住"。
+        // 判据与「截断链放宽一格」见 core/chat/truncation-continuation.ts（纯函数 + 单测）。
+        const truncatedWithoutFinish = complete.truncated === true;
+        const inlineAgentRunning = isInlineAgentRunning();
+        const inlineAgentWillHandle = !inlineAgentRunning
+          && canInlineAgentHandleCompletion(complete, completedExecutions);
+        const truncationContinuation = decideChatCompletionContinuation({
+          truncated: truncatedWithoutFinish,
+          verdictEmpty: emptyAnswerVerdict === "empty",
+          hadToolExecutions: completedExecutions.length > 0,
+          blockedByServerError: planCheckBlockedByServerError,
+          blockedByNoProgress: planCheckBlockedByNoProgress,
+          blockedByMetaReasoning: planCheckBlockedByMetaReasoning,
+          userStopped,
+          budgetExhausted: !autoContinueBudgetDecision.allow,
+          inlineAgentRunning,
+          inlineAgentWillHandle,
+          previousContinuationReason: lastChatContinuationReason,
+          truncationRelaxUsed,
+        });
+        if (truncatedWithoutFinish) {
+          // 静默 INCOMPLETE 的最小要求：**必须有据可查**（t4 现场这条路径一条诊断都没有）。
+          diagnosticLogBuffer.record({
+            level: "warn",
+            source: "chat",
+            message: "truncated_completion",
+            details: `requestId=${complete.requestId ?? ""} textLen=${domAnswerText.length} verdict=${emptyAnswerVerdict} tools=${completedExecutions.length} agentRunning=${inlineAgentRunning} agentWillHandle=${inlineAgentWillHandle} planContinued=${chatContinuationIssued} continue=${!chatContinuationIssued && truncationContinuation.continue} reason=${truncationContinuation.reason ?? "none"} relaxed=${truncationContinuation.relaxed} blockedBy=${truncationContinuation.blockedBy ?? "none"}`,
+          });
+        }
+        if (!chatContinuationIssued && truncationContinuation.continue) {
+          chatContinuationIssued = true;
+          lastChatContinuationReason = truncationContinuation.reason;
+          if (truncationContinuation.relaxed) truncationRelaxUsed = true;
+          autoContinueBudget = autoContinueBudgetDecision.next;
+          lastContinuationAnswerLen = domAnswerForPlanCheck.length;
+          planOnlyContinuedRequestId = complete.requestId ?? "";
+          diagnosticLogBuffer.record({
+            level: "warn",
+            source: "chat",
+            message: truncationContinuation.reason === "empty"
+              ? "empty_answer_auto_continue"
+              : "truncated_auto_continue",
+            details: `verdict=${emptyAnswerVerdict} truncated=${truncatedWithoutFinish} relaxed=${truncationContinuation.relaxed} tools=${completedExecutions.length} requestId=${complete.requestId ?? ""}`,
+          });
+          showContentToast(contentT("content.agent.planOnlyContinue"), "info");
+          const insertedTruncatedContinuation = replaceTextInPromptTextarea(
+            contentT("content.agent.planOnlyContinuePrompt"),
+          );
+          if (insertedTruncatedContinuation.ok) submitComposerFromContent();
+        }
+        if (!truncatedWithoutFinish) {
+          // 截断链结束：下一次正常完成回调清零「截断放宽」记账。
+          lastChatContinuationReason = null;
+          truncationRelaxUsed = false;
         }
         if (session && session.executions.length > 0) {
           await persistToolBlockSession(session, complete.text, complete);
@@ -1698,8 +1739,14 @@ async function dispatchMainWorldMessage(
           toolExecutions = [];
           toolBlockEl = null;
         }
-        // t3-C：用户已经点过停止 ⇒ 不再自动起 agent 续轮（起 loop 也会再发 completion）。
-        if (userStopped) {
+        // t3-C / t5：一次完成回调只允许一条续轮 ——
+        // 聊天层已续（plan/empty/truncation）或用户已点停止 ⇒ 不再让 agent 再发一条。
+        if (chatContinuationIssued) {
+          recordAgentStartDecision(
+            'skipped:chat_continuation_issued',
+            `requestId=${complete.requestId ?? ""} reason=${lastChatContinuationReason ?? "none"} tools=${completedExecutions.length}`,
+          );
+        } else if (userStopped) {
           recordAgentStartDecision(
             'skipped:user_stopped',
             `requestId=${complete.requestId ?? ""} tools=${completedExecutions.length}`,
@@ -2232,6 +2279,10 @@ async function handleAugmentRequestBody(data: {
       data.body,
     );
     if (!decodedRequest) {
+      recordAugmentationPassthrough(
+        "decode_failed",
+        `route=${String(data.route)} mainRequestId=${mainRequestId} bodyBytes=${data.body.length}`,
+      );
       postAugmentRequestPassthrough(id);
       return;
     }
@@ -2247,6 +2298,10 @@ async function handleAugmentRequestBody(data: {
       // the exact receiver-owned response scope is unavailable (for example
       // after a full page reload), preserve the native request but do not grant
       // the page/model a broader tool catalog.
+      recordAugmentationPassthrough(
+        "regenerate_scope_missing",
+        `mainRequestId=${mainRequestId} bodyBytes=${data.body.length}`,
+      );
       postAugmentRequestPassthrough(id);
       return;
     }
@@ -2319,14 +2374,26 @@ async function handleAugmentRequestBody(data: {
         },
       });
     // Authorize first (without dir) for the augment's tool-descriptor filtering below.
-    authorization = await createContentToolAuthorization({
-      requestId,
-      trigger: "manual_chat",
-      chatSessionId: readRequestChatSessionId(bodyWithMultimodalMedia),
-      toolIntent: bodyWithMultimodalMedia.prompt.slice(0, 16_000),
-    });
-    activeToolAuthorizations.set(requestId, authorization);
-    toolAuthorizationRequestAliases.set(mainRequestId, requestId);
+    // t5-c：工具授权服务暂时不可用（t4 B3 r5/r6 现场：工具熔断/30.5s 截断之后）时，
+    // **降级为「无工具增强」而不是整段静默透传** —— 用户至少保住记忆/技能/系统提示。
+    try {
+      authorization = await createContentToolAuthorization({
+        requestId,
+        trigger: "manual_chat",
+        chatSessionId: readRequestChatSessionId(bodyWithMultimodalMedia),
+        toolIntent: bodyWithMultimodalMedia.prompt.slice(0, 16_000),
+      });
+      activeToolAuthorizations.set(requestId, authorization);
+      toolAuthorizationRequestAliases.set(mainRequestId, requestId);
+    } catch (authorizationError) {
+      if (isExtensionInvalidatedError(authorizationError)) throw authorizationError;
+      recordAugmentationDegradedWithoutTools(authorizationError, {
+        route: String(data.route),
+        mainRequestId,
+        bodyBytes: data.body.length,
+      });
+      authorization = null;
+    }
     const project = await resolveProjectContextForRequestBody(
       bodyWithMultimodalMedia,
     );
@@ -2338,7 +2405,8 @@ async function handleAugmentRequestBody(data: {
       projectContext: project?.context ?? null,
       projectId: project?.projectId ?? null,
       modelType: currentModelType,
-      toolDescriptors: authorization.descriptors,
+      // 降级轮不把工具目录写进 prompt（无授权 = 不可执行），其余注入照常。
+      toolDescriptors: authorization?.descriptors ?? [],
       messageCount: currentRequestMessageCount,
       locale: currentContentLocale,
       promptSettings: currentPromptSettings,
@@ -2358,28 +2426,30 @@ async function handleAugmentRequestBody(data: {
     // local directory; background re-validates its ownership.
     // Close the previous dir-less grant first to avoid orphans, then create the
     // dir-bound grant and rebuild the alias mapping.
-    await closeContentToolAuthorization(requestId);
-    authorization = await createContentToolAuthorization({
-      requestId,
-      trigger: "manual_chat",
-      chatSessionId: readRequestChatSessionId(bodyWithMultimodalMedia),
-      toolIntent: bodyWithMultimodalMedia.prompt.slice(0, 16_000),
-      localSkillDir: result.activeLocalSkillDir,
-    });
-    activateContentToolAuthorization({
-      mainRequestId,
-      requestId,
-      authorization,
-      activeLocalSkillDir: result.activeLocalSkillDir,
-    });
+    if (authorization) {
+      await closeContentToolAuthorization(requestId);
+      authorization = await createContentToolAuthorization({
+        requestId,
+        trigger: "manual_chat",
+        chatSessionId: readRequestChatSessionId(bodyWithMultimodalMedia),
+        toolIntent: bodyWithMultimodalMedia.prompt.slice(0, 16_000),
+        localSkillDir: result.activeLocalSkillDir,
+      });
+      activateContentToolAuthorization({
+        mainRequestId,
+        requestId,
+        authorization,
+        activeLocalSkillDir: result.activeLocalSkillDir,
+      });
 
-    const requestAlreadyEnded =
-      pendingToolAuthorizationCorrelations.activate(mainRequestId);
-    tracksPendingAlias = false;
-    if (requestAlreadyEnded) {
-      throw new Error(
-        "Request ended before its tool authorization became active.",
-      );
+      const requestAlreadyEnded =
+        pendingToolAuthorizationCorrelations.activate(mainRequestId);
+      tracksPendingAlias = false;
+      if (requestAlreadyEnded) {
+        throw new Error(
+          "Request ended before its tool authorization became active.",
+        );
+      }
     }
 
     postToMainWorld({
@@ -2390,7 +2460,7 @@ async function handleAugmentRequestBody(data: {
         body: result.body,
         agentTaskPrompt: result.agentTaskPrompt,
         requestId,
-        toolDescriptors: authorization.descriptors,
+        toolDescriptors: authorization?.descriptors ?? [],
         activeLocalSkillDir: result.activeLocalSkillDir,
       },
     });
@@ -2398,10 +2468,12 @@ async function handleAugmentRequestBody(data: {
     if (authorization) await closeContentToolAuthorization(requestId);
     if (isExtensionInvalidatedError(error)) {
       invalidateExtensionContext();
+      recordAugmentationPassthrough("extension_invalidated", `mainRequestId=${mainRequestId}`);
       postAugmentRequestPassthrough(id);
       return;
     }
 
+    recordAugmentationPassthrough("augmentation_error", `mainRequestId=${mainRequestId} route=${String(data.route)} error=${formatAugmentationError(error)}`);
     postToMainWorld({
       type: "AUGMENT_REQUEST_BODY_RESULT",
       id,
@@ -2413,6 +2485,34 @@ async function handleAugmentRequestBody(data: {
       pendingToolAuthorizationCorrelations.finish(mainRequestId);
     }
   }
+}
+
+/** t5-c：把 augmentation 的每一种降级都落成持久诊断（现场 r5/r6 是"零诊断"的静默透传）。 */
+function recordAugmentationPassthrough(reason: string, details: string): void {
+  diagnosticLogBuffer.record({
+    level: "warn",
+    source: "chat",
+    message: "augmentation_passthrough",
+    details: `reason=${reason} ${details}`,
+  });
+}
+
+/** t5-c：工具授权失败时降级为「无工具增强」，并留下原因（不整段透传）。 */
+function recordAugmentationDegradedWithoutTools(
+  error: unknown,
+  context: { route: string; mainRequestId: string; bodyBytes: number },
+): void {
+  diagnosticLogBuffer.record({
+    level: "warn",
+    source: "chat",
+    message: "augmentation_degraded_no_tools",
+    details: `reason=authorization_failed route=${context.route} mainRequestId=${context.mainRequestId} bodyBytes=${context.bodyBytes} error=${formatAugmentationError(error)}`,
+  });
+}
+
+function formatAugmentationError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.replace(/\s+/g, " ").slice(0, 160);
 }
 
 function postAugmentRequestPassthrough(id: string): void {
@@ -4621,6 +4721,10 @@ let planOnlyContinuedRequestId = "";
 let autoContinueBudget: { windowStart: number; count: number } = { windowStart: 0, count: 0 };
 // 上一次续跑时的正文长度；用于"无进展即停"（指标 4）。-1 表示还没续过。
 let lastContinuationAnswerLen = -1;
+// t5-b：截断链记账。上一次聊天层续轮的原因（plan 不参与截断放宽）与「放宽一格」是否已用。
+// 只在下一次非截断的完成回调里清零（截断链结束）。
+let lastChatContinuationReason: ChatContinuationReason | null = null;
+let truncationRelaxUsed = false;
 
 /** 点一次页面自己的发送按钮（不伪造事件，使用真实按钮）。 */
 function submitComposerFromContent(): void {
@@ -5646,6 +5750,31 @@ function isInlineAgentResponseComplete(
     complete.originalPrompt,
     complete.agentTaskPrompt,
   );
+}
+
+/**
+ * t5-a：本轮完成回调是否会由 inline agent 接手续轮。
+ *
+ * 与 `startInlineAgentIfNeeded` 的同步闸门同构（会话 id / assistant 消息 id / 授权 /
+ * 可续工具或用户明确"继续"）。聊天层只有在它为 false 时才允许自己续 —— 否则两边都会
+ * 发一条 completion（重复/竞态）。现场 B3 r4 就是"agent 静默不启动 + 聊天层判据被
+ * tools>0 挡住"的双闸同时关死。
+ */
+function canInlineAgentHandleCompletion(
+  complete: ResponseCompletePayload,
+  executions: readonly ToolExecutionRecord[],
+): boolean {
+  // 这一轮本来就是 agent 自己发起的续轮响应 ⇒ 归 agent，聊天层不得再续。
+  if (isInlineAgentResponseComplete(complete)) return true;
+  const continuableExecutions = selectContinuableToolExecutions(executions);
+  const userAskedToContinue = USER_CONTINUATION_RE.test(complete.originalPrompt);
+  if (continuableExecutions.length === 0 && !userAskedToContinue) return false;
+  if (!complete.chatSessionId) return false;
+  if (complete.assistantMessageId == null) return false;
+  const authorization = complete.requestId
+    ? activeToolAuthorizations.get(complete.requestId)
+    : undefined;
+  return authorization !== undefined;
 }
 
 /**

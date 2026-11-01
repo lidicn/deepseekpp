@@ -102,15 +102,14 @@ describe('content.ts 接线守卫（停止后不得自动续跑）', () => {
     expect(CONTENT_SOURCE).toContain('installUserStopClickListener(document');
   });
 
-  it('★★ 自动续跑 / agent 续轮都以 !userStopped 为前置条件', () => {
-    const emptyGateIndex = CONTENT_SOURCE.indexOf('(emptyAnswerVerdict === "empty" || complete.truncated === true)');
-    expect(emptyGateIndex).toBeGreaterThan(0);
-    const emptyGateLine = CONTENT_SOURCE.slice(
-      CONTENT_SOURCE.lastIndexOf('\n', emptyGateIndex) + 1,
-      emptyGateIndex,
-    );
-    expect(emptyGateLine).toContain('!userStopped');
+  it('★★ 自动续跑 / agent 续轮都以 userStopped 为前置条件（t5 后统一进决策函数）', () => {
+    // 聊天层统一续轮决策：userStopped 是显式输入（决策函数内部第一道硬闸）。
+    const decisionIndex = CONTENT_SOURCE.indexOf('decideChatCompletionContinuation({');
+    expect(decisionIndex).toBeGreaterThan(0);
+    const decisionBlock = CONTENT_SOURCE.slice(decisionIndex, decisionIndex + 900);
+    expect(decisionBlock).toContain('userStopped,');
 
+    // 计划型续轮仍走既有闸门（显式 !userStopped）。
     const planGateIndex = CONTENT_SOURCE.indexOf('decideChatLayerContinuation({');
     expect(planGateIndex).toBeGreaterThan(0);
     const planGateLine = CONTENT_SOURCE.slice(
@@ -120,6 +119,6 @@ describe('content.ts 接线守卫（停止后不得自动续跑）', () => {
     expect(planGateLine).toContain('!userStopped');
 
     expect(CONTENT_SOURCE).toContain("'skipped:user_stopped'");
-    expect(CONTENT_SOURCE).toContain("message: \"auto_continue_skipped_user_stop\"");
+    expect(CONTENT_SOURCE).toContain('message: "auto_continue_skipped_user_stop"');
   });
 });
