@@ -30,3 +30,19 @@ export function shouldDeferFirstTurnMemory(input: DeferFirstTurnMemoryInput): bo
   if (!input.memoryEnabled) return false;
   return input.hasMemories;
 }
+
+/**
+ * 读取回滚开关（同步、安全）。
+ *
+ * 与 `core/prompt/catalog-selection.ts` 的 `resolveCatalogBudgetBytes` 同一范式：
+ * `globalThis.localStorage?` 守卫 —— Service Worker / 无 DOM 环境读不到就返回 false，
+ * 即保持「首轮推迟」的默认行为，而不是抛错或误判成回滚。
+ */
+export function resolveFirstTurnMemoryRestoreFlag(): boolean {
+  try {
+    const scope = globalThis as { localStorage?: { getItem(key: string): string | null } };
+    return scope.localStorage?.getItem(FIRST_TURN_MEMORY_RESTORE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}

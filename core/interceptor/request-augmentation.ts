@@ -173,7 +173,10 @@ export function augmentDecodedRequestBody(
   // 实验开关（2026-10-31）：原样透传，判定「首轮服务器问题」是否由 prompt 注入触发。
   // 注意：生产路径走的是本函数（content.ts 的 handleAugmentRequestBody），
   // 不是 augmentRequestBody —— 放错位置会被 tree-shaking 整个删掉。
-  if (isPromptAugmentationDisabled()) {
+  // DCD 20261101 裁定乙：首轮自动跳过注入（走已验证的 skip 路径），第二轮起恢复。
+  // 回滚：localStorage["dpp:firstTurnMemory"]="1" ⇒ 首轮照常注入。
+  if (isPromptAugmentationDisabled() || (!decodedBody.parent_message_id && !firstTurnInjectionRestoreFlag())) {
+
     return {
       body: JSON.stringify(decodedBody),
       agentTaskPrompt: "",
@@ -273,6 +276,7 @@ export function augmentDecodedRequestBody(
         toolDescriptors: modelFacingToolDescriptors,
         locale,
         memoryEnabled: promptSettings.memoryEnabled,
+        isFirstMessage,
         systemPromptEnabled: promptSettings.systemPromptEnabled,
         forceResponseLanguage,
       });
@@ -290,6 +294,7 @@ export function augmentDecodedRequestBody(
         toolDescriptors: modelFacingToolDescriptors,
         locale,
         memoryEnabled: promptSettings.memoryEnabled,
+        isFirstMessage,
         systemPromptEnabled: promptSettings.systemPromptEnabled,
         forceResponseLanguage,
       });
@@ -315,6 +320,7 @@ export function augmentDecodedRequestBody(
     toolDescriptors: modelFacingToolDescriptors,
     locale,
     memoryEnabled: promptSettings.memoryEnabled,
+    isFirstMessage,
     systemPromptEnabled: promptSettings.systemPromptEnabled,
     forceResponseLanguage,
   });
@@ -470,6 +476,16 @@ function isPromptAugmentationDisabled(): boolean {
   try {
     const scope = globalThis as { localStorage?: { getItem(k: string): string | null } };
     return scope.localStorage?.getItem("dpp:skipAugmentation") === "1";
+  } catch {
+    return false;
+  }
+}
+
+
+function firstTurnInjectionRestoreFlag(): boolean {
+  try {
+    const scope = globalThis as { localStorage?: { getItem(k: string): string | null } };
+    return scope.localStorage?.getItem("dpp:firstTurnMemory") === "1";
   } catch {
     return false;
   }
