@@ -83,24 +83,21 @@ describe('augmentRequestBody 自动激活门控', () => {
   it('两关皆关 → 隐式打分不触发，透传原始输入', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '周报',
-      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
+      parent_message_id: null,
       thinking_enabled: false,
     }), baseState({ firstMessage: false, everyMessage: false }));
     expect(result!.agentTaskPrompt).toBe('周报');
   });
 
-  // DCD 20261101 裁定乙：首轮整体不注入 ⇒「仅首条开」的隐式激活正向分支在首轮已不可达，
-  // 本用例改为断言首轮不注入；非首轮的门控行为由上一条（仅首条开 + 非首条消息）与下一条覆盖。
-  it('DCD 20261101 裁定乙：仅首条开 + 首条消息 ⇒ 首轮不注入（隐式打分不触发）', () => {
+  it('仅首条开 + 首条消息 → 隐式打分触发，注入索引指令', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '周报',
       parent_message_id: null,
       thinking_enabled: false,
     }), baseState({ firstMessage: true, everyMessage: false }));
-    const body = JSON.parse(result!.body) as { prompt?: string };
-    expect(body.prompt).toBe('周报');
-    expect(body.prompt).not.toContain(LOCAL_INDEX_MARKER);
-    expect(result!.agentTaskPrompt).toBe('');
+    expect(result!.agentTaskPrompt).toContain(LOCAL_INDEX_MARKER);
+    // 首轮窄化注入：技能内容仍进 prompt（记忆/工具目录才剥）
+    expect(JSON.parse(result!.body).prompt).toContain(LOCAL_INDEX_MARKER);
   });
 
   it('仅首条开 + 非首条消息 → 隐式打分不触发，透传原始输入', () => {
@@ -121,8 +118,7 @@ describe('augmentRequestBody 自动激活门控', () => {
     expect(result!.agentTaskPrompt).toContain(LOCAL_INDEX_MARKER);
   });
 
-  // DCD 20261101 裁定乙：同上 —— 缺省（首条开 / 每条关）在首轮同样不注入。
-  it('DCD 20261101 裁定乙：缺省 skillAutoActivation + 首条消息 ⇒ 首轮不注入', () => {
+  it('缺省 skillAutoActivation（按 DEFAULT 首条开）+ 首条消息 → 触发', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '周报',
       parent_message_id: null,
@@ -136,9 +132,8 @@ describe('augmentRequestBody 自动激活门控', () => {
       messageCount: 0,
       locale: 'en',
     });
-    const body = JSON.parse(result!.body) as { prompt?: string };
-    expect(body.prompt).toBe('周报');
-    expect(body.prompt).not.toContain(LOCAL_INDEX_MARKER);
-    expect(result!.agentTaskPrompt).toBe('');
+    expect(result!.agentTaskPrompt).toContain(LOCAL_INDEX_MARKER);
+    // 首轮窄化注入：技能索引仍进 prompt（记忆/工具目录才剥）。
+    expect(JSON.parse(result!.body).prompt).toContain(LOCAL_INDEX_MARKER);
   });
 });

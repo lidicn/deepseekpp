@@ -34,8 +34,24 @@ describe('decideInterruptedSettlement', () => {
     ).toBe('continue');
   });
 });
-describe('默认策略：先止血，不自动续轮', () => {
-  it('★ 未显式开启 ⇒ 一律 notice（避免 53b4fbb 式挂起）', () => {
-    expect(decideInterruptedSettlement({ continuable: true, nudgeCount: 0, maxNudges: 3 })).toBe('notice');
+describe('默认策略（t3-B 根因假设 4）：有界自动续轮，但截断永不当成功答案', () => {
+  it('★ 默认可续的截断轮 ⇒ continue（真去要完整答案，不再中途停住）', () => {
+    expect(decideInterruptedSettlement({ continuable: true, nudgeCount: 0, maxNudges: 3 })).toBe('continue');
+  });
+
+  it('★ 回滚开关（allowContinuation=false）⇒ 一律 notice（回到"只提示不续轮"）', () => {
+    expect(
+      decideInterruptedSettlement({
+        continuable: true,
+        nudgeCount: 0,
+        maxNudges: 3,
+        allowContinuation: false,
+      }),
+    ).toBe('notice');
+  });
+
+  it('★★ 默认开启也必须受预算封顶（不会无限续轮）', () => {
+    expect(decideInterruptedSettlement({ continuable: true, nudgeCount: 3, maxNudges: 3 })).toBe('notice');
+    expect(decideInterruptedSettlement({ continuable: true, nudgeCount: 2, maxNudges: 3 })).toBe('continue');
   });
 });

@@ -29,6 +29,10 @@ import {
 } from "../core/debug/telemetry-gate";
 import { refactorTelemetry } from "../core/debug/refactor-telemetry";
 import { getDeepSeekApiKey } from "../core/chat/api-key";
+import {
+  createUserStopTracker,
+  installUserStopClickListener,
+} from "../core/chat/user-stop";
 import { normalizePetConfig } from "../core/pet/config";
 import { pickPetLine, type PetState } from "../core/pet/lines";
 import { createToolInvocationCatalog } from "../core/tool/invocation";
@@ -211,6 +215,10 @@ import {
   type TurnTracker,
 } from "../core/trace/turn-tracker";
 import { setTraceEventSink } from "../core/trace/collector";
+import {
+  isTraceRunFinished,
+  resolveTraceStopReason,
+} from "../core/trace/trace-outcome";
 
 /**
  * 2026-10-21 观测：inline agent 是否启动、没启动是卡在哪个分支。
@@ -1096,6 +1104,8 @@ function createContentCapabilityControllers(): readonly ContentCapabilityControl
       stopBackgroundCapability,
     ),
     createDomCapability("pet", startPetCapability, stopPetCapability),
+    // t3-C：用户主动停止的终态识别（点停止后不得自动续跑）。
+    createDomCapability("user-stop", startUserStopCapability, stopUserStopCapability),
     createRemoteAgentCapability(),
     createDebugTelemetryCapability(),
     chatController,
@@ -1194,6 +1204,28 @@ function isInlineAgentEpochActive(
     inlineAgentCapabilityEpoch === epoch &&
     scope.active
   );
+}
+
+// t3-C：用户主动停止标记（点 stop 后，本次 completion 不得触发自动续跑）。
+const userStopTracker = createUserStopTracker();
+
+function startUserStopCapability(scope: ContentResourceScope): void {
+  scope.addCleanup(
+    "listener",
+    installUserStopClickListener(document, () => {
+      userStopTracker.noteStop();
+      diagnosticLogBuffer.record({
+        level: "info",
+        source: "chat",
+        message: "user_stop_click",
+        details: `at=${Date.now()}`,
+      });
+    }),
+  );
+}
+
+function stopUserStopCapability(): void {
+  userStopTracker.clear();
 }
 
 function startThemeCapability(): void {
@@ -1520,6 +1552,18 @@ async function dispatchMainWorldMessage(
         const completedExecutions = session
           ? [...session.executions]
           : [...toolExecutions];
+        // t3-C：用户主动停止的终态位。点「停止」后服务端以 EOF 收尾（无 FINISHED）⇒
+        // payload 上 `truncated=true`，与"真空回答"同形；DOM 点击是唯一可靠信号。
+        // 一次性消费：只挡这一次完成回调，不影响下一轮真正的空回答续跑。
+        const userStopped = userStopTracker.consume();
+        if (userStopped) {
+          diagnosticLogBuffer.record({
+            level: "warn",
+            source: "chat",
+            message: "auto_continue_skipped_user_stop",
+            details: `requestId=${complete.requestId ?? ""} tools=${completedExecutions.length}`,
+          });
+        }
         // 2026-10-30 真机：DeepSeek 有时发 FINISHED 帧但正文为空、只有思考块
         // （"已思考…让我开始。" 然后 5 分钟不动）。这不是断流也不是正常完成，
         // 用户看到的就是"什么都没发生"。这里识别出来并给一条可见提示 + 诊断记录。
@@ -1570,7 +1614,7 @@ async function dispatchMainWorldMessage(
             details: `len=${domAnswerForPlanCheck.length}`,
           });
         }
-        if (!planCheckBlockedByServerError && !planCheckBlockedByNoProgress && !planCheckBlockedByMetaReasoning && decideChatLayerContinuation({
+        if (!planCheckBlockedByServerError && !planCheckBlockedByNoProgress && !planCheckBlockedByMetaReasoning && !userStopped && decideChatLayerContinuation({
           answerText: domAnswerForPlanCheck,
           hadToolExecutions: completedExecutions.length > 0,
           alreadyContinued: !autoContinueBudgetDecision.allow,
@@ -1609,7 +1653,9 @@ async function dispatchMainWorldMessage(
         // 2026-10-30 真机：页面轮次由 content script 驱动（request-interceptor），
         // 服务端以 INCOMPLETE 收尾时正文常为 0 字 ⇒ 用户看到"第一步就停"。
         // 空回答不是"没有答案"，而是"这一轮没产出" ⇒ 自动续一次（与计划型共用上限）。
-        if (!planCheckBlockedByServerError && !planCheckBlockedByNoProgress && (emptyAnswerVerdict === "empty" || complete.truncated === true) && completedExecutions.length === 0) {
+        // t3-C：用户主动点「停止」时**不得**续跑（现场实测：停止 ⇒ truncated=true ⇒ 旧判据
+        // 自动再发一条 completion，把追问当新问题回答）。
+        if (!planCheckBlockedByServerError && !planCheckBlockedByNoProgress && !userStopped && (emptyAnswerVerdict === "empty" || complete.truncated === true) && completedExecutions.length === 0) {
           const requestKey = complete.requestId ?? "";
           if (autoContinueBudgetDecision.allow) {
             autoContinueBudget = autoContinueBudgetDecision.next;
@@ -1652,9 +1698,17 @@ async function dispatchMainWorldMessage(
           toolExecutions = [];
           toolBlockEl = null;
         }
-        startInlineAgentIfNeeded(complete, completedExecutions).catch((err) => {
-          console.error('[DPP] 续轮启动失败', err);
-        });
+        // t3-C：用户已经点过停止 ⇒ 不再自动起 agent 续轮（起 loop 也会再发 completion）。
+        if (userStopped) {
+          recordAgentStartDecision(
+            'skipped:user_stopped',
+            `requestId=${complete.requestId ?? ""} tools=${completedExecutions.length}`,
+          );
+        } else {
+          startInlineAgentIfNeeded(complete, completedExecutions).catch((err) => {
+            console.error('[DPP] 续轮启动失败', err);
+          });
+        }
         schedulePetIdle();
 
         // 自动提取记忆：对话完成后发送消息给 background
@@ -6497,7 +6551,8 @@ function handleInlineAgentLoopEvent(
     case "AGENT_LOOP_COMPLETE": {
       const msg = data as InlineAgentLoopCompleteMsg;
       // W29：先收尾轨迹（含 stopReason），再走原有的完成处理。
-      finishTraceRun(msg.stopReason ?? "finalized", msg.finalText.trim().length > 0);
+      // t3-B：中断标记必须一起传下去（有中断提示文案 ≠ 完成）。
+      finishTraceRun(msg.stopReason ?? "finalized", msg.finalText.trim().length > 0, msg.interrupted === true);
       const terminalTask = handleAgentLoopComplete(msg, modelBackend);
       setPetState("success");
       schedulePetIdle(PET_FEEDBACK_DELAY_MS);
@@ -8053,11 +8108,19 @@ function flushTraceStep(_toolExecutions: readonly { name: string; result?: { ok?
  *
  * `finished` 的语义是「用户拿到东西了」：只有 finalized 且 finalText 非空才算完成。
  * 这样「aborted / 空文本」会渲染成 TRUNCATED ← 断在这里，正是 Bug A 的形态。
+ *
+ * t3-B（2026-11-01）：中断轮（`msg.interrupted === true`）**不得**记成 finished ——
+ * 即使 finalText 是可读的中断提示文案也不算成功；轨迹里用 `stopReason=interrupted`
+ * 明确区分「模型完成」与「被截断后停下」，否则报告层永远看不出这是断流。
  */
-function finishTraceRun(stopReason: string, hasFinalText: boolean): void {
+function finishTraceRun(stopReason: string, hasFinalText: boolean, interrupted = false): void {
   if (!activeTraceTracker) return;
   activeTraceTracker.flushSse();
-  activeTraceTracker.endTurn(stopReason, stopReason === "finalized" && hasFinalText);
+  const effectiveStopReason = resolveTraceStopReason(stopReason, interrupted);
+  activeTraceTracker.endTurn(
+    effectiveStopReason,
+    isTraceRunFinished(effectiveStopReason, hasFinalText),
+  );
   syncTraceEvents(true);
   endTraceTracking();
 }

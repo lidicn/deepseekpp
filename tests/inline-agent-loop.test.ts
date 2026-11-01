@@ -417,21 +417,29 @@ describe('runInlineAgentLoop', () => {
     }));
   });
 
-  it('continues gracefully after a timed-out step with partial text (no error, no retry)', async () => {
-    // After the断流修复: timeout mid-stream with partial text returns a
-    // partial completion (finished=false) from submitPromptStreaming instead
-    // of throwing. The loop emits the partial content and ends normally —
-    // no AGENT_LOOP_ERROR kill. (shouldNudge doesn't trigger for "partial answer".)
+  it('★ 截断轮（有半截文本）⇒ 有界自动续一轮，续轮成功则按完成收尾（不假成功、不中断）', async () => {
+    // t3-B（根因假设 4）：上游 EOF 无 FINISHED ⇒ partial/'length'。
+    // 旧行为是「出中断提示就停」；新行为：链可续 + 预算未耗尽 ⇒ 自动续一轮。
     vi.useFakeTimers();
-    adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
-      handlers.onTextChunk('partial answer...');
-      return {
-        assistantText: 'partial answer...',
-        responseMessageId: 102,
-        requestMessageId: 101,
-        finished: false,
-      };
-    });
+    adapterMocks.submitPromptStreaming
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('partial answer...');
+        return {
+          assistantText: 'partial answer...',
+          responseMessageId: 102,
+          requestMessageId: 101,
+          finished: false,
+        };
+      })
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('完整答案。');
+        return {
+          assistantText: '',
+          responseMessageId: 104,
+          requestMessageId: 103,
+          finished: true,
+        };
+      });
 
     const post = vi.fn();
     const executeTool = vi.fn();
@@ -442,13 +450,54 @@ describe('runInlineAgentLoop', () => {
       signal: new AbortController().signal,
     });
 
-    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.advanceTimersByTimeAsync(400_000);
     await run;
 
-    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(1);
-    // Partial completion is NOT fatal — the loop completes normally.
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(2);
     expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.anything());
-    expect(post).toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.anything());
+    const complete = post.mock.calls.find((c) => c[0] === 'AGENT_LOOP_COMPLETE');
+    const payload = (complete?.[1] ?? {}) as { finalText?: string; interrupted?: boolean };
+    expect(payload.finalText).toBe('完整答案。');
+    // 续轮成功 ⇒ 不是中断，UI 可以显示完成。
+    expect(payload.interrupted).toBeUndefined();
+  });
+
+  it('★★ 一直截断 ⇒ 受 nudge 预算封顶（不无限续轮），且以「已中断」收尾、不造假成功', async () => {
+    vi.useFakeTimers();
+    adapterMocks.submitPromptStreaming.mockImplementation(async () => ({
+      assistantText: '',
+      responseMessageId: 102,
+      requestMessageId: 101,
+      finished: false,
+    }));
+
+    const post = vi.fn();
+    const executeTool = vi.fn();
+
+    const run = runInlineAgentLoop(createPayload(), {
+      post,
+      executeTool,
+      signal: new AbortController().signal,
+    });
+
+    await vi.advanceTimersByTimeAsync(1_200_000);
+    await run;
+
+    // 1 次首轮 + maxNudges(3) 次有界续轮 = 4，绝不无限续。
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(4);
+    expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.anything());
+    const complete = post.mock.calls.find((c) => c[0] === 'AGENT_LOOP_COMPLETE');
+    expect(complete).toBeDefined();
+    const payload = (complete?.[1] ?? {}) as {
+      finalText?: string;
+      stopReason?: string;
+      interrupted?: boolean;
+    };
+    // 中断就是中断：显式标记 + 可读提示，且不是「已完成」。
+    expect(payload.interrupted).toBe(true);
+    expect(payload.stopReason).toBe('finalized');
+    expect(String(payload.finalText ?? '').length).toBeGreaterThan(0);
+    expect(payload.finalText).not.toBe('');
   });
 
   it('keeps a user abort mid-step silent with an empty final text', async () => {
@@ -485,7 +534,7 @@ describe('runInlineAgentLoop', () => {
     // 用户侧就是「工具跑完了但什么都没有」，零解释、零诊断。
     // 真机证据：trace status='complete' 而 finalTextLen=0。
     vi.useFakeTimers();
-    adapterMocks.submitPromptStreaming.mockImplementationOnce(async () => ({
+    adapterMocks.submitPromptStreaming.mockImplementation(async () => ({
       assistantText: '',
       responseMessageId: 102,
       requestMessageId: 101,
@@ -501,16 +550,22 @@ describe('runInlineAgentLoop', () => {
       signal: new AbortController().signal,
     });
 
-    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.advanceTimersByTimeAsync(1_200_000);
     await run;
 
     expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.anything());
     const complete = post.mock.calls.find((c) => c[0] === 'AGENT_LOOP_COMPLETE');
     expect(complete).toBeDefined();
-    const payload = (complete?.[1] ?? {}) as { finalText?: string; stopReason?: string };
+    const payload = (complete?.[1] ?? {}) as {
+      finalText?: string;
+      stopReason?: string;
+      interrupted?: boolean;
+    };
     // 只针对「非 abort 的正常收尾」这一分支：这正是 Bug A 的路径。
     expect(payload.stopReason).toBe('finalized');
     expect(String(payload.finalText ?? '').length).toBeGreaterThan(0);
+    // 无文本 + 一直截断 ⇒ 必须显式标中断（不得把「零产出」伪装成完成）。
+    expect(payload.interrupted).toBe(true);
   });
 
   it('nudges a "让我再抓取" continuation sentence instead of stopping the run', async () => {
@@ -566,37 +621,50 @@ describe('runInlineAgentLoop', () => {
   });
 
   it('handles stream without FINISHED as partial completion (recoverable, no error)', async () => {
-    // After the断流修复: a server-side cut ends the SSE stream without FINISHED.
-    // Before this fix, !finished && !aborted threw → AGENT_LOOP_ERROR → user
-    // had to manually say "继续". Now it's treated as a recoverable partial
-    // turn: partial text is emitted and the pi loop completes normally
-    // (shouldNudge doesn't trigger here, so no extra nudge round needed).
+    // 服务端 EOF 无 FINISHED（partial）。
+    // - 断流修复前：!finished && !aborted 抛错 → AGENT_LOOP_ERROR，用户必须手动"继续"。
+    // - 断流修复后（411df96）：降级为 partial，不再杀 loop。
+    // - t3-B：还要**有界续一轮**把答案要回来（这里续轮成功 ⇒ 正常完成，不标 interrupted）。
     vi.useFakeTimers();
-    adapterMocks.submitPromptStreaming.mockImplementationOnce(async (_input, handlers) => {
-      handlers.onTextChunk('This is a truncated partial answer from the server.');
-      return {
-        assistantText: '',
-        responseMessageId: 102,
-        requestMessageId: 101,
-        finished: false,
-      };
-    });
+    adapterMocks.submitPromptStreaming
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('This is a truncated partial answer from the server.');
+        return {
+          assistantText: '',
+          responseMessageId: 102,
+          requestMessageId: 101,
+          finished: false,
+        };
+      })
+      .mockImplementationOnce(async (_input, handlers) => {
+        handlers.onTextChunk('Resumed answer.');
+        return {
+          assistantText: '',
+          responseMessageId: 104,
+          requestMessageId: 103,
+          finished: true,
+        };
+      });
 
     const post = vi.fn();
     const executeTool = vi.fn();
 
-    await runInlineAgentLoop(createPayload(), {
+    const run = runInlineAgentLoop(createPayload(), {
       post,
       executeTool,
       signal: new AbortController().signal,
     });
 
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(400_000);
+    await run;
 
-    // No fatal error — partial completion is handled gracefully, loop completes normally.
+    // No fatal error — partial completion is handled as a bounded continuation.
     expect(post).not.toHaveBeenCalledWith('AGENT_LOOP_ERROR', expect.anything());
-    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(1);
-    expect(post).toHaveBeenCalledWith('AGENT_LOOP_COMPLETE', expect.anything());
+    expect(adapterMocks.submitPromptStreaming).toHaveBeenCalledTimes(2);
+    const complete = post.mock.calls.find((c) => c[0] === 'AGENT_LOOP_COMPLETE');
+    const payload = (complete?.[1] ?? {}) as { finalText?: string; interrupted?: boolean };
+    expect(payload.finalText).toBe('Resumed answer.');
+    expect(payload.interrupted).toBeUndefined();
   });
 });
 

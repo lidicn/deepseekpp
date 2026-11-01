@@ -374,23 +374,29 @@ post('AGENT_STEP_COMPLETE', {
         return true;
       }
       // Partial completion (stream cut mid-response, stopReason='length'):
-      // the turn already emitted recoverable partial text. End normally
-      // instead of nudging for another round — the next user turn or a
-      // follow-up request can resume the chain. Without this short-circuit
-      // the loop would treat the partial text as an incomplete answer and
-      // nudge, then re-call the stream and hang when the mock is exhausted.
+      // the turn already emitted recoverable partial text. t3-B: continue once
+      // (bounded by the nudge budget) instead of ending on the half answer;
+      // when the budget/chain is exhausted, emit the explicit interrupted
+      // notice instead of settling the partial text as a success.
       if (message.stopReason === 'length' && !lastTurnHasTools) {
-        // 2026-10-30 F1（独立评审 §6）：**截断的流不得被结算成成功答案**。
-        // 旧行为把「正在写的执行计划」当最终答案并正常收尾，界面还显示「已完成」。
-        // 新行为：链可续 + nudge 预算未耗尽 ⇒ 续一轮；否则 ⇒ 显式中断提示。
+        // 2026-10-30 F1（独立评审 §6）/ 2026-11-01 t3-B（根因假设 4）：
+        // **截断的流不得被结算成成功答案**。旧行为把「正在写的执行计划」当最终答案
+        // 并正常收尾、界面还显示「已完成」（53b4fbb 的 length 短路）。
+        // 现在：链可续 + nudge 预算未耗尽 ⇒ **有界自动续一轮**；否则 ⇒ 显式中断提示。
+        // 开关/回滚：`core/inline-agent/prompt.ts` 的 ALLOW_INTERRUPTED_CONTINUATION。
         lastTurnInterrupted = true;
+        // 与 getSteeringMessages 用**同一判据**：task_complete 的轮不再续，
+        // 否则这里返回 false 但 steering 为空 ⇒ 既没续轮也没提示（丢终态）。
+        const continuationReady = hasContinuableChain()
+          && !extractTaskCompleteSignal(lastTurnText);
         const settlement = decideInterruptedSettlement({
-          continuable: hasContinuableChain(),
+          continuable: continuationReady,
           nudgeCount: nudge.count,
           maxNudges: budget.maxNudges,
         });
         if (settlement === 'continue') {
-          nudge.count += 1;
+          // 预算计数只由 getSteeringMessages 递增（单一权威），这里不再自增 ——
+          // 否则一次续轮会吃掉两格预算（maxNudges=3 时只能续 1 次）。
           nudge.nudgedInStep = false;
           return false;
         }
@@ -556,6 +562,10 @@ post('AGENT_STEP_COMPLETE', {
     switch (event.type) {
       case 'turn_start':
         nudge.currentTurnIsNudge = false;
+        // 每轮重置「本轮被截断」标记：中断标记只描述**结束时的最后一轮**。
+        // 截断后自动续轮成功时，最终不应把整轮记成 interrupted（否则 UI/trace 假红）；
+        // 续轮又截断时下面 length 分支会重新置 true。
+        lastTurnInterrupted = false;
         // Released semantics: each request's visible text replaces the
         // previous one within a step (nudge text is not concatenated).
         stepText = '';
@@ -746,6 +756,9 @@ post('AGENT_STEP_COMPLETE', {
       finalText = translate(locale, 'content.agent.emptyOutcome');
     }
     post('AGENT_LOOP_COMPLETE', {
+      // t3-B（观测口径）：结束轮被截断时必须显式标注，UI（"已完成" vs "已中断"）与
+      // trace（finished=true/false）都以它为准 —— 中断不得记成成功。
+      ...(lastTurnInterrupted ? { interrupted: true } : {}),
       loopId,
       totalSteps: lastStepCompleted ? stepIndex : stepIndex + 1,
       totalTools: collectedExecutions.length,

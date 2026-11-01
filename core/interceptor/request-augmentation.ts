@@ -1,5 +1,7 @@
 import { DEFAULT_LOCALE, translate, type SupportedLocale } from '../i18n';
 import { buildPromptAugmentation, sanitizeInternalPromptText } from '../prompt';
+import { stripFirstTurnOptionalSections } from '../prompt/first-turn-strip';
+import { resolveFirstTurnMemoryRestoreFlag } from '../prompt/first-turn-memory';
 import {
   DEFAULT_PROMPT_INJECTION_SETTINGS,
   normalizePromptInjectionSettings,
@@ -47,6 +49,8 @@ export interface RequestBodyAugmentationResult {
   agentTaskPrompt: string;
   usedMemoryIds: number[];
   messageCount: number;
+  /** 首轮窄化注入是否真的剥掉了记忆段/工具目录段（观测用）。 */
+  firstTurnNarrowed?: boolean;
   // The skillDir of any local indexed skill activated for this request; undefined otherwise.
   // This is the "session-initial cwd hint": captured by the caller (content.ts) and used during response
   // parsing as the initial cwd suggestion for shell_exec / shell_session_begin; not a hard persistent
@@ -173,9 +177,7 @@ export function augmentDecodedRequestBody(
   // 实验开关（2026-10-31）：原样透传，判定「首轮服务器问题」是否由 prompt 注入触发。
   // 注意：生产路径走的是本函数（content.ts 的 handleAugmentRequestBody），
   // 不是 augmentRequestBody —— 放错位置会被 tree-shaking 整个删掉。
-  // DCD 20261101 裁定乙：首轮自动跳过注入（走已验证的 skip 路径），第二轮起恢复。
-  // 回滚：localStorage["dpp:firstTurnMemory"]="1" ⇒ 首轮照常注入。
-  if (isPromptAugmentationDisabled() || (!decodedBody.parent_message_id && !firstTurnInjectionRestoreFlag())) {
+  if (isPromptAugmentationDisabled()) {
 
     return {
       body: JSON.stringify(decodedBody),
@@ -185,6 +187,14 @@ export function augmentDecodedRequestBody(
     };
   }
 
+  // 2026-11-01（t3-A）：首轮不再「整段早退」，改为**窄化注入** ——
+  // 只从最终 prompt 剥掉「记忆段 + 工具目录段」，技能激活 / preset / model_type /
+  // 系统提示 / 项目上下文全部保留（首轮压到 ≤2KB；旧全量 13.6KB 会 3/6 触发
+  // 「服务器暂时不可用」，见 core/prompt/first-turn-memory.ts 的实证）。
+  // 回滚：localStorage["dpp:firstTurnMemory"]="1" ⇒ 首轮不剥（恢复全量注入）。
+  const isFirstMessage = !decodedBody.parent_message_id;
+  const narrowFirstTurn = isFirstMessage && !resolveFirstTurnMemoryRestoreFlag();
+
   const body: DeepSeekRequestBody = { ...decodedBody };
 
   // 提取原始用户输入，避免重复注入系统提示（DeepSeek 请求会把历史消息都带过来，
@@ -193,9 +203,7 @@ export function augmentDecodedRequestBody(
   const locale = state.locale ?? DEFAULT_LOCALE;
 
   const thinkingEnabled = body.thinking_enabled === true;
-  // D-05: 首轮判定收紧为 falsy 即首轮。上游若误用 0 / "" 表示"无父消息"，
-  // 旧的严格 null/undefined 判断会把它当成非首轮，导致 preset/隐式 skill 不注入。
-  const isFirstMessage = !body.parent_message_id;
+  // D-05: 首轮判定收紧为 falsy 即首轮（在函数入口已算好，这里只复用）。
   const messageCount = isFirstMessage ? 1 : state.messageCount + 1;
   const promptSettings = normalizePromptInjectionSettings(state.promptSettings ?? DEFAULT_PROMPT_INJECTION_SETTINGS);
   const shouldInjectPreset = shouldInjectPresetForTurn({
@@ -224,6 +232,10 @@ export function augmentDecodedRequestBody(
       body.search_enabled === true,
     ),
   );
+  // 首轮窄化：工具**描述符**仍由调用方（content.ts）带进 RequestContext 供解析/执行；
+  // 但工具广告（目录 / 联网搜索指引 / 工具格式提醒）一律不进首轮 prompt ——
+  // 否则首轮体积随工具数量膨胀（默认描述符下实测 4.9KB），直接击穿 ≤2KB 判据。
+  const promptToolDescriptors = narrowFirstTurn ? [] : modelFacingToolDescriptors;
 
   const invocation = parseSkillCommand(originalPrompt);
   let resolved: ResolvedSkills | null = null;
@@ -273,7 +285,7 @@ export function augmentDecodedRequestBody(
         skillSystemContext: buildLocalSkillSystemContext(resolved, activeLocalSkillDir, locale),
         presetContent,
         projectContext: state.projectContext,
-        toolDescriptors: modelFacingToolDescriptors,
+        toolDescriptors: promptToolDescriptors,
         locale,
         memoryEnabled: promptSettings.memoryEnabled,
         systemPromptEnabled: promptSettings.systemPromptEnabled,
@@ -290,7 +302,7 @@ export function augmentDecodedRequestBody(
         visibleUserPrompt: originalPrompt,
         presetContent,
         projectContext: state.projectContext,
-        toolDescriptors: modelFacingToolDescriptors,
+        toolDescriptors: promptToolDescriptors,
         locale,
         memoryEnabled: promptSettings.memoryEnabled,
         systemPromptEnabled: promptSettings.systemPromptEnabled,
@@ -301,13 +313,12 @@ export function augmentDecodedRequestBody(
     }
 
     body.prompt = augmented;
-    return {
-      body: JSON.stringify(body),
+    return finalizeAugmentedRequestBody(body, {
       agentTaskPrompt: resolved.combinedPrompt,
       usedMemoryIds,
       messageCount,
       activeLocalSkillDir,
-    };
+    }, narrowFirstTurn);
   }
 
   const { augmented, usedMemoryIds } = buildPromptAugmentation(originalPrompt, {
@@ -315,7 +326,7 @@ export function augmentDecodedRequestBody(
     thinkingEnabled,
     presetContent,
     projectContext: state.projectContext,
-    toolDescriptors: modelFacingToolDescriptors,
+    toolDescriptors: promptToolDescriptors,
     locale,
     memoryEnabled: promptSettings.memoryEnabled,
     systemPromptEnabled: promptSettings.systemPromptEnabled,
@@ -323,12 +334,32 @@ export function augmentDecodedRequestBody(
   });
   body.prompt = augmented;
 
-  return {
-    body: JSON.stringify(body),
+  return finalizeAugmentedRequestBody(body, {
     agentTaskPrompt: originalPrompt,
     usedMemoryIds,
     messageCount,
     activeLocalSkillDir,
+  }, narrowFirstTurn);
+}
+
+/**
+ * 收口：首轮窄化时只剥「记忆段 + 工具目录段」，其余注入一律保留。
+ *
+ * `usedMemoryIds` 必须同步清空：记忆正文没进 prompt，就不能再对外宣称"用了这些记忆"
+ * （否则 UI / 遥测与实际注入不一致，排查时会被这条假信息带偏）。
+ */
+function finalizeAugmentedRequestBody(
+  body: DeepSeekRequestBody,
+  result: Omit<RequestBodyAugmentationResult, 'body' | 'firstTurnNarrowed'>,
+  narrowFirstTurn: boolean,
+): RequestBodyAugmentationResult {
+  if (!narrowFirstTurn) return { ...result, body: JSON.stringify(body) };
+  const stripped = stripFirstTurnOptionalSections(body.prompt);
+  return {
+    ...result,
+    body: JSON.stringify({ ...body, prompt: stripped.prompt }),
+    usedMemoryIds: [],
+    firstTurnNarrowed: stripped.strippedCatalog || stripped.strippedMemory || stripped.strippedToolReminder,
   };
 }
 
@@ -473,16 +504,6 @@ function isPromptAugmentationDisabled(): boolean {
   try {
     const scope = globalThis as { localStorage?: { getItem(k: string): string | null } };
     return scope.localStorage?.getItem("dpp:skipAugmentation") === "1";
-  } catch {
-    return false;
-  }
-}
-
-
-function firstTurnInjectionRestoreFlag(): boolean {
-  try {
-    const scope = globalThis as { localStorage?: { getItem(k: string): string | null } };
-    return scope.localStorage?.getItem("dpp:firstTurnMemory") === "1";
   } catch {
     return false;
   }

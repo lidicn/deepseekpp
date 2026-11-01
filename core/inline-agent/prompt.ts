@@ -321,19 +321,24 @@ function clampText(value: string | undefined, maxLength: number): string | undef
 export type InterruptedSettlement = 'continue' | 'notice';
 
 /**
- * 截断轮是否允许"自动续一轮"。
+ * 截断轮是否允许"自动续一轮"（有界：受 nudge 预算 `budget.maxNudges` 封顶）。
  *
- * 默认 **false**：`53b4fbb` 的历史教训是"截断后自动续轮会在 mock/异常情况下挂起"。
- * 当前策略先止血 —— **截断不得被结算成成功答案**（这一条没有风险），
- * 续轮能力保留在代码里，等有真实链续请求的验收用例后再开。
+ * 历史：
+ * - `53b4fbb` 曾用「length 短路」把半截计划直接当答案结算 —— 被 `decideInterruptedSettlement` 取代。
+ * - 2026-10-30 为了止血，默认改成 false（只出「已中断」提示、不自动恢复）。
+ * - 2026-11-01 t3-B（根因假设 4）：现场仍有「截断 → 停止」链路（`dpp_stream_ends cls=truncated`）。
+ *   恢复为 **true**：截断且无 toolCall 的轮，在「链可续 + 预算未耗尽」时自动续一轮；
+ *   仍**绝不**把半截文本当最终答案（结算层只续轮/提示，不解成成功）。
+ *
+ * A/B 方式：这个常量就是开关；把它改回 false ⇒ 行为退回「只提示不续轮」。
  */
-export const ALLOW_INTERRUPTED_CONTINUATION = false;
+export const ALLOW_INTERRUPTED_CONTINUATION = true;
 
 export function decideInterruptedSettlement(input: {
   continuable: boolean;
   nudgeCount: number;
   maxNudges: number;
-  /** 默认取全局开关（当前 false）；测试可显式覆盖以覆盖两条分支。 */
+  /** 默认取全局开关（当前 true）；测试可显式覆盖以覆盖两条分支。 */
   allowContinuation?: boolean;
 }): InterruptedSettlement {
   if (!(input.allowContinuation ?? ALLOW_INTERRUPTED_CONTINUATION)) return 'notice';
