@@ -85,14 +85,16 @@ describe('augmentRequestBody', () => {
       messageCount: 0,
     };
 
-    expect(() => augmentRequestBody('{"prompt":"/writer"}', state))
+    // DCD 20261101 裁定乙：首轮整体不注入 ⇒ 首轮请求走不到 skills 解析，本用例改用非首轮请求，
+    // 断言（异常不得被吞掉）保持不变。
+    expect(() => augmentRequestBody('{"prompt":"/writer","parent_message_id":12}', state))
       .toThrow('skill state unavailable');
   });
 
   it('applies expert mode and advances request message count without exposing state to main-world', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: 'hello',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -159,7 +161,7 @@ describe('augmentRequestBody', () => {
     ];
     const result = augmentRequestBody(JSON.stringify({
       prompt: 'create a report',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
       search_enabled: false,
     }), {
@@ -296,7 +298,7 @@ describe('augmentRequestBody', () => {
   it('localizes skill user-input wrapper without mutating the user input', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '/writer Draft about {raw_user_value}',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -322,7 +324,7 @@ describe('augmentRequestBody', () => {
   it('keeps a no-argument Skill command as the visible prompt', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '/writer',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -347,7 +349,7 @@ describe('augmentRequestBody', () => {
     const skillDir = '/skills/github-personal-manager';
     const result = augmentRequestBody(JSON.stringify({
       prompt: '/demo',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -389,7 +391,7 @@ describe('augmentRequestBody', () => {
   it('injects only global memories plus memories from the current project', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: 'remember the project rule',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [
@@ -410,6 +412,79 @@ describe('augmentRequestBody', () => {
     expect(body.prompt).toContain('Always be concise.');
     expect(body.prompt).toContain('[project reference] Project memory');
     expect(body.prompt).not.toContain('Do not include me.');
+  });
+
+  // DCD 20261101 裁定乙（首轮不注入）：首轮走已验证的 skip 早退路径，第二轮起恢复注入。
+  // 本用例是新契约的守护：43B 量级（原样透传）、不写 model_type、agentTaskPrompt 为空、轮次计数不推进。
+  it('DCD 20261101 裁定乙：首轮整体不注入，第二轮起恢复注入', () => {
+    const state = {
+      memories: [memory(1, 'global', undefined, 'Global memory', 'Always be concise.')],
+      skills: [{ name: 'writer', instructions: 'Private writer instructions.', memoryEnabled: true }],
+      activePreset: {
+        id: 'preset-first-turn',
+        name: 'First Turn',
+        content: 'Preset body.',
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      modelType: 'expert' as const,
+      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      messageCount: 0,
+      locale: 'en' as const,
+    };
+
+    const firstTurn = augmentRequestBody(JSON.stringify({
+      prompt: 'hello',
+      parent_message_id: null,
+      thinking_enabled: false,
+    }), state);
+    const firstBody = JSON.parse(firstTurn?.body ?? '{}') as Record<string, unknown>;
+    // 原样透传：无系统提示 / 工具目录 / 记忆 / 预设，扩展也不再写 model_type。
+    expect(firstBody.prompt).toBe('hello');
+    expect(firstBody.model_type).toBeUndefined();
+    expect(firstTurn?.agentTaskPrompt).toBe('');
+    expect(firstTurn?.usedMemoryIds).toEqual([]);
+    expect(firstTurn?.messageCount).toBe(0);
+
+    const secondTurn = augmentRequestBody(JSON.stringify({
+      prompt: 'hello again',
+      parent_message_id: 12,
+      thinking_enabled: false,
+    }), state);
+    const secondBody = JSON.parse(secondTurn?.body ?? '{}') as Record<string, unknown>;
+    expect(secondBody.prompt).toContain('## Role');
+    expect(secondBody.prompt).toContain('Always be concise.');
+    expect(secondBody.model_type).toBe('expert');
+    expect(secondTurn?.messageCount).toBe(1);
+  });
+
+  // DCD 20261101 裁定乙 §2.2 / §三 矩阵第 4 行：回滚开关必须能把首轮注入恢复回来。
+  it('DCD 20261101 裁定乙：回滚开关 dpp:firstTurnMemory=1 恢复首轮注入', () => {
+    const body = JSON.stringify({
+      prompt: 'hello',
+      parent_message_id: null,
+      thinking_enabled: false,
+    });
+    const state = {
+      memories: [],
+      skills: [],
+      activePreset: null,
+      modelType: 'expert' as const,
+      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      messageCount: 0,
+      locale: 'en' as const,
+    };
+
+    localStorage.setItem('dpp:firstTurnMemory', '1');
+    try {
+      const result = augmentRequestBody(body, state);
+      const augmented = JSON.parse(result?.body ?? '{}') as Record<string, unknown>;
+      expect(augmented.prompt).toContain('## Role');
+      expect(augmented.model_type).toBe('expert');
+      expect(result?.messageCount).toBe(1);
+    } finally {
+      localStorage.removeItem('dpp:firstTurnMemory');
+    }
   });
 });
 
@@ -442,7 +517,7 @@ describe('page-native search projection', () => {
   it('keeps web_search schema and guidance when native search is disabled', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: 'search latest DeepSeek news',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
       search_enabled: false,
     }), {
@@ -465,7 +540,7 @@ describe('page-native search projection', () => {
   it('drops both local web tool schemas and guidance when native search is enabled', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: 'search latest DeepSeek news',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
       search_enabled: true,
     }), {
@@ -493,7 +568,7 @@ describe('page-native search projection', () => {
   it('applies the same projection to Skill-command requests', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '/writer Search this topic',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
       search_enabled: true,
     }), {
@@ -535,7 +610,7 @@ describe('page-native search projection', () => {
     };
     const result = augmentRequestBody(JSON.stringify({
       prompt: 'search latest DeepSeek news',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
       search_enabled: true,
     }), {

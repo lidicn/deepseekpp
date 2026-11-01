@@ -85,7 +85,8 @@ describe('prompt output compatibility contract', () => {
   it('freezes exact augmented prompt bytes for memory, composed Skills, preset, project, MCP, and Shell', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '/planner reviewer Audit sync compatibility',
-      parent_message_id: null,
+      // DCD 20261101 裁定乙：首轮整体不注入 ⇒ 金标准改用非首轮请求，继续冻结同一批注入字节。
+      parent_message_id: 42,
       thinking_enabled: true,
       ref_file_ids: ['contract.txt'],
     }), {
@@ -110,6 +111,9 @@ describe('prompt output compatibility contract', () => {
       modelType: 'expert',
       toolDescriptors: createRepresentativeToolDescriptors(),
       messageCount: 0,
+      // 非首轮 + 默认节奏（10 轮重注入）不会注入 preset；金标准要同时锁住 preset 字节，
+      // 所以显式用 every_message（DCD 20261101 裁定乙：首轮不注入）。
+      promptSettings: { presetCadence: 'every_message' },
       locale: 'en',
     });
 
@@ -129,7 +133,7 @@ describe('prompt output compatibility contract', () => {
   it('freezes exact augmented prompt bytes for a GitHub-imported Skill boundary (en)', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '/deploy-bot ship the release',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -152,7 +156,7 @@ describe('prompt output compatibility contract', () => {
   it('freezes exact augmented prompt bytes for a local-index Skill boundary (zh-CN)', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '/weekly 汇总十月进展',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],

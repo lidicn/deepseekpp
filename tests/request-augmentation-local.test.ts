@@ -107,7 +107,7 @@ describe('augmentRequestBody 本地索引 Skill 激活分支', () => {
     // 故查询须为 Skill 描述/场景中的子串（此处用「周报」）。
     const result = augmentRequestBody(JSON.stringify({
       prompt: '周报',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -116,6 +116,9 @@ describe('augmentRequestBody 本地索引 Skill 激活分支', () => {
       modelType: null,
       toolDescriptors: [],
       messageCount: 0,
+      // 隐式打分只在「首条」或「每条」开时才进行；非首轮请求须显式开 everyMessage 才能复现该分支
+      //（DCD 20261101 裁定乙：首轮整体不注入）。
+      skillAutoActivation: { firstMessage: true, everyMessage: true },
       locale: 'en',
     });
 
@@ -134,7 +137,7 @@ describe('augmentRequestBody 本地索引 Skill 激活分支', () => {
   it('显式 /demo 命中本地索引 Skill → 同样注入 D4 边界', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '/demo 写本周周报',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -155,7 +158,7 @@ describe('augmentRequestBody 本地索引 Skill 激活分支', () => {
     const original = '帮我生成本周周报';
     const result = augmentRequestBody(JSON.stringify({
       prompt: original,
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -164,6 +167,8 @@ describe('augmentRequestBody 本地索引 Skill 激活分支', () => {
       modelType: null,
       toolDescriptors: [],
       messageCount: 0,
+      // 非首轮须显式开 everyMessage，隐式打分才会真的跑（否则本用例会因「没打分」而恒真通过）。
+      skillAutoActivation: { firstMessage: true, everyMessage: true },
       locale: 'en',
     });
 
@@ -174,7 +179,7 @@ describe('augmentRequestBody 本地索引 Skill 激活分支', () => {
     const original = '帮我生成本周周报';
     const result = augmentRequestBody(JSON.stringify({
       prompt: original,
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -183,6 +188,8 @@ describe('augmentRequestBody 本地索引 Skill 激活分支', () => {
       modelType: null,
       toolDescriptors: [],
       messageCount: 0,
+      // 非首轮须显式开 everyMessage，隐式打分才会真的跑（否则本用例会因「没打分」而恒真通过）。
+      skillAutoActivation: { firstMessage: true, everyMessage: true },
       locale: 'en',
     });
 
@@ -192,7 +199,7 @@ describe('augmentRequestBody 本地索引 Skill 激活分支', () => {
   it('github 来源显式命中 → 指令原样透传，不注入 D4 边界', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '/gh do something',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -213,7 +220,7 @@ describe('augmentRequestBody 暴露 activeLocalSkillDir（方案A 闭环源）',
   it('隐式命中本地索引 Skill → activeLocalSkillDir 等于 skillDir', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '周报',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -222,6 +229,8 @@ describe('augmentRequestBody 暴露 activeLocalSkillDir（方案A 闭环源）',
       modelType: null,
       toolDescriptors: [],
       messageCount: 0,
+      // 非首轮须显式开 everyMessage 才能复现隐式分支（DCD 20261101 裁定乙：首轮整体不注入）。
+      skillAutoActivation: { firstMessage: true, everyMessage: true },
       locale: 'en',
     });
 
@@ -232,7 +241,7 @@ describe('augmentRequestBody 暴露 activeLocalSkillDir（方案A 闭环源）',
   it('显式 /demo 命中本地索引 Skill → activeLocalSkillDir 等于 skillDir', () => {
     const result = augmentRequestBody(JSON.stringify({
       prompt: '/demo 写本周周报',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -250,7 +259,7 @@ describe('augmentRequestBody 暴露 activeLocalSkillDir（方案A 闭环源）',
   it('未激活本地 Skill（builtin / 旧快照）→ activeLocalSkillDir 为 undefined', () => {
     const builtin = augmentRequestBody(JSON.stringify({
       prompt: '帮我生成本周周报',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -259,11 +268,13 @@ describe('augmentRequestBody 暴露 activeLocalSkillDir（方案A 闭环源）',
       modelType: null,
       toolDescriptors: [],
       messageCount: 0,
+      // 非首轮必须显式开 everyMessage，隐式打分才会真的跑 —— 否则「没激活」不是判出来的而是跳出来的。
+      skillAutoActivation: { firstMessage: true, everyMessage: true },
       locale: 'en',
     });
     const legacy = augmentRequestBody(JSON.stringify({
       prompt: '帮我生成本周周报',
-      parent_message_id: null,
+      parent_message_id: 12, // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）
       thinking_enabled: false,
     }), {
       memories: [],
@@ -272,9 +283,14 @@ describe('augmentRequestBody 暴露 activeLocalSkillDir（方案A 闭环源）',
       modelType: null,
       toolDescriptors: [],
       messageCount: 0,
+      skillAutoActivation: { firstMessage: true, everyMessage: true },
       locale: 'en',
     });
 
+    // 防假绿（DCD 20261101 裁定乙）：非首轮请求必须真的走增强路径 —— 若退回「首轮跳过」写法，
+    // agentTaskPrompt 会是空串而不是用户原文，本断言即红；否则下面的 undefined 断言在跳过路径下恒真。
+    expect(builtin!.agentTaskPrompt).toBe('帮我生成本周周报');
+    expect(legacy!.agentTaskPrompt).toBe('帮我生成本周周报');
     expect(builtin!.activeLocalSkillDir).toBeUndefined();
     expect(legacy!.activeLocalSkillDir).toBeUndefined();
   });

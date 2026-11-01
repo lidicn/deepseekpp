@@ -59,10 +59,18 @@ function builtinSkill(name = 'writer'): Skill {
   } as unknown as Skill;
 }
 
-function promptFor(skills: Skill[], userPrompt: string, locale: SupportedLocale): string {
+function promptFor(
+  skills: Skill[],
+  userPrompt: string,
+  locale: SupportedLocale,
+  // 隐式打分只在「首条」或「每条」开时才跑；非首轮请求要复现隐式分支须显式开 everyMessage
+  //（DCD 20261101 裁定乙：首轮整体不注入）。
+  skillAutoActivation?: { firstMessage: boolean; everyMessage: boolean },
+): string {
   const result = augmentRequestBody(JSON.stringify({
     prompt: userPrompt,
-    parent_message_id: null,
+    // 非首轮（DCD 20261101 裁定乙：首轮整体不注入）—— 首轮早退不解析 skills，边界块根本不会生成。
+    parent_message_id: 12,
     thinking_enabled: false,
   }), {
     memories: [],
@@ -71,6 +79,7 @@ function promptFor(skills: Skill[], userPrompt: string, locale: SupportedLocale)
     modelType: null,
     toolDescriptors: [],
     messageCount: 0,
+    skillAutoActivation,
     locale,
   });
   expect(result).not.toBeNull();
@@ -114,6 +123,8 @@ describe('imported Skill untrusted content boundary', () => {
       [importedSkill('周报生成器', 'local', LOCAL_INDEX_BODY)],
       '周报生成器',
       'en',
+      // 非首轮复现隐式分支：显式开 everyMessage（DCD 20261101 裁定乙：首轮整体不注入）。
+      { firstMessage: true, everyMessage: true },
     );
     expect(implicit).toContain(UNTRUSTED_SKILL_OPEN);
   });
@@ -146,6 +157,9 @@ describe('imported Skill untrusted content boundary', () => {
 
   it('leaves non-imported sources unwrapped', () => {
     const prompt = promptFor([builtinSkill()], '/writer draft an apology', 'en');
+    // 防假绿（DCD 20261101 裁定乙）：非首轮请求必须真的走增强路径 —— 若退回「首轮跳过」写法，
+    // prompt 会原样等于用户输入，下面的「不含标记」断言就会恒真。
+    expect(prompt).toContain('## Role');
     expect(prompt).not.toContain(UNTRUSTED_SKILL_OPEN);
     expect(prompt).not.toContain(UNTRUSTED_SKILL_CLOSE);
   });

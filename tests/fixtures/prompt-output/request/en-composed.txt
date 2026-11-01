@@ -92,7 +92,7 @@ For local file paths, use forward slashes or escaped backslashes so the JSON bod
 Do not use <invoke name="...">, <tool_call>, Markdown code fences, {"tool":"...","arguments":{...}}, or any wrapper format.
 Do not put executable tool XML in a thinking/reasoning section; put it in the final assistant answer content.
 
-requestBodyWithoutPrompt={"parent_message_id":null,"thinking_enabled":true,"ref_file_ids":["contract.txt"],"model_type":"expert"}
+requestBodyWithoutPrompt={"parent_message_id":42,"thinking_enabled":true,"ref_file_ids":["contract.txt"],"model_type":"expert"}
 agentTaskPrompt=Plan from explicit compatibility contracts.
 
 ---
